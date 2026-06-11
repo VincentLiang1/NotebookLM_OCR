@@ -1,6 +1,6 @@
 # pdf2ppt
 
-把**純圖片的 PDF 簡報**（例如 NotebookLM 匯出的簡報）OCR 後轉換成**可編輯的 PowerPoint**。功能對標 [deckedit.com](https://deckedit.com/zh-Hant)，完全在本地執行、資料零上傳。
+把**純圖片的 PDF 簡報**（例如 NotebookLM 匯出的簡報）OCR 後轉換成**可編輯的 PowerPoint**。完全在本地執行、資料零上傳。
 
 每頁投影片的輸出結構：
 
