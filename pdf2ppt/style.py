@@ -389,15 +389,16 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
     rows = np.where((row_counts >= MIN_INK_ROW_PX)
                     & (row_counts <= MAX_INK_ROW_FRAC * row_w))[0]
     if len(rows):
-        # a structure line clipped at the box edge slips under
-        # MAX_INK_ROW_FRAC via its rounded corners / AA transition (page 9
-        # "images/": pill border rows at 0.67 width) and would stretch the
-        # ink bounds onto the border — the cover then paints over it.
-        # The glyph band is one row-group; split on big blank gaps and
-        # keep the heaviest group (the border sliver carries ~10% of the
-        # mass and sits 16 blank rows away).
-        gap = max(8.0, 0.12 * ink.shape[0])
-        splits = np.where(np.diff(rows) > gap)[0]
+        # ink that crosses the box edge from the outside — a pill border
+        # (page 9 "images/": rounded-corner rows at 0.67 width slip under
+        # MAX_INK_ROW_FRAC, 16 blank rows away) or a neighboring line's
+        # glyph edges (page 4 "graph.sh": the underscores of the line
+        # above and the caps of the line below, 9 blank rows away) —
+        # stretches the ink bounds, inflating the font and letting the
+        # cover paint over the neighbor. The glyph band is one row-group;
+        # split on blank gaps and keep the heaviest group. Real intra-line
+        # gaps (i-dots) are <= ~4px at 200dpi, so 8 is safely above them.
+        splits = np.where(np.diff(rows) > 8)[0]
         if len(splits):
             groups = np.split(rows, splits + 1)
             rows = max(groups, key=lambda g: int(row_counts[g].sum()))
