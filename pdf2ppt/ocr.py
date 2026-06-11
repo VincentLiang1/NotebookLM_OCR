@@ -120,6 +120,32 @@ def _restore_latin_gaps(text: str, words, img: np.ndarray):
     return "".join(out), boxes()
 
 
+ARC_MIN_BOX_H = 80   # only boxes at least this tall can hold a visible arc
+ARC_MIN_SAG = 12.0   # px; smaller fitted sagittas are fragment jitter
+
+
+def _arc_from_fragments(frags, box_h: float) -> float:
+    """Sagitta from the rescue's OCR-verified fragments (their quads can't
+    contain a neighboring line — the center-band filter removed it).
+    Positive = arch up. Pure-image arc tracking was tried and abandoned:
+    interleaved ribbon lines pollute each other's boxes and even flip the
+    fitted sign."""
+    if len(frags) < 3:
+        return 0.0
+    pts = sorted((float(f[3][:, 0].mean()), float(f[3][:, 1].mean()))
+                 for f in frags)
+    span = pts[-1][0] - pts[0][0]
+    if span < 4 * box_h:
+        return 0.0
+    mid_x = (pts[0][0] + pts[-1][0]) / 2
+    mid = min(pts[1:-1], key=lambda p: abs(p[0] - mid_x))
+    edge_y = (pts[0][1] + pts[-1][1]) / 2
+    sag = edge_y - mid[1]  # y-down: middle higher => positive => arch up
+    if abs(sag) < ARC_MIN_SAG:
+        return 0.0
+    return float(sag)
+
+
 def _looks_like_warning_icon(img: np.ndarray, box) -> bool:
     """A ⚠ triangle icon is recognized as 'A'. Discriminator: the icon's
     base is one continuous ink bar (measured 0.93 of box width) while a
@@ -276,8 +302,11 @@ class OcrEngine:
         if best is None:
             return None
         text, ang, (rw, rh), frags = best
+        h_med0 = (float(np.median([f[3][:, 1].max() - f[3][:, 1].min()
+                                   for f in frags])) if frags else 0.0)
+        arc = _arc_from_fragments(frags, h_med0)
         if not ang or abs(ang) < MIN_TILT_DEG:
-            return text, 0.0, None, None
+            return text, 0.0, None, None, arc
         # fragment geometry in rotated space -> rotated rect in image space
         # (verified mapping: p_in = c_in + R(+ang) @ (p_out - c_out)).
         # Arc text leaves each fragment slightly tilted even after the best
@@ -295,7 +324,7 @@ class OcrEngine:
         cx = cx0 + region.shape[1] / 2 + cos_a * ox - sin_a * oy
         cy = cy0 + region.shape[0] / 2 + sin_a * ox + cos_a * oy
         return text, float(ang), (float(cx), float(cy)), \
-            (float(ux1 - ux0), h_med)
+            (float(ux1 - ux0), h_med), arc
 
     def _extend_trailing(self, img_rgb: np.ndarray, line: Line) -> str | None:
         """The detector often crops a trailing 。/) off a line. If there is
@@ -387,9 +416,13 @@ class OcrEngine:
             if ln.score < RESCUE_SCORE and ln.angle == 0.0:
                 rescued = self._rescue_tilted(img_rgb, ln)
                 if rescued:
-                    ln.text, ang, center, size = rescued
+                    ln.text, ang, center, size, arc = rescued
                     ln.char_boxes = None  # boxes no longer match the text
-                    if ang:
+                    if arc:
+                        # an arc explains the fragments better than the
+                        # rescue's single compromise angle
+                        ln.arc_sagitta = arc
+                    elif ang:
                         ln.angle, ln.center, ln.size = ang, center, size
             if ln.angle == 0.0:
                 extended = self._extend_trailing(img_rgb, ln)
@@ -399,6 +432,28 @@ class OcrEngine:
             ln.text = _pangu_spacing(ln.text).strip()
             ln.text = _fix_trailing_degree(ln.text)
             ln.text = self._fix_simplified_strays(ln.text)
+
+        # banner ribbons hold parallel arc lines, but only the low-score one
+        # goes through the rescue that measures the arc; propagate the
+        # curvature to overlapping tall siblings (same radius => sagitta
+        # scales with the square of the width)
+        arcs = [ln for ln in lines if ln.arc_sagitta]
+        for ln in lines:
+            if ln.arc_sagitta or ln.angle:
+                continue
+            if ln.bbox[3] - ln.bbox[1] < ARC_MIN_BOX_H:
+                continue
+            for a in arcs:
+                ox = (min(ln.bbox[2], a.bbox[2])
+                      - max(ln.bbox[0], a.bbox[0]))
+                oy = (min(ln.bbox[3], a.bbox[3])
+                      - max(ln.bbox[1], a.bbox[1]))
+                w_min = min(ln.bbox[2] - ln.bbox[0], a.bbox[2] - a.bbox[0])
+                if ox > 0.6 * w_min and oy > 0:
+                    scale = ((ln.bbox[2] - ln.bbox[0])
+                             / (a.bbox[2] - a.bbox[0])) ** 2
+                    ln.arc_sagitta = a.arc_sagitta * scale
+                    break
 
         lines.sort(key=lambda ln: (ln.bbox[1], ln.bbox[0]))
         return lines

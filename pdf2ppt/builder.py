@@ -17,6 +17,7 @@ SLIDE_W_EMU = 12192000  # 13.333 in, matches the example deck
 EMU_PER_PT = 12700
 COVER_PAD_PX = 3     # expand cover box to hide anti-aliased fringe of raster text
 LEADING_COMP = 0.20  # em: gap between a top-anchored frame's top and glyph ink
+WARP_DROP_RATIO = 0.13  # arch warp: rendered drop per unit of frame height
 
 PP_ALIGN_MAP = {ALIGN_CENTER: PP_ALIGN.CENTER, ALIGN_RIGHT: PP_ALIGN.RIGHT}
 
@@ -65,6 +66,10 @@ class DeckBuilder:
             shape.fill.fore_color.rgb = RGBColor(*rgb)
 
         for i, block in enumerate(blocks):
+            if len(block.lines) == 1 and block.lines[0].arc_sagitta:
+                self._add_arc_text(slide, block, i, ex, ey,
+                                   px_per_pt=img_w / 960.0)
+                continue
             nudge = round(LEADING_COMP * block.style.font_pt * EMU_PER_PT)
             tilted = (len(block.lines) == 1 and block.lines[0].angle
                       and block.lines[0].center and block.lines[0].size)
@@ -141,6 +146,119 @@ class DeckBuilder:
                     font.name = self.font_name  # sets <a:latin> only
                     font.color.rgb = RGBColor(*rgb)
                     _set_east_asian_font(run, self.font_name)
+
+    def _add_arc_text(self, slide, block, i: int, ex, ey,
+                      px_per_pt: float) -> None:
+        """Ribbon/banner text that follows an arc: a filled cover over the
+        raster band plus a separate WordArt arch-warped text shape.
+        PowerPoint fits the warped text to the shape box, so the box's
+        aspect ratio controls the curvature."""
+        ln = block.lines[0]
+        style = block.style
+        x0, y0, x1, y1 = ln.bbox
+        glyph_h = min(style.font_pt * 1.2 * px_per_pt, (y1 - y0) * 0.8)
+
+        if self.cover and style.bg_rgb is not None:
+            # cover strips along the arc rather than one blocky rectangle:
+            # reconstruct the parabola from the box (edges hold the glyphs
+            # at one end of the box, the middle at the other)
+            if ln.arc_sagitta > 0:  # arch up: middle at top, edges at bottom
+                y_mid, y_edge = y0 + glyph_h / 2, y1 - glyph_h / 2
+            else:                   # arch down
+                y_mid, y_edge = y1 - glyph_h / 2, y0 + glyph_h / 2
+            n = 12
+            xc, half_w = (x0 + x1) / 2, (x1 - x0) / 2
+            for s in range(n):
+                sx0 = x0 + (x1 - x0) * s / n
+                sx1 = x0 + (x1 - x0) * (s + 1) / n
+                t = ((sx0 + sx1) / 2 - xc) / half_w
+                yc = y_mid + (y_edge - y_mid) * t * t
+                # generous pad: the raster arc is circular, our model is a
+                # parabola — the flanks deviate by a few px
+                pad = max(COVER_PAD_PX, 0.3 * glyph_h)
+                strip = slide.shapes.add_shape(
+                    MSO_SHAPE.RECTANGLE,
+                    Emu(max(0, ex(sx0 - 1))),
+                    Emu(max(0, ey(yc - glyph_h / 2 - pad))),
+                    Emu(ex(sx1 + 1) - ex(sx0 - 1)),
+                    Emu(ey(yc + glyph_h / 2 + pad) - ey(yc - glyph_h / 2 - pad)),
+                )
+                strip.name = f"Text {i} cover {s}"
+                strip.shadow.inherit = False
+                strip.line.fill.background()
+                strip.fill.solid()
+                strip.fill.fore_color.rgb = RGBColor(*style.bg_rgb)
+
+        # the text itself: chord segments along the parabola, each a small
+        # rotated shape at the local tangent. PowerPoint's prstTxWarp arch
+        # was tried first and abandoned — its drop/frame scaling is opaque
+        # and uncontrollable (see git history for the calibration attempts)
+        import math
+
+        if ln.arc_sagitta > 0:
+            y_mid_t, y_edge_t = y0 + glyph_h / 2, y1 - glyph_h / 2
+        else:
+            y_mid_t, y_edge_t = y1 - glyph_h / 2, y0 + glyph_h / 2
+        xc, half_w = (x0 + x1) / 2, (x1 - x0) / 2
+        n_seg = max(3, min(6, round((x1 - x0) / (3.0 * max(glyph_h, 1)))))
+        text = ln.text
+        # split by accumulated advance width (mixed CJK/latin) and snap to
+        # a nearby space so words like PDF are not cut in half
+        adv = [1.0 if ord(c) >= 0x2E80 else (0.33 if c == " " else 0.52)
+               for c in text]
+        total = sum(adv) or 1.0
+        bounds = [0]
+        acc, target_idx = 0.0, 1
+        for idx, a in enumerate(adv):
+            acc += a
+            while target_idx < n_seg and acc >= total * target_idx / n_seg:
+                cut = idx + 1
+                for off in (0, 1, -1, 2, -2):
+                    j = cut + off
+                    if 0 < j < len(text) and text[j - 1] == " ":
+                        cut = j
+                        break
+                bounds.append(max(cut, bounds[-1]))
+                target_idx += 1
+        bounds.append(len(text))
+        for s in range(n_seg):
+            seg_text = text[bounds[s]:bounds[s + 1]].strip()
+            if not seg_text:
+                continue
+            sx0 = x0 + (x1 - x0) * s / n_seg
+            sx1 = x0 + (x1 - x0) * (s + 1) / n_seg
+            t = ((sx0 + sx1) / 2 - xc) / half_w
+            yc = y_mid_t + (y_edge_t - y_mid_t) * t * t
+            slope = 2 * (y_edge_t - y_mid_t) * t / half_w
+            ang = math.degrees(math.atan(slope))
+            seg_em = sum(1.0 if ord(c) >= 0x2E80 else
+                         (0.33 if c == " " else 0.52) for c in seg_text)
+            width = Emu(round(seg_em * style.font_pt * EMU_PER_PT * 1.06))
+            height = Emu(ey(yc + glyph_h / 2) - ey(yc - glyph_h / 2))
+            left = Emu(ex((sx0 + sx1) / 2) - width // 2)
+            top = Emu(ey(yc) - height // 2)
+            seg = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, left, top,
+                                         width, height)
+            seg.name = f"Text {i}.{s}"
+            seg.rotation = ang
+            seg.shadow.inherit = False
+            seg.line.fill.background()
+            seg.fill.background()
+            tf = seg.text_frame
+            tf.word_wrap = False
+            tf.auto_size = None
+            tf.margin_left = tf.margin_right = 0
+            tf.margin_top = tf.margin_bottom = 0
+            para = tf.paragraphs[0]
+            para.alignment = PP_ALIGN.CENTER
+            run = para.add_run()
+            run.text = seg_text
+            font = run.font
+            font.size = Pt(style.font_pt)
+            font.bold = style.bold
+            font.name = self.font_name
+            font.color.rgb = RGBColor(*style.text_rgb)
+            _set_east_asian_font(run, self.font_name)
 
     def save(self, path: str) -> None:
         self.prs.save(path)

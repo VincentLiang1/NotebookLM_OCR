@@ -19,6 +19,9 @@ class Line:
     # per-character boxes (char, l, t, r, b) in image px for the
     # space-stripped text; None when word boxes were unusable
     char_boxes: list[tuple[str, float, float, float, float]] | None = None
+    # arc text (ribbon banners): vertical deviation of the line's edges vs
+    # its middle in px; positive = arch up, 0 = straight
+    arc_sagitta: float = 0.0
 
     @property
     def height(self) -> float:
