@@ -67,6 +67,13 @@ class DeckBuilder:
             shape.fill.solid()
             shape.fill.fore_color.rgb = RGBColor(*rgb)
 
+        # same-row OCR boxes can overlap horizontally (the detector pads a
+        # box into its neighbor's glyphs); the later-drawn cover then
+        # paints over the neighbor's already-drawn text. Trim both boxes
+        # to the blank ink gap between them, measured on the render.
+        if img is not None:
+            self._trim_row_overlaps(blocks, img)
+
         # arc covers go in first: two arc lines on the same ribbon
         # interpenetrate, and a later line's cover strips must not paint
         # over an earlier line's text segments
@@ -177,6 +184,54 @@ class DeckBuilder:
                     font.name = self.font_name  # sets <a:latin> only
                     font.color.rgb = RGBColor(*rgb)
                     _set_east_asian_font(run, self.font_name)
+
+    @staticmethod
+    def _trim_row_overlaps(blocks, img) -> None:
+        """Split horizontally overlapping same-row boxes at the blank
+        column gap between their glyphs (page 3 '…書）' / '再批次…': the
+        right box starts 43px inside the left one, so the left cover
+        painted over the right line's 再). Falls back to the overlap
+        midpoint when the seam is solid ink."""
+        import numpy as np
+
+        plain = [b for b in blocks
+                 if not (len(b.lines) == 1
+                         and (b.lines[0].arc_sagitta or b.lines[0].angle))]
+        plain.sort(key=lambda b: b.bbox[0])
+        for ai, a in enumerate(plain):
+            for b in plain[ai + 1:]:
+                ax0, ay0, ax1, ay1 = a.bbox
+                bx0, by0, bx1, by1 = b.bbox
+                if bx0 >= ax1 - COVER_PAD_PX:
+                    continue
+                oy = min(ay1, by1) - max(ay0, by0)
+                if oy < 0.6 * min(ay1 - ay0, by1 - by0):
+                    continue
+                y_lo, y_hi = int(max(ay0, by0)), int(min(ay1, by1))
+                x_lo = max(0, int(bx0 - 8))
+                x_hi = min(img.shape[1], int(ax1 + 16))
+                boundary = (ax1 + bx0) / 2
+                bg = a.style.bg_rgb or b.style.bg_rgb
+                if bg is not None and y_hi - y_lo >= 4 and x_hi - x_lo >= 8:
+                    win = img[y_lo:y_hi, x_lo:x_hi].astype(int)
+                    has_ink = (np.abs(win - np.asarray(bg, dtype=int))
+                               .max(axis=2) > 60).sum(axis=0) >= 2
+                    runs, s = [], None
+                    for j, v in enumerate(has_ink):
+                        if not v and s is None:
+                            s = j
+                        elif v and s is not None:
+                            runs.append((s, j))
+                            s = None
+                    if s is not None:
+                        runs.append((s, len(has_ink)))
+                    runs = [r for r in runs if r[1] - r[0] >= 4]
+                    if runs:
+                        lo, hi = max(runs, key=lambda r: r[1] - r[0])
+                        boundary = x_lo + (lo + hi) / 2
+                a._bbox = (ax0, ay0,
+                           min(ax1, boundary - COVER_PAD_PX), ay1)
+                b._bbox = (max(bx0, boundary + COVER_PAD_PX), by0, bx1, by1)
 
     @staticmethod
     def _arc_geometry(block, px_per_pt: float, img=None):
