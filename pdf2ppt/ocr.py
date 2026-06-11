@@ -77,17 +77,33 @@ def _restore_latin_gaps(text: str, words, img: np.ndarray) -> str:
         return text
     med_w = median(latin_widths)
 
+    # walk the ORIGINAL text so spaces the rec model itself emitted are
+    # preserved (word boxes never carry them); gap analysis only ADDS spaces
+    flat_chars: list[str] = []
+    flat_geoms = []
+    for ch, g in zip(chars, geoms):
+        for c in ch:
+            flat_chars.append(c)
+            flat_geoms.append(g)
+
     out = []
-    for i, ch in enumerate(chars):
-        g, p = geoms[i], geoms[i - 1] if i else None
-        if (out and g and p
-                and _is_latin_alnum(chars[i - 1][-1:])
-                and _is_latin_alnum(ch[:1])
+    ci = 0
+    for ch in text:
+        if ch == " ":
+            if out and out[-1] != " ":
+                out.append(" ")
+            continue
+        g = flat_geoms[ci]
+        p = flat_geoms[ci - 1] if ci else None
+        if (out and out[-1] != " " and g and p
+                and _is_latin_alnum(flat_chars[ci - 1])
+                and _is_latin_alnum(flat_chars[ci])
                 and g[0] - p[1] > LATIN_GAP_FACTOR * med_w
                 and _gap_is_blank(img, p[1], g[0],
                                   min(p[2], g[2]), max(p[3], g[3]))):
             out.append(" ")
         out.append(ch)
+        ci += 1
     return "".join(out)
 
 
