@@ -155,6 +155,15 @@ def _fix_warning_icon(text: str, char_boxes, img: np.ndarray):
     return text
 
 
+def _fix_trailing_degree(text: str) -> str:
+    """The rec model misreads a line-final ideographic full stop 。 as a
+    degree sign ° (same small circle, but rendered top-aligned). A real
+    degree is preceded by a digit; anything else gets the full stop."""
+    if text.endswith("°") and len(text) >= 2 and not text[-2].isdigit():
+        return text[:-1].rstrip() + "。"
+    return text
+
+
 def _pangu_spacing(text: str) -> str:
     text = _RE_CJK_TO_LAT.sub(r"\1 \2", text)
     text = _RE_LAT_TO_CJK.sub(r"\1 \2", text)
@@ -386,6 +395,7 @@ class OcrEngine:
                     ln.text, new_x1 = extended
                     ln.bbox = (ln.bbox[0], ln.bbox[1], new_x1, ln.bbox[3])
             ln.text = _pangu_spacing(ln.text).strip()
+            ln.text = _fix_trailing_degree(ln.text)
             ln.text = self._fix_simplified_strays(ln.text)
 
         lines.sort(key=lambda ln: (ln.bbox[1], ln.bbox[0]))
