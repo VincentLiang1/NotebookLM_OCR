@@ -79,7 +79,7 @@ class DeckBuilder:
         for i, block in enumerate(blocks):
             if len(block.lines) == 1 and block.lines[0].arc_sagitta:
                 self._add_arc_segments(slide, block, i, ex, ey,
-                                       px_per_pt=img_w / 960.0)
+                                       px_per_pt=img_w / 960.0, img=img)
                 continue
             nudge = round(LEADING_COMP * block.style.font_pt * EMU_PER_PT)
             tilted = (len(block.lines) == 1 and block.lines[0].angle
@@ -179,7 +179,7 @@ class DeckBuilder:
                     _set_east_asian_font(run, self.font_name)
 
     @staticmethod
-    def _arc_geometry(block, px_per_pt: float):
+    def _arc_geometry(block, px_per_pt: float, img=None):
         ln = block.lines[0]
         x0, y0, x1, y1 = ln.bbox
         glyph_h = min(block.style.font_pt * 1.2 * px_per_pt, (y1 - y0) * 0.8)
@@ -187,47 +187,119 @@ class DeckBuilder:
             y_mid, y_edge = y0 + glyph_h / 2, y1 - glyph_h / 2
         else:                   # arch down
             y_mid, y_edge = y1 - glyph_h / 2, y0 + glyph_h / 2
+        # the rescue-fragment bbox is vertically inflated, so bbox-derived
+        # anchors sit tens of px off the real glyph band (measured: mid
+        # anchor 39px low, parabola depth 172px vs ~97px true on page 3).
+        # Re-anchor on measured ink-run centers (text-colored rows) at the
+        # chord center and +-0.65 flanks; two arc lines share the ribbon,
+        # so each probe picks the run nearest its own prediction.
+        if img is not None and block.style.text_rgb is not None:
+            import numpy as np
+            xc, half_w = (x0 + x1) / 2, (x1 - x0) / 2
+            tc = np.asarray(block.style.text_rgb, dtype=int)
+
+            def ink_center(t):
+                y_pred = y_mid + (y_edge - y_mid) * t * t
+                px = xc + t * half_w
+                x_lo = max(0, int(px - glyph_h))
+                x_hi = min(img.shape[1], int(px + glyph_h))
+                y_lo = max(0, int(y_pred - 1.6 * glyph_h))
+                y_hi = min(img.shape[0], int(y_pred + 1.6 * glyph_h))
+                if x_hi - x_lo < 8 or y_hi - y_lo < 8:
+                    return None
+                win = img[y_lo:y_hi, x_lo:x_hi].astype(int)
+                inkrow = (np.abs(win - tc).max(axis=2) < 40).sum(axis=1) >= 4
+                runs, s, last = [], None, None
+                for j, v in enumerate(inkrow):
+                    if v:
+                        if s is None:
+                            if last is not None and runs and \
+                                    j - last < 8:  # bridge AA breaks
+                                s = runs.pop()[0]
+                            else:
+                                s = j
+                        last = j
+                    elif s is not None:
+                        runs.append((s, last))
+                        s = None
+                if s is not None:
+                    runs.append((s, last))
+                runs = [r for r in runs if r[1] - r[0] >= 0.35 * glyph_h]
+                if not runs:
+                    return None
+                centers = [y_lo + (a + b) / 2 for a, b in runs]
+                return min(centers, key=lambda c: abs(c - y_pred))
+
+            c0 = ink_center(0.0)
+            if c0 is not None and abs(c0 - y_mid) < 1.2 * glyph_h:
+                depths = [(yf - c0) / 0.4225
+                          for yf in (ink_center(-0.65), ink_center(0.65))
+                          if yf is not None]
+                y_edge = c0 + (sum(depths) / len(depths) if depths
+                               else y_edge - y_mid)
+                y_mid = c0
         return ln, x0, y0, x1, y1, glyph_h, y_mid, y_edge
 
     @staticmethod
-    def _ribbon_limits(img, cx: float, yc: float, top: float, bot: float,
-                       fill_rgb, max_gap: int) -> tuple[float, float]:
+    def _ribbon_limits(img, sx0: float, sx1: float, yc: float, slope: float,
+                       top: float, bot: float, fill_rgb,
+                       glyph_h: float) -> tuple[float, float]:
         """Shrink a cover strip's vertical extent to the ribbon it sits on.
 
-        Walks up/down from the parabola center yc through a 5px-wide column,
-        following pixels near the fill color; glyph strokes interrupt the
-        ribbon for at most ~glyph_h, so gaps up to max_gap are bridged.
-        The walk stops short of the ribbon's edge band (darker rim + bright
-        highlight differ from the body by more than the tolerance), keeping
-        the strip from painting over the edge. Only ever shrinks — if the
-        ribbon fills the whole window the limits come back unchanged."""
+        Samples three columns across the strip and walks up/down from the
+        local tangent line, following pixels near the fill color. Glyph
+        strokes interrupt the ribbon only near the parabola center, so
+        long gaps (up to glyph_h) are bridged inside a +-0.9*glyph_h zone;
+        outside it only ~noise-sized gaps are allowed — otherwise the walk
+        bridges across the ribbon's edge band and white gap onto the
+        ribbon-colored dashes above and never clamps. Limits are taken in
+        the tangent frame (min/max over the samples), so the rotated
+        strip's corners stay inside too. Only ever shrinks — if the ribbon
+        fills the whole window the limits come back unchanged."""
         import numpy as np
 
         h, w = img.shape[:2]
-        x_lo, x_hi = max(0, int(cx) - 2), min(w, int(cx) + 3)
-        y_lo, y_hi = max(0, int(top)), min(h, int(bot) + 2)
-        if x_hi <= x_lo or y_hi - y_lo < 4:
-            return top, bot
-        band = img[y_lo:y_hi, x_lo:x_hi].astype(int)
         fill = np.asarray(fill_rgb, dtype=int)
-        col = (np.abs(band - fill).max(axis=2) < 32).mean(axis=1) >= 0.5
+        zone = 0.9 * glyph_h
+        gap_in, gap_out = int(glyph_h), 10
+        cx_m = (sx0 + sx1) / 2
+        r_top, r_bot = top - yc, bot - yc
+        off_top, off_bot = [], []
+        for fx in (0.15, 0.5, 0.85):
+            cx = sx0 + (sx1 - sx0) * fx
+            yci = yc + slope * (cx - cx_m)
+            x_lo, x_hi = max(0, int(cx) - 2), min(w, int(cx) + 3)
+            y_lo = max(0, int(yci + r_top))
+            y_hi = min(h, int(yci + r_bot) + 2)
+            if x_hi <= x_lo or y_hi - y_lo < 4:
+                continue
+            band = img[y_lo:y_hi, x_lo:x_hi].astype(int)
+            col = (np.abs(band - fill).max(axis=2) < 32).mean(axis=1) >= 0.5
 
-        def walk(idx_range):
-            last, gap = None, 0
-            for j in idx_range:
-                if col[j]:
-                    last, gap = j, 0
-                elif last is not None:
+            def walk(idx_range):
+                last, gap = None, 0
+                for j in idx_range:
+                    if col[j]:
+                        last, gap = j, 0
+                        continue
+                    if last is None:
+                        continue
                     gap += 1
-                    if gap > max_gap:
+                    allowed = gap_in if abs(y_lo + j - yci) <= zone \
+                        else gap_out
+                    if gap > allowed:
                         break
-            return last
+                return last
 
-        start = min(max(int(round(yc)) - y_lo, 0), len(col) - 1)
-        down = walk(range(start, len(col)))
-        up = walk(range(start, -1, -1))
-        new_bot = bot if down is None else min(bot, y_lo + down + 2)
-        new_top = top if up is None else max(top, y_lo + up - 2)
+            start = min(max(int(round(yci)) - y_lo, 0), len(col) - 1)
+            down = walk(range(start, len(col)))
+            up = walk(range(start, -1, -1))
+            if down is not None:
+                off_bot.append(y_lo + down + 2 - yci)
+            if up is not None:
+                off_top.append(y_lo + up - 2 - yci)
+        new_bot = min(bot, yc + min(off_bot)) if off_bot else bot
+        new_top = max(top, yc + max(off_top)) if off_top else top
         if new_bot - new_top < 4:
             return top, bot
         return new_top, new_bot
@@ -238,7 +310,7 @@ class DeckBuilder:
         import numpy as np
 
         ln, x0, y0, x1, y1, glyph_h, y_mid, y_edge = \
-            self._arc_geometry(block, px_per_pt)
+            self._arc_geometry(block, px_per_pt, img)
         style = block.style
 
         if not (self.cover and style.bg_rgb is not None):
@@ -267,7 +339,11 @@ class DeckBuilder:
         # how it is clamped; a tangent-aligned one hugs it
         n = 12
         xc, half_w = (x0 + x1) / 2, (x1 - x0) / 2
-        strip_h = glyph_h * 2.2
+        # 1.5x the glyph height: enough slack (~0.25 glyph_h per side) for
+        # parabola-fit residuals, small enough to leave the ribbon's soft
+        # edge gradients untouched (2.2x flattened the top edge into a
+        # hard line — user-reported)
+        strip_h = glyph_h * 1.5
         # adjacent strips differ in rotation; rotating about their own
         # centers opens wedge gaps at the far corners (~strip_h/2 * dslope
         # per side) where the original raster peeks through — widen each
@@ -290,8 +366,7 @@ class DeckBuilder:
                 # ribbon's edge band — shrink (never grow) to the ribbon
                 # extent actually present under the strip center
                 top, bot = self._ribbon_limits(
-                    img, cx_s, yc, top, bot, fill_rgb,
-                    max_gap=int(glyph_h))
+                    img, sx0, sx1, yc, slope, top, bot, fill_rgb, glyph_h)
             width = Emu(round((ex(sx1) - ex(sx0))
                               / max(0.5, math.cos(math.radians(ang))) * 1.04
                               + ex(extra_px)))
@@ -310,7 +385,7 @@ class DeckBuilder:
             strip.fill.fore_color.rgb = RGBColor(*fill_rgb)
 
     def _add_arc_segments(self, slide, block, i: int, ex, ey,
-                          px_per_pt: float) -> None:
+                          px_per_pt: float, img=None) -> None:
         """The arc text: chord segments along the parabola, each a small
         rotated shape at the local tangent. PowerPoint's prstTxWarp arch
         was tried first and abandoned — its drop/frame scaling is opaque
@@ -318,7 +393,7 @@ class DeckBuilder:
         import math
 
         ln, x0, y0, x1, y1, glyph_h, y_mid_t, y_edge_t = \
-            self._arc_geometry(block, px_per_pt)
+            self._arc_geometry(block, px_per_pt, img)
         style = block.style
         xc, half_w = (x0 + x1) / 2, (x1 - x0) / 2
         n_seg = max(3, min(6, round((x1 - x0) / (3.0 * max(glyph_h, 1)))))
