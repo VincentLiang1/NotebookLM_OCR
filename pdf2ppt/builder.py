@@ -204,18 +204,20 @@ class DeckBuilder:
         bg = np.asarray(style.bg_rgb, dtype=int)
         import math
 
-        def local_color(rx0, ry0, rx1, ry1):
-            if img is None:
-                return None
-            region = img[max(0, int(ry0)):max(1, int(ry1)),
-                         max(0, int(rx0)):max(1, int(rx1))]
-            if not region.size:
-                return None
-            px = region.reshape(-1, 3).astype(int)
-            near = np.abs(px - bg).max(axis=1) < 70
-            if near.sum() < 20:
-                return None
-            return tuple(int(v) for v in np.median(px[near], axis=0))
+        # ONE solid color for the whole arc (user-verified: a single
+        # accurate mid-tone blends fine, while per-strip colors/gradients
+        # introduce visible seams between strips): median of all
+        # ribbon-family pixels under the arc band
+        fill_rgb = style.bg_rgb
+        if img is not None:
+            region = img[max(0, int(y0)):max(1, int(y1)),
+                         max(0, int(x0)):max(1, int(x1))]
+            if region.size:
+                px = region.reshape(-1, 3).astype(int)
+                near = np.abs(px - bg).max(axis=1) < 70
+                if near.sum() >= 100:
+                    fill_rgb = tuple(int(v) for v in
+                                     np.median(px[near], axis=0))
 
         # rotated strips at the local tangent: a horizontal rectangle on
         # the sloped flank pokes its corner past the ribbon edge no matter
@@ -244,24 +246,8 @@ class DeckBuilder:
             strip.name = f"Text {i} cover {s}"
             strip.shadow.inherit = False
             strip.line.fill.background()
-            # the ribbon is shaded vertically: fill with a two-stop
-            # gradient sampled above/below the glyph band
-            c_top = local_color(sx0, yc - strip_h / 2, sx1, yc - glyph_h / 3)
-            c_bot = local_color(sx0, yc + glyph_h / 3, sx1, yc + strip_h / 2)
-            c_mid = local_color(sx0, yc - strip_h / 2, sx1, yc + strip_h / 2)
-            if c_top and c_bot:
-                try:
-                    strip.fill.gradient()
-                    stops = strip.fill.gradient_stops
-                    stops[0].color.rgb = RGBColor(*c_top)
-                    stops[1].color.rgb = RGBColor(*c_bot)
-                    strip.fill.gradient_angle = 90.0
-                except (AttributeError, ValueError):
-                    strip.fill.solid()
-                    strip.fill.fore_color.rgb = RGBColor(*(c_mid or style.bg_rgb))
-            else:
-                strip.fill.solid()
-                strip.fill.fore_color.rgb = RGBColor(*(c_mid or style.bg_rgb))
+            strip.fill.solid()
+            strip.fill.fore_color.rgb = RGBColor(*fill_rgb)
 
     def _add_arc_segments(self, slide, block, i: int, ex, ey,
                           px_per_pt: float) -> None:
