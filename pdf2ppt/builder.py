@@ -225,15 +225,27 @@ class DeckBuilder:
             # shrink the strip's edges until they sit on the ribbon: a
             # rectangle staircase that pokes past the ribbon boundary onto
             # the page background reads as jagged red teeth
-            xs = (sx0 + (sx1 - sx0) * 0.25, sx0 + (sx1 - sx0) * 0.75)
+            xs = tuple(sx0 + (sx1 - sx0) * f for f in (0.12, 0.5, 0.88))
             top = yc - glyph_h / 2 - pad
-            while (top < yc - glyph_h * 0.4
+            while (top < yc - glyph_h * 0.25
                    and not all(on_ribbon(x, top) for x in xs)):
-                top += 2
+                top += 1
             bot = yc + glyph_h / 2 + pad
-            while (bot > yc + glyph_h * 0.4
+            while (bot > yc + glyph_h * 0.25
                    and not all(on_ribbon(x, bot) for x in xs)):
-                bot -= 2
+                bot -= 1
+            # the ribbon is shaded, one global color shows as a patch —
+            # fill each strip with its own local ribbon color
+            fill_rgb = style.bg_rgb
+            if img is not None:
+                region = img[max(0, int(top)):max(1, int(bot)),
+                             max(0, int(sx0)):max(1, int(sx1))]
+                if region.size:
+                    px = region.reshape(-1, 3).astype(int)
+                    near = np.abs(px - bg).max(axis=1) < 70
+                    if near.sum() >= 30:
+                        fill_rgb = tuple(int(v) for v in
+                                         np.median(px[near], axis=0))
             strip = slide.shapes.add_shape(
                 MSO_SHAPE.RECTANGLE,
                 Emu(max(0, ex(sx0 - 1))), Emu(max(0, ey(top))),
@@ -243,7 +255,7 @@ class DeckBuilder:
             strip.shadow.inherit = False
             strip.line.fill.background()
             strip.fill.solid()
-            strip.fill.fore_color.rgb = RGBColor(*style.bg_rgb)
+            strip.fill.fore_color.rgb = RGBColor(*fill_rgb)
 
     def _add_arc_segments(self, slide, block, i: int, ex, ey,
                           px_per_pt: float) -> None:
