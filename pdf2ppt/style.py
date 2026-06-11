@@ -330,21 +330,26 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
         darkest = px_flat[lum.argsort()[: max(1, len(px_flat) // 10)]]
         text_rgb = tuple(int(v) for v in darkest.mean(axis=0).round())
 
-    # --- bold: ink coverage over the tight ink bbox ---
+    # --- bold: the 72dpi source blur erases the weight signal for small
+    # text (ink-coverage and stroke-width discriminators both measured
+    # fully overlapping distributions), so: large text is bold (titles in
+    # these decks always are), small text only when strokes are extreme ---
     if bold_mode == "always":
         bold = True
     elif bold_mode == "never":
         bold = False
+    elif font_pt >= 24:
+        bold = True
     else:
-        if len(rows) and len(cols):
-            tight = ink[rows[0]:rows[-1] + 1, cols[0]:cols[-1] + 1]
-            ink_ratio = float(tight.mean())
-        else:
-            ink_ratio = 0.0
-        # calibrated on the example deck: bold CJK labels measure >=0.33,
-        # regular latin labels <=0.29 (tiny blurry text reads high — accepted)
-        threshold = 0.32 if is_pure_latin(line.text) else 0.28
-        bold = ink_ratio > threshold
+        stroke_rel = 0.0
+        if len(rows):
+            band = ink[rows[0]:rows[-1] + 1]
+            n = int(band.sum())
+            if n >= 30:
+                survival1 = float(_erode(band).sum()) / n
+                stroke_w = 2.0 / max(0.05, 1.0 - survival1)
+                stroke_rel = stroke_w / max(1.0, ink_h_px)
+        bold = stroke_rel >= 0.13
 
     return Style(
         font_pt=font_pt,

@@ -65,12 +65,14 @@ class DeckBuilder:
                 x0, y0, x1, y1 = block.bbox
                 left = ex(x0 - COVER_PAD_PX)
                 width = ex(x1 + COVER_PAD_PX) - left
-                # text frame is top-anchored: place its top so the first
-                # line's glyph ink lands where the raster ink is, while
-                # still covering the whole OCR box with the fill
+                # the shape doubles as cover (must span the whole OCR box)
+                # and text frame (the first line's glyphs must land on the
+                # raster ink): decouple them with a top inset
                 ink_top = ey(block.style.ink_top_px)
-                top = min(ink_top - nudge, ey(y0 - COVER_PAD_PX))
+                text_top = ink_top - nudge
+                top = min(text_top, ey(y0 - COVER_PAD_PX))
                 height = ey(y1 + COVER_PAD_PX) - top
+                margin_top = max(0, text_top - top)
 
             shape = slide.shapes.add_shape(
                 MSO_SHAPE.RECTANGLE, Emu(max(0, left)), Emu(max(0, top)),
@@ -78,6 +80,7 @@ class DeckBuilder:
             )
             if tilted:
                 shape.rotation = block.lines[0].angle
+                margin_top = 0
             shape.name = f"Text {i}"
             shape.shadow.inherit = False
             shape.line.fill.background()
@@ -93,7 +96,8 @@ class DeckBuilder:
             tf.word_wrap = len(block.lines) > 1
             tf.auto_size = None
             tf.vertical_anchor = MSO_ANCHOR.TOP
-            tf.margin_left = tf.margin_right = tf.margin_top = tf.margin_bottom = 0
+            tf.margin_left = tf.margin_right = tf.margin_bottom = 0
+            tf.margin_top = Emu(margin_top)
 
             for j, line in enumerate(block.lines):
                 para = tf.paragraphs[0] if j == 0 else tf.add_paragraph()
