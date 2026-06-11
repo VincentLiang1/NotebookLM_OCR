@@ -308,11 +308,24 @@ class OcrEngine:
 
         plain_old = line.text.replace(" ", "")
         plain_new = cand.replace(" ", "")
-        if (score >= 0.8 and plain_new.startswith(plain_old)
+        if not (score >= 0.8 and plain_new.startswith(plain_old)
                 and 1 <= len(plain_new) - len(plain_old) <= 2
                 and all(c in TRAIL_PUNCT for c in plain_new[len(plain_old):])):
-            return cand
-        return None
+            return None
+        # widen the box to the recovered punctuation's actual ink, so the
+        # cover hides the raster glyph too; stop at the first big gap so a
+        # neighboring column's ink can't drag the box across
+        scan = img_rgb[y0:y1, x1:min(iw, x1 + round(1.2 * h))]
+        med = np.median(scan.reshape(-1, 3), axis=0)
+        ink_cols = np.where(
+            (np.abs(scan.astype(int) - med).max(axis=2) > 60).sum(axis=0) >= 2)[0]
+        end = None
+        for c in ink_cols:
+            if end is not None and c - end > 0.4 * h:
+                break
+            end = c
+        new_x1 = float(x1 + end + 4) if end is not None else line.bbox[2]
+        return cand, new_x1
 
     def recognize(self, img_rgb: np.ndarray, min_score: float = 0.5) -> list[Line]:
         # use_det/use_cls/use_rec persist across calls inside RapidOCR, so
@@ -370,7 +383,8 @@ class OcrEngine:
             if ln.angle == 0.0:
                 extended = self._extend_trailing(img_rgb, ln)
                 if extended:
-                    ln.text = extended
+                    ln.text, new_x1 = extended
+                    ln.bbox = (ln.bbox[0], ln.bbox[1], new_x1, ln.bbox[3])
             ln.text = _pangu_spacing(ln.text).strip()
             ln.text = self._fix_simplified_strays(ln.text)
 
