@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# conversion outputs and debug artifacts
+generated.pptx
+*.debug.json
+*.debug.p*.png
+verify/
+
+# large example/reference decks (kept locally, not versioned)
+LLM WikiI資料攝入工作流.pdf
+LLM WikiI資料攝入工作流.pptx
+DECKEDIT結果.pptx
+
+# Office lock files
+~$*

@@ -1,0 +1,7 @@
+pymupdf>=1.27
+python-pptx>=1.0
+pillow>=10
+numpy
+rapidocr>=3.8
+onnxruntime>=1.26
+opencc-python-reimplemented
