@@ -297,6 +297,19 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
     bold_mode: 'auto' | 'never' | 'always'.
     """
     x0, y0, x1, y1 = (int(round(v)) for v in line.bbox)
+    chord_pt = (x1 - x0) * px_to_slide_pt
+
+    # arc text: analyze only the middle third of the chord, at the arc's
+    # own end of the box (locally flat, free of the parallel ribbon line
+    # that interpenetrates the full bbox and poisons every color sample)
+    if line.arc_sagitta:
+        w_full, h_full = x1 - x0, y1 - y0
+        x0 += w_full // 3
+        x1 -= w_full // 3
+        if line.arc_sagitta < 0:  # arch down: middle glyphs at the bottom
+            y0 = y1 - round(0.5 * h_full)
+        else:
+            y1 = y0 + round(0.5 * h_full)
 
     # --- background color: ring around the box ---
     if line.angle and line.center and line.size:
@@ -404,17 +417,6 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
     # would otherwise pollute the width with non-glyph "ink"
     band = ink[rows[0]:rows[-1] + 1] if len(rows) else ink
     cols = np.where(band.sum(axis=0) >= 1)[0]
-    if line.arc_sagitta:
-        # arc text: the row band spans the whole arc; the glyph height is
-        # the per-column ink extent (low percentile dodges columns where a
-        # parallel ribbon line intrudes into the box)
-        extents = []
-        for c in range(ink.shape[1]):
-            ys_c = np.nonzero(ink[:, c])[0]
-            if len(ys_c):
-                extents.append(ys_c[-1] - ys_c[0] + 1)
-        if extents:
-            ink_h_px = float(np.percentile(extents, 30))
     ratio = (latin_ink_ratio(line.text) if is_pure_latin(line.text)
              else CJK_INK_RATIO)
     ink_h_eff = max(ink_h_px - BLUR_PX, ink_h_px * 0.6)
@@ -422,9 +424,9 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
     em_width = _measure_em(line.text) or text_width_em(line.text)
     max_pt, tol = None, 1.10
     if line.arc_sagitta and em_width > 0:
-        # arc text must fit its chord or the warped glyphs overlap; the
-        # in-box ink measurements are polluted by the parallel ribbon line
-        max_pt, tol = (x1 - x0) * px_to_slide_pt / em_width, 0.92
+        # arc text must fit its chord with margin: the chord segments
+        # overlap slightly at their joints, so err small
+        max_pt, tol = chord_pt / em_width, 0.85
     elif em_width > 0 and len(cols):
         room = _chip_room_right(img, line, bg_rgb, rows, y0)
         if room is not None:

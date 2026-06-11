@@ -174,8 +174,9 @@ class DeckBuilder:
                 t = ((sx0 + sx1) / 2 - xc) / half_w
                 yc = y_mid + (y_edge - y_mid) * t * t
                 # generous pad: the raster arc is circular, our model is a
-                # parabola — the flanks deviate by a few px
-                pad = max(COVER_PAD_PX, 0.3 * glyph_h)
+                # parabola — the flanks deviate; the strips sit on the
+                # ribbon's own color so overshoot is invisible
+                pad = max(COVER_PAD_PX, 0.5 * glyph_h)
                 strip = slide.shapes.add_shape(
                     MSO_SHAPE.RECTANGLE,
                     Emu(max(0, ex(sx0 - 1))),
