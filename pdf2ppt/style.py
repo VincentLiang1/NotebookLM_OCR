@@ -389,6 +389,18 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
     rows = np.where((row_counts >= MIN_INK_ROW_PX)
                     & (row_counts <= MAX_INK_ROW_FRAC * row_w))[0]
     if len(rows):
+        # a structure line clipped at the box edge slips under
+        # MAX_INK_ROW_FRAC via its rounded corners / AA transition (page 9
+        # "images/": pill border rows at 0.67 width) and would stretch the
+        # ink bounds onto the border — the cover then paints over it.
+        # The glyph band is one row-group; split on big blank gaps and
+        # keep the heaviest group (the border sliver carries ~10% of the
+        # mass and sits 16 blank rows away).
+        gap = max(8.0, 0.12 * ink.shape[0])
+        splits = np.where(np.diff(rows) > gap)[0]
+        if len(splits):
+            groups = np.split(rows, splits + 1)
+            rows = max(groups, key=lambda g: int(row_counts[g].sum()))
         ink_h_px = float(rows[-1] - rows[0] + 1)
         ink_top_px = y0 + float(rows[0])
         ink_bottom_px = y0 + float(rows[-1] + 1)
