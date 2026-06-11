@@ -1,4 +1,4 @@
-# pdf2ppt
+# NotebookLM_PDF_2_PPT
 
 把 **NotebookLM 產出的 PDF 簡報** OCR 後轉換成**可編輯的 PowerPoint**。完全在本地執行、資料零上傳。
 
