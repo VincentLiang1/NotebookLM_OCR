@@ -93,8 +93,9 @@ _MEASURE_FONT: object = None
 
 
 def _measure_em(text: str) -> float | None:
-    """Exact advance width of the text in em, measured with the real Noto
-    Sans TC font; None when the font file isn't available."""
+    """Exact advance width of the text in em, measured with the real
+    output font (Microsoft YaHei, Noto fallback); None when no font file
+    is available."""
     global _MEASURE_FONT
     if _MEASURE_FONT is None:
         import os
@@ -102,6 +103,7 @@ def _measure_em(text: str) -> float | None:
         from PIL import ImageFont
 
         for path in (
+            r"C:\Windows\Fonts\msyh.ttc",
             os.path.expandvars(
                 r"%LOCALAPPDATA%\Microsoft\Windows\Fonts\NotoSansTC-Regular.ttf"),
             r"C:\Windows\Fonts\NotoSansTC-VF.ttf",

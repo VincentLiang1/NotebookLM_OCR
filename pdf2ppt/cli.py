@@ -74,7 +74,7 @@ def main(argv: list[str] | None = None) -> int:
     bold = ap.add_mutually_exclusive_group()
     bold.add_argument("--no-bold", action="store_true", help="never mark text bold")
     bold.add_argument("--force-bold", action="store_true", help="mark all text bold")
-    ap.add_argument("--font", default="Noto Sans TC", help='font name (default "Noto Sans TC")')
+    ap.add_argument("--font", default="Microsoft YaHei", help='font name (default "Microsoft YaHei")')
     ap.add_argument("--debug", action="store_true", help="write OCR overlay PNGs + JSON next to output")
     args = ap.parse_args(argv)
 
