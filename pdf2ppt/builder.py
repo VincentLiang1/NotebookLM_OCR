@@ -235,13 +235,24 @@ class DeckBuilder:
                 bounds.append(max(cut, bounds[-1]))
                 target_idx += 1
         bounds.append(len(text))
+        # pack segments by their actual text width, centered on the chord:
+        # spreading them across the full chord turns the font-cap slack
+        # into visible gaps between segments
+        font_px = style.font_pt * px_per_pt
+        em_at = [0.0]
+        for s in range(n_seg):
+            seg_em_s = sum(adv[bounds[s]:bounds[s + 1]])
+            em_at.append(em_at[-1] + seg_em_s)
+        em_total = em_at[-1] or 1.0
+        span = min(x1 - x0, em_total * font_px * 1.0)
+        sx_origin = xc - span / 2
         for s in range(n_seg):
             seg_text = text[bounds[s]:bounds[s + 1]].strip()
             if not seg_text:
                 continue
-            sx0 = x0 + (x1 - x0) * s / n_seg
-            sx1 = x0 + (x1 - x0) * (s + 1) / n_seg
-            t = ((sx0 + sx1) / 2 - xc) / half_w
+            em_mid = (em_at[s] + em_at[s + 1]) / 2
+            cx_seg = sx_origin + span * em_mid / em_total
+            t = (cx_seg - xc) / half_w
             yc = y_mid_t + (y_edge_t - y_mid_t) * t * t
             slope = 2 * (y_edge_t - y_mid_t) * t / half_w
             ang = math.degrees(math.atan(slope))
@@ -249,7 +260,7 @@ class DeckBuilder:
                          (0.33 if c == " " else 0.52) for c in seg_text)
             width = Emu(round(seg_em * style.font_pt * EMU_PER_PT * 1.06))
             height = Emu(ey(yc + glyph_h / 2) - ey(yc - glyph_h / 2))
-            left = Emu(ex((sx0 + sx1) / 2) - width // 2)
+            left = Emu(ex(cx_seg) - width // 2)
             top = Emu(ey(yc) - height // 2)
             seg = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, left, top,
                                          width, height)
