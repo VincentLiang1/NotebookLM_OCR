@@ -119,7 +119,8 @@ def main(argv: list[str] | None = None) -> int:
             lines, styles = kept_lines, kept_styles
 
         blocks = lines_to_blocks(lines, styles, merge=args.merge_lines)
-        builder.add_slide(png, blocks, img.shape[1], img.shape[0], wipes=wipes)
+        builder.add_slide(png, blocks, img.shape[1], img.shape[0],
+                          wipes=wipes, img=img)
         print(f"page {idx + 1} ({n}/{len(page_indices)}): {len(lines)} lines, "
               f"{len(blocks)} shapes"
               + (f", {len(wipes)} watermark wiped" if wipes else ""))

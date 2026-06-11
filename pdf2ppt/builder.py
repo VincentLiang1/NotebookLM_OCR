@@ -35,10 +35,12 @@ class DeckBuilder:
 
     def add_slide(self, png_bytes: bytes, blocks: list[TextBlock],
                   img_w: int, img_h: int,
-                  wipes: list[tuple[tuple, tuple]] | None = None) -> None:
+                  wipes: list[tuple[tuple, tuple]] | None = None,
+                  img=None) -> None:
         """wipes: [(bbox_px, rgb)] — text-less cover rectangles that blank
         out regions (e.g. the NotebookLM watermark) with the background
-        color."""
+        color. img: the page render (numpy RGB), used to clamp arc cover
+        strips to their ribbon."""
         slide = self.prs.slides.add_slide(self.blank_layout)
         pic = slide.shapes.add_picture(
             BytesIO(png_bytes), 0, 0,
@@ -72,7 +74,7 @@ class DeckBuilder:
                       if len(b.lines) == 1 and b.lines[0].arc_sagitta]
         for i, block in arc_blocks:
             self._add_arc_cover(slide, block, i, ex, ey,
-                                px_per_pt=img_w / 960.0)
+                                px_per_pt=img_w / 960.0, img=img)
 
         for i, block in enumerate(blocks):
             if len(block.lines) == 1 and block.lines[0].arc_sagitta:
@@ -188,39 +190,60 @@ class DeckBuilder:
         return ln, x0, y0, x1, y1, glyph_h, y_mid, y_edge
 
     def _add_arc_cover(self, slide, block, i: int, ex, ey,
-                       px_per_pt: float) -> None:
+                       px_per_pt: float, img=None) -> None:
         """Cover strips tracing the arc band (drawn before ALL arc text)."""
+        import numpy as np
+
         ln, x0, y0, x1, y1, glyph_h, y_mid, y_edge = \
             self._arc_geometry(block, px_per_pt)
         style = block.style
 
-        if self.cover and style.bg_rgb is not None:
-            # cover strips along the arc rather than one blocky rectangle:
-            # reconstruct the parabola from the box (edges hold the glyphs
-            # at one end of the box, the middle at the other)
-            n = 12
-            xc, half_w = (x0 + x1) / 2, (x1 - x0) / 2
-            for s in range(n):
-                sx0 = x0 + (x1 - x0) * s / n
-                sx1 = x0 + (x1 - x0) * (s + 1) / n
-                t = ((sx0 + sx1) / 2 - xc) / half_w
-                yc = y_mid + (y_edge - y_mid) * t * t
-                # generous pad: the raster arc is circular, our model is a
-                # parabola — the flanks deviate; the strips sit on the
-                # ribbon's own color so overshoot is invisible
-                pad = max(COVER_PAD_PX, 0.5 * glyph_h)
-                strip = slide.shapes.add_shape(
-                    MSO_SHAPE.RECTANGLE,
-                    Emu(max(0, ex(sx0 - 1))),
-                    Emu(max(0, ey(yc - glyph_h / 2 - pad))),
-                    Emu(ex(sx1 + 1) - ex(sx0 - 1)),
-                    Emu(ey(yc + glyph_h / 2 + pad) - ey(yc - glyph_h / 2 - pad)),
-                )
-                strip.name = f"Text {i} cover {s}"
-                strip.shadow.inherit = False
-                strip.line.fill.background()
-                strip.fill.solid()
-                strip.fill.fore_color.rgb = RGBColor(*style.bg_rgb)
+        if not (self.cover and style.bg_rgb is not None):
+            return
+
+        bg = np.asarray(style.bg_rgb, dtype=int)
+
+        def on_ribbon(px_x: float, px_y: float) -> bool:
+            if img is None:
+                return True
+            h_img, w_img = img.shape[:2]
+            xi = min(max(int(px_x), 0), w_img - 1)
+            yi = min(max(int(px_y), 0), h_img - 1)
+            return int(np.abs(img[yi, xi].astype(int) - bg).max()) < 70
+
+        # cover strips along the arc rather than one blocky rectangle:
+        # reconstruct the parabola from the box (edges hold the glyphs at
+        # one end of the box, the middle at the other)
+        n = 12
+        xc, half_w = (x0 + x1) / 2, (x1 - x0) / 2
+        for s in range(n):
+            sx0 = x0 + (x1 - x0) * s / n
+            sx1 = x0 + (x1 - x0) * (s + 1) / n
+            t = ((sx0 + sx1) / 2 - xc) / half_w
+            yc = y_mid + (y_edge - y_mid) * t * t
+            pad = max(COVER_PAD_PX, 0.5 * glyph_h)
+            # shrink the strip's edges until they sit on the ribbon: a
+            # rectangle staircase that pokes past the ribbon boundary onto
+            # the page background reads as jagged red teeth
+            xs = (sx0 + (sx1 - sx0) * 0.25, sx0 + (sx1 - sx0) * 0.75)
+            top = yc - glyph_h / 2 - pad
+            while (top < yc - glyph_h * 0.4
+                   and not all(on_ribbon(x, top) for x in xs)):
+                top += 2
+            bot = yc + glyph_h / 2 + pad
+            while (bot > yc + glyph_h * 0.4
+                   and not all(on_ribbon(x, bot) for x in xs)):
+                bot -= 2
+            strip = slide.shapes.add_shape(
+                MSO_SHAPE.RECTANGLE,
+                Emu(max(0, ex(sx0 - 1))), Emu(max(0, ey(top))),
+                Emu(ex(sx1 + 1) - ex(sx0 - 1)), Emu(ey(bot) - ey(top)),
+            )
+            strip.name = f"Text {i} cover {s}"
+            strip.shadow.inherit = False
+            strip.line.fill.background()
+            strip.fill.solid()
+            strip.fill.fore_color.rgb = RGBColor(*style.bg_rgb)
 
     def _add_arc_segments(self, slide, block, i: int, ex, ey,
                           px_per_pt: float) -> None:
