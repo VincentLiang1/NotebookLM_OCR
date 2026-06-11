@@ -16,8 +16,27 @@ FONT_SIZES = [8, 9, 10, 10.5, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36, 40, 44, 48
 
 # Fraction of the em square the glyph ink occupies in Noto Sans TC
 # (calibrated by rendering output via PowerPoint and re-measuring the ink)
-CJK_INK_RATIO = 0.91
-LATIN_INK_RATIO = 0.72  # cap height + descender for a typical latin line
+CJK_INK_RATIO = 0.875
+# latin ink extent depends on which letterforms appear: x-height base,
+# plus ascenders/capitals, plus descenders (Z-Library spans ~0.94 em while
+# Format spans ~0.74 — one fixed ratio mis-sizes one or the other)
+_LATIN_X = 0.52
+_LATIN_ASC = 0.22
+_LATIN_DESC = 0.20
+_ASC_CHARS = set("bdfhklt/()[]{}|!?'\"$")
+_DESC_CHARS = set("gjpqy()[]{}|/$;,")
+
+
+def latin_ink_ratio(text: str) -> float:
+    ratio = _LATIN_X
+    if any(c.isupper() or c.isdigit() or c in _ASC_CHARS for c in text):
+        ratio += _LATIN_ASC
+    if any(c in _DESC_CHARS for c in text):
+        ratio += _LATIN_DESC
+    return ratio
+# the 72dpi source raster blurs glyph edges ~3px out on each side at the
+# 200dpi render; subtract before the ratio or small text reads a size big
+BLUR_PX = 6
 
 RING_PX = 4            # background sampled from this ring around the bbox
 BG_MIN_SHARE = 0.55    # below this dominance the ring is not a flat background
@@ -239,6 +258,39 @@ def _split_color_runs(img: np.ndarray, line: Line, bg_ref: np.ndarray):
             for s in segments]
 
 
+ROOM_MAX_FACTOR = 1.5   # scan at most this many line-heights of side room
+ROOM_BG_DIST = 40       # a column is "free" if its pixels match the cover bg
+ROOM_FREE_FRAC = 0.9
+
+
+def _chip_room_right(img: np.ndarray, line: Line, bg_rgb, rows,
+                     y0: int) -> float | None:
+    """How many pixels of unobstructed background extend past the box's
+    right edge before a border/edge — the true space the rendered text may
+    grow into. None when there is no cover color or no measured rows."""
+    if bg_rgb is None or not len(rows):
+        return None
+    h, w = img.shape[:2]
+    x1 = int(round(line.bbox[2]))
+    band_h = rows[-1] - rows[0] + 1
+    r0 = y0 + rows[0] + band_h // 4
+    r1 = y0 + rows[-1] - band_h // 4 + 1
+    if r1 <= r0 or x1 >= w:
+        return 0.0
+    limit = min(w, x1 + int(ROOM_MAX_FACTOR * max(band_h, 1)))
+    strip = img[r0:r1, x1:limit].astype(int)
+    if strip.size == 0:
+        return 0.0
+    free = (np.abs(strip - np.asarray(bg_rgb)).max(axis=2)
+            < ROOM_BG_DIST).mean(axis=0) >= ROOM_FREE_FRAC
+    room = 0
+    for ok in free:
+        if not ok:
+            break
+        room += 1
+    return float(room)
+
+
 def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
                    bold_mode: str = "auto") -> Style:
     """px_to_slide_pt: slide points per image pixel (960 / image_width).
@@ -324,9 +376,11 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
     if len(rows):
         ink_h_px = float(rows[-1] - rows[0] + 1)
         ink_top_px = y0 + float(rows[0])
+        ink_bottom_px = y0 + float(rows[-1] + 1)
     else:  # OCR found text the ink threshold can't see; fall back to box
         ink_h_px = float(y1 - y0)
         ink_top_px = float(y0)
+        ink_bottom_px = float(y1)
 
     # --- halo refinement: the cover color should match the pixels near the
     # glyphs, not the ring (which may lie on a different band, e.g. black
@@ -346,15 +400,26 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
 
     # --- font size: ink height -> em, clamped so the line can't outgrow
     # the measured ink width (detector box widths are unreliable) ---
-    cols = np.where(ink.sum(axis=0) >= 1)[0]
-    ratio = LATIN_INK_RATIO if is_pure_latin(line.text) else CJK_INK_RATIO
-    font_pt = ink_h_px * px_to_slide_pt / ratio
+    # columns only from the text row band: box edges crossing a chip border
+    # would otherwise pollute the width with non-glyph "ink"
+    band = ink[rows[0]:rows[-1] + 1] if len(rows) else ink
+    cols = np.where(band.sum(axis=0) >= 1)[0]
+    ratio = (latin_ink_ratio(line.text) if is_pure_latin(line.text)
+             else CJK_INK_RATIO)
+    ink_h_eff = max(ink_h_px - BLUR_PX, ink_h_px * 0.6)
+    font_pt = ink_h_eff * px_to_slide_pt / ratio
     em_width = _measure_em(line.text) or text_width_em(line.text)
     max_pt, tol = None, 1.10
     if em_width > 0 and len(cols):
-        ink_w_pt = float(cols[-1] - cols[0] + 1) * px_to_slide_pt
-        max_pt = ink_w_pt / em_width
-        tol = width_tolerance(em_width)
+        room = _chip_room_right(img, line, bg_rgb, rows, y0)
+        if room is not None:
+            # measured space before the chip/cell border binds directly
+            avail_pt = ((x1 - x0) + room) * px_to_slide_pt
+            max_pt, tol = avail_pt / em_width, 1.02
+        else:
+            ink_w_pt = float(cols[-1] - cols[0] + 1) * px_to_slide_pt
+            max_pt = ink_w_pt / em_width
+            tol = width_tolerance(em_width)
     font_pt = snap_font_size(min(font_pt, max_pt * tol) if max_pt else font_pt,
                              max_pt=max_pt, tol=tol)
 
@@ -398,5 +463,6 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
         text_rgb=text_rgb,
         bg_rgb=bg_rgb,
         ink_top_px=ink_top_px,
+        ink_bottom_px=ink_bottom_px,
         runs=_split_color_runs(img, line, bg_ref),
     )

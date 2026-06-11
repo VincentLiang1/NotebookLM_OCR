@@ -82,13 +82,21 @@ class DeckBuilder:
                 x0, y0, x1, y1 = block.bbox
                 left = ex(x0 - COVER_PAD_PX)
                 width = ex(x1 + COVER_PAD_PX) - left
-                # the shape doubles as cover (must span the whole OCR box)
-                # and text frame (the first line's glyphs must land on the
-                # raster ink): decouple them with a top inset
+                # cover height follows the glyph ink band, not the OCR box:
+                # detector boxes carry large vertical slack that would paint
+                # over diagram lines above/below the text. The text frame
+                # top is decoupled from the cover top via a margin inset.
+                if len(block.lines) == 1 and block.style.ink_bottom_px:
+                    cov_h = block.style.ink_bottom_px - block.style.ink_top_px
+                    pad_v = max(4.0, 0.08 * cov_h)
+                    cov_y0 = block.style.ink_top_px - pad_v
+                    cov_y1 = block.style.ink_bottom_px + pad_v
+                else:
+                    cov_y0, cov_y1 = y0 - COVER_PAD_PX, y1 + COVER_PAD_PX
                 ink_top = ey(block.style.ink_top_px)
                 text_top = ink_top - nudge
-                top = min(text_top, ey(y0 - COVER_PAD_PX))
-                height = ey(y1 + COVER_PAD_PX) - top
+                top = min(text_top, ey(cov_y0))
+                height = ey(cov_y1) - top
                 margin_top = max(0, text_top - top)
 
             shape = slide.shapes.add_shape(

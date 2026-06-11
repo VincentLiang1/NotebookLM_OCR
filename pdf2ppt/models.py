@@ -35,7 +35,8 @@ class Style:
     bold: bool
     text_rgb: tuple[int, int, int]
     bg_rgb: tuple[int, int, int] | None  # None => no cover fill (gradient/photo)
-    ink_top_px: float = 0.0  # top of the actual glyph ink, image px
+    ink_top_px: float = 0.0     # top of the actual glyph ink, image px
+    ink_bottom_px: float = 0.0  # bottom of the actual glyph ink, image px
     # multi-color lines: [(char_count, rgb), ...] over the space-stripped
     # text; None when the whole line is one color
     runs: list[tuple[int, tuple[int, int, int]]] | None = None

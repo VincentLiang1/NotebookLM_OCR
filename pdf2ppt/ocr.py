@@ -23,7 +23,9 @@ LATIN_GAP_FACTOR = 0.33  # space if gap > this fraction of median char width
 RESCUE_SCORE = 0.75      # lines below this confidence get the rotation rescue
 RESCUE_ANGLES = (0, -3, 3, -6, 6, -9, 9)  # degrees, for tilted-ribbon text
 RESCUE_MARGIN = 0.05     # a candidate must beat the original by this much
-MIN_TILT_DEG = 2.0       # quad tilt below this is detector jitter, not slant
+MIN_TILT_DEG = 2.0       # rescue-path tilt below this is noise (OCR-verified)
+QUAD_TILT_DEG = 5.0      # detector quads jitter up to ~3.2 deg on short
+                         # labels; real slanted band text measures 26+
 
 # trailing punctuation the detector tends to crop off line ends
 TRAIL_PUNCT = set("。．.，,、；;：:！!？?）)」』】%…")
@@ -363,7 +365,7 @@ class OcrEngine:
             # the detector returns rotated quads for slanted band text
             edge = (quad[1] - quad[0]) + (quad[2] - quad[3])
             ang = math.degrees(math.atan2(edge[1], edge[0]))
-            if abs(ang) < MIN_TILT_DEG or abs(ang) > 45:
+            if abs(ang) < QUAD_TILT_DEG or abs(ang) > 45:
                 ang = 0.0
             w = (np.linalg.norm(quad[1] - quad[0])
                  + np.linalg.norm(quad[2] - quad[3])) / 2
