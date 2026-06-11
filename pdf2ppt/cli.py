@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pymupdf
 
-from .blocks import lines_to_blocks
+from .blocks import harmonize_font_sizes, lines_to_blocks
 from .builder import DeckBuilder
 from .ocr import OcrEngine
 from .render import render_page
@@ -118,6 +118,7 @@ def main(argv: list[str] | None = None) -> int:
                     kept_styles.append(st)
             lines, styles = kept_lines, kept_styles
 
+        harmonize_font_sizes(lines, styles)
         blocks = lines_to_blocks(lines, styles, merge=args.merge_lines)
         builder.add_slide(png, blocks, img.shape[1], img.shape[0],
                           wipes=wipes, img=img)

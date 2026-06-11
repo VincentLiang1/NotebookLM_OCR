@@ -8,6 +8,7 @@ from __future__ import annotations
 import numpy as np
 
 from .models import ALIGN_CENTER, ALIGN_LEFT, ALIGN_RIGHT, Line, Style, TextBlock
+from .style import FONT_SIZES, snap_font_size
 
 
 def lines_to_blocks(lines: list[Line], styles: list[Style],
@@ -37,6 +38,84 @@ def lines_to_blocks(lines: list[Line], styles: list[Style],
             align=_detect_align([lines[i] for i in g]),
         ))
     return blocks
+
+
+def harmonize_font_sizes(lines: list[Line], styles: list[Style],
+                         ) -> None:
+    """Wrapped lines of one paragraph must share a font size.
+
+    The band measurement carries ~±3px of 72dpi blur noise, and the
+    14/16pt snap boundary sits inside that noise: p10's "CB 詢圈案例/…"
+    measured 12.6pt while its wrap-mate "法規或生辰八字" measured 14.1pt
+    from visually identical glyphs. Per-line estimation cannot resolve
+    this (widening the per-char consensus to all CJK lines just moved the
+    flips elsewhere), so: group vertical neighbors that share style and
+    whose pre-snap estimates differ within noise (12%), and when such a
+    group snapped to two adjacent FONT_SIZES steps, unify — majority
+    wins, ties re-snap the group's median estimate."""
+    n = len(lines)
+    parent = list(range(n))
+
+    def find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    def ok(i: int) -> bool:
+        return (not lines[i].angle and not lines[i].arc_sagitta
+                and styles[i].est_pt > 0)
+
+    for i in range(n):
+        if not ok(i):
+            continue
+        for j in range(n):
+            if j == i or not ok(j):
+                continue
+            a, b = (i, j) if lines[i].bbox[1] <= lines[j].bbox[1] else (j, i)
+            la, lb = lines[a], lines[b]
+            sa, sb = styles[a], styles[b]
+            h = min(la.height, lb.height)
+            gap = lb.bbox[1] - la.bbox[3]
+            if not (-0.6 * h < gap < 0.45 * h):
+                continue
+            ox = min(la.bbox[2], lb.bbox[2]) - max(la.bbox[0], lb.bbox[0])
+            if ox < 0.4 * min(la.width, lb.width):
+                continue
+            if sa.bold != sb.bold:
+                continue
+            if (sa.bg_rgb is None) != (sb.bg_rgb is None):
+                continue
+            if sa.bg_rgb is not None and max(
+                    abs(x - y) for x, y in zip(sa.bg_rgb, sb.bg_rgb)) > 16:
+                continue
+            if max(abs(x - y) for x, y in zip(sa.text_rgb, sb.text_rgb)) > 45:
+                continue
+            if abs(sa.est_pt - sb.est_pt) > 0.12 * max(sa.est_pt, sb.est_pt):
+                continue
+            parent[find(i)] = find(j)
+
+    groups: dict[int, list[int]] = {}
+    for i in range(n):
+        groups.setdefault(find(i), []).append(i)
+    for g in groups.values():
+        sizes = sorted({styles[i].font_pt for i in g})
+        if len(sizes) < 2:
+            continue
+        idx = sorted(FONT_SIZES.index(s) for s in sizes if s in FONT_SIZES)
+        if len(idx) != len(sizes) or idx[-1] - idx[0] > len(sizes) - 1:
+            continue  # only adjacent snap steps qualify as the same size
+        counts = {s: sum(1 for i in g if styles[i].font_pt == s)
+                  for s in sizes}
+        best = max(counts.values())
+        leaders = [s for s, c in counts.items() if c == best]
+        if len(leaders) == 1:
+            target = leaders[0]
+        else:
+            med = float(np.median([styles[i].est_pt for i in g]))
+            target = snap_font_size(med)
+        for i in g:
+            styles[i].font_pt = target
 
 
 def _belongs(a: Line, b: Line) -> bool:

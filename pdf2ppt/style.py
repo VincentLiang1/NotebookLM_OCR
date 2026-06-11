@@ -299,7 +299,7 @@ _CJK_LOW_INK = set("：；。、，·．！？…—～〜「」『』（）《�
 
 
 def _cjk_band_height(ink: np.ndarray, text: str) -> float | None:
-    """Row extent of the ink under the CJK characters' own columns.
+    """Glyph-band height measured per CJK character, with a consensus vote.
 
     Column ranges come from per-char advance widths mapped proportionally
     onto the box width (the real output font when available) — RapidOCR's
@@ -307,8 +307,21 @@ def _cjk_band_height(ink: np.ndarray, text: str) -> float | None:
     "graph.sh 使用" land half a char off and measured 33px instead of
     58px). Each char window is inset 0.2 em per side to absorb the
     residual mapping error, so a latin descender next to a CJK char can't
-    bleed in. Returns None when the line has no full-ink CJK glyph to
-    anchor the band (e.g. the only CJK chars are punctuation)."""
+    bleed in.
+
+    Each char's row extent is measured separately, then: when at least
+    half the chars agree within 2% of the median, the band is the largest
+    extent inside that cluster — this drops both junk-contaminated chars
+    (a neighbor line's descenders under one char inflate it 14-29%) and
+    single-char blur flukes (序/譜 read 61px where four siblings read
+    58px, which is the 14pt->16pt snap boundary). Without a consensus
+    (few chars, or noisy small text like 周郁凯 at 12pt whose extents
+    spread 39-47px) it falls back to the largest extent, matching the
+    plain union this measurement replaced. No MAX_INK_ROW_FRAC inside a
+    window: a long horizontal stroke legitimately fills the whole narrow
+    window (graph.sh 使用 lost mid-band rows to the 0.85 cap and measured
+    8pt). Returns None when the line has no full-ink CJK glyph to anchor
+    the band (e.g. the only CJK chars are punctuation)."""
     w = ink.shape[1]
     chars = text.strip()
     if not chars or w < 4:
@@ -324,38 +337,39 @@ def _cjk_band_height(ink: np.ndarray, text: str) -> float | None:
     if total <= 0:
         return None
     scale = w / total
-    cols = np.zeros(w, dtype=bool)
-    has_glyph = False
+    extents = []
     pos = 0.0
     for c, adv in zip(chars, widths):
-        # low-ink punctuation is excluded from the window too, not just
+        # low-ink punctuation is excluded from the windows too, not just
         # from anchoring: a full-width （ descends below the glyph band
         # (定性 bug（Dict 排 measured 64px instead of 58px through it)
         if ord(c) >= 0x2E80 and c not in _CJK_LOW_INK:
             inset = 0.2 * scale
-            a = int(round(pos * scale + inset))
-            b = int(round((pos + adv) * scale - inset))
+            a = max(0, int(round(pos * scale + inset)))
+            b = min(w, int(round((pos + adv) * scale - inset)))
             if b > a:
-                cols[max(0, a):min(w, b)] = True
-                has_glyph = True
+                counts = ink[:, a:b].sum(axis=1)
+                rows = np.where(counts >= MIN_INK_ROW_PX)[0]
+                if len(rows):
+                    # same blank-gap split as the full-line measurement:
+                    # stray ink > 8 rows away (graph.sh 使用 has 3 junk
+                    # rows above the band) must not stretch the extent.
+                    # A glyph fragment isolated by the split (己's inset
+                    # window splits into two strokes) lands outside the
+                    # consensus cluster and is voted away.
+                    splits = np.where(np.diff(rows) > 8)[0]
+                    if len(splits):
+                        rows = max(np.split(rows, splits + 1),
+                                   key=lambda g: int(counts[g].sum()))
+                    extents.append(float(rows[-1] - rows[0] + 1))
         pos += adv
-    if not has_glyph or not cols.any():
+    if not extents:
         return None
-    sub = ink[:, cols]
-    counts = sub.sum(axis=1)
-    # no MAX_INK_ROW_FRAC here: the window is glyph columns by
-    # construction, and a long horizontal stroke legitimately fills the
-    # whole narrow window (graph.sh 使用 lost mid-band rows to the 0.85
-    # cap and measured 8pt); solid junk rows are bounded by the caller
-    # taking min(full extent, this extent)
-    rows = np.where(counts >= MIN_INK_ROW_PX)[0]
-    if not len(rows):
-        return None
-    splits = np.where(np.diff(rows) > 8)[0]
-    if len(splits):
-        groups = np.split(rows, splits + 1)
-        rows = max(groups, key=lambda g: int(counts[g].sum()))
-    return float(rows[-1] - rows[0] + 1)
+    med = float(np.median(extents))
+    cluster = [e for e in extents if abs(e - med) <= 0.02 * med]
+    if 2 * len(cluster) >= len(extents):
+        return max(cluster)
+    return max(extents)
 
 
 def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
@@ -475,18 +489,26 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
         ink_top_px = float(y0)
         ink_bottom_px = float(y1)
 
-    # --- mixed-line CJK band (font size only): in a CJK line, latin
-    # descenders (g/p/y, parens, /) drop below the ideograph band and
-    # stretch the ink bounds ~0.15 em, so CJK_INK_RATIO oversizes the font
-    # (page 4 "graph.sh 使用": 66px span vs 58px for its same-size pure-CJK
-    # siblings -> 18pt instead of 14pt). Re-measure the row extent over the
-    # CJK characters' own columns. Cover and positioning keep the full
-    # extent (the raster descenders must stay painted over), only the em
-    # estimate shrinks. A sparse-edge-row trim (count < 0.25x band median)
-    # was tried first and over-trimmed: faint-but-real CJK edge rows scale
-    # with line width while descender rows don't, so their relative weights
-    # overlap across short and long lines (p2/p6 titles lost real rows ->
-    # 44pt read 40pt, while the p4 fixes needed the full trim).
+    # --- mixed-line CJK band (font size only): latin descenders (g/p/y,
+    # parens, /) drop below the ideograph band and stretch the whole-line
+    # ink union ~0.15 em, so CJK_INK_RATIO oversizes the font (page 4
+    # "graph.sh 使用": 66px span vs 58px for its same-size pure-CJK
+    # siblings -> 18pt instead of 14pt). Re-measure per CJK character and
+    # take the consensus. Cover and positioning keep the full extent (the
+    # raster descenders must stay painted over), only the em estimate
+    # changes. A sparse-edge-row trim (count < 0.25x band median) was
+    # tried first and over-trimmed: faint-but-real CJK edge rows scale
+    # with line width while descender rows don't, so their relative
+    # weights overlap across short and long lines (p2/p6 titles lost real
+    # rows -> 44pt read 40pt, while the p4 fixes needed the full trim).
+    # Gate: only lines whose latin part can actually descend (g/p/y,
+    # parens, /) go through the consensus path. Widening it to every CJK
+    # line was tried and reverted: the +-3px blur noise then flips OTHER
+    # borderline lines down one snap step and breaks blocks that the
+    # union measured consistently (p4's right annotation read 16/14/14pt
+    # from one 16pt block; single-CJK-char lines like "2025 年" collapsed
+    # to the lone char's band). Cross-line agreement is instead restored
+    # by harmonize_font_sizes in blocks.py.
     ink_h_font_px = ink_h_px
     if (len(rows) and not line.arc_sagitta and not is_pure_latin(line.text)
             and any(c in _DESC_CHARS for c in line.text)):
@@ -536,8 +558,8 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
             ink_w_pt = float(cols[-1] - cols[0] + 1) * px_to_slide_pt
             max_pt = ink_w_pt / em_width
             tol = width_tolerance(em_width)
-    font_pt = snap_font_size(min(font_pt, max_pt * tol) if max_pt else font_pt,
-                             max_pt=max_pt, tol=tol)
+    est_pt = min(font_pt, max_pt * tol) if max_pt else font_pt
+    font_pt = snap_font_size(est_pt, max_pt=max_pt, tol=tol)
 
     # --- text color: blur drags edge pixels toward the background, so
     # average only the stroke cores (the ink pixels farthest from bg) ---
@@ -576,6 +598,7 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
     return Style(
         font_pt=font_pt,
         bold=bold,
+        est_pt=est_pt,
         text_rgb=text_rgb,
         bg_rgb=bg_rgb,
         ink_top_px=ink_top_px,
