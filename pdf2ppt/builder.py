@@ -202,60 +202,66 @@ class DeckBuilder:
             return
 
         bg = np.asarray(style.bg_rgb, dtype=int)
+        import math
 
-        def on_ribbon(px_x: float, px_y: float) -> bool:
+        def local_color(rx0, ry0, rx1, ry1):
             if img is None:
-                return True
-            h_img, w_img = img.shape[:2]
-            xi = min(max(int(px_x), 0), w_img - 1)
-            yi = min(max(int(px_y), 0), h_img - 1)
-            return int(np.abs(img[yi, xi].astype(int) - bg).max()) < 70
+                return None
+            region = img[max(0, int(ry0)):max(1, int(ry1)),
+                         max(0, int(rx0)):max(1, int(rx1))]
+            if not region.size:
+                return None
+            px = region.reshape(-1, 3).astype(int)
+            near = np.abs(px - bg).max(axis=1) < 70
+            if near.sum() < 20:
+                return None
+            return tuple(int(v) for v in np.median(px[near], axis=0))
 
-        # cover strips along the arc rather than one blocky rectangle:
-        # reconstruct the parabola from the box (edges hold the glyphs at
-        # one end of the box, the middle at the other)
+        # rotated strips at the local tangent: a horizontal rectangle on
+        # the sloped flank pokes its corner past the ribbon edge no matter
+        # how it is clamped; a tangent-aligned one hugs it
         n = 12
         xc, half_w = (x0 + x1) / 2, (x1 - x0) / 2
+        strip_h = glyph_h * 2.2
         for s in range(n):
             sx0 = x0 + (x1 - x0) * s / n
             sx1 = x0 + (x1 - x0) * (s + 1) / n
-            t = ((sx0 + sx1) / 2 - xc) / half_w
+            cx_s = (sx0 + sx1) / 2
+            t = (cx_s - xc) / half_w
             yc = y_mid + (y_edge - y_mid) * t * t
-            pad = max(COVER_PAD_PX, 0.5 * glyph_h)
-            # shrink the strip's edges until they sit on the ribbon: a
-            # rectangle staircase that pokes past the ribbon boundary onto
-            # the page background reads as jagged red teeth
-            xs = tuple(sx0 + (sx1 - sx0) * f for f in (0.12, 0.5, 0.88))
-            top = yc - glyph_h / 2 - pad
-            while (top < yc - glyph_h * 0.25
-                   and not all(on_ribbon(x, top) for x in xs)):
-                top += 1
-            bot = yc + glyph_h / 2 + pad
-            while (bot > yc + glyph_h * 0.25
-                   and not all(on_ribbon(x, bot) for x in xs)):
-                bot -= 1
-            # the ribbon is shaded, one global color shows as a patch —
-            # fill each strip with its own local ribbon color
-            fill_rgb = style.bg_rgb
-            if img is not None:
-                region = img[max(0, int(top)):max(1, int(bot)),
-                             max(0, int(sx0)):max(1, int(sx1))]
-                if region.size:
-                    px = region.reshape(-1, 3).astype(int)
-                    near = np.abs(px - bg).max(axis=1) < 70
-                    if near.sum() >= 30:
-                        fill_rgb = tuple(int(v) for v in
-                                         np.median(px[near], axis=0))
+            slope = 2 * (y_edge - y_mid) * t / half_w
+            ang = math.degrees(math.atan(slope))
+            width = Emu(round((ex(sx1) - ex(sx0))
+                              / max(0.5, math.cos(math.radians(ang))) * 1.04))
+            height = Emu(ey(yc + strip_h / 2) - ey(yc - strip_h / 2))
             strip = slide.shapes.add_shape(
                 MSO_SHAPE.RECTANGLE,
-                Emu(max(0, ex(sx0 - 1))), Emu(max(0, ey(top))),
-                Emu(ex(sx1 + 1) - ex(sx0 - 1)), Emu(ey(bot) - ey(top)),
+                Emu(max(0, ex(cx_s) - width // 2)),
+                Emu(max(0, ey(yc) - height // 2)),
+                width, height,
             )
+            strip.rotation = ang
             strip.name = f"Text {i} cover {s}"
             strip.shadow.inherit = False
             strip.line.fill.background()
-            strip.fill.solid()
-            strip.fill.fore_color.rgb = RGBColor(*fill_rgb)
+            # the ribbon is shaded vertically: fill with a two-stop
+            # gradient sampled above/below the glyph band
+            c_top = local_color(sx0, yc - strip_h / 2, sx1, yc - glyph_h / 3)
+            c_bot = local_color(sx0, yc + glyph_h / 3, sx1, yc + strip_h / 2)
+            c_mid = local_color(sx0, yc - strip_h / 2, sx1, yc + strip_h / 2)
+            if c_top and c_bot:
+                try:
+                    strip.fill.gradient()
+                    stops = strip.fill.gradient_stops
+                    stops[0].color.rgb = RGBColor(*c_top)
+                    stops[1].color.rgb = RGBColor(*c_bot)
+                    strip.fill.gradient_angle = 90.0
+                except (AttributeError, ValueError):
+                    strip.fill.solid()
+                    strip.fill.fore_color.rgb = RGBColor(*(c_mid or style.bg_rgb))
+            else:
+                strip.fill.solid()
+                strip.fill.fore_color.rgb = RGBColor(*(c_mid or style.bg_rgb))
 
     def _add_arc_segments(self, slide, block, i: int, ex, ey,
                           px_per_pt: float) -> None:
