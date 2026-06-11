@@ -98,17 +98,53 @@ class DeckBuilder:
             for j, line in enumerate(block.lines):
                 para = tf.paragraphs[0] if j == 0 else tf.add_paragraph()
                 para.alignment = PP_ALIGN_MAP.get(block.align, PP_ALIGN.LEFT)
-                run = para.add_run()
-                run.text = line.text
-                font = run.font
-                font.size = Pt(block.style.font_pt)
-                font.bold = block.style.bold
-                font.name = self.font_name  # sets <a:latin> only
-                font.color.rgb = RGBColor(*block.style.text_rgb)
-                _set_east_asian_font(run, self.font_name)
+                pieces = None
+                if len(block.lines) == 1 and block.style.runs:
+                    pieces = _split_text_runs(line.text, block.style.runs)
+                if pieces is None:
+                    pieces = [(line.text, block.style.text_rgb)]
+                for piece, rgb in pieces:
+                    run = para.add_run()
+                    run.text = piece
+                    font = run.font
+                    font.size = Pt(block.style.font_pt)
+                    font.bold = block.style.bold
+                    font.name = self.font_name  # sets <a:latin> only
+                    font.color.rgb = RGBColor(*rgb)
+                    _set_east_asian_font(run, self.font_name)
 
     def save(self, path: str) -> None:
         self.prs.save(path)
+
+
+def _split_text_runs(text: str, runs) -> list[tuple[str, tuple]] | None:
+    """Split the line text into (piece, rgb) runs. `runs` counts cover the
+    space-stripped text; spaces and any trailing extras (recovered
+    punctuation) attach to the current/last run."""
+    total = sum(n for n, _ in runs)
+    stripped_len = sum(1 for c in text if c != " ")
+    if stripped_len < total:
+        return None  # text was transformed past recognition; play safe
+
+    bounds = []  # exclusive cumulative end index per run
+    acc = 0
+    for n, _ in runs:
+        acc += n
+        bounds.append(acc)
+
+    pieces: list[tuple[str, tuple]] = []
+    buf, seg, idx = [], 0, 0
+    for ch in text:
+        if ch != " ":
+            while seg < len(runs) - 1 and idx >= bounds[seg]:
+                pieces.append(("".join(buf), runs[seg][1]))
+                buf = []
+                seg += 1
+            idx += 1
+        buf.append(ch)
+    if buf:
+        pieces.append(("".join(buf), runs[seg][1]))
+    return [(p, rgb) for p, rgb in pieces if p]
 
 
 def _set_east_asian_font(run, typeface: str) -> None:

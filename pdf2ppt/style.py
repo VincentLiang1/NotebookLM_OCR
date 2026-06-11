@@ -154,6 +154,51 @@ def _rectify(img: np.ndarray, line: Line, pad: int) -> np.ndarray:
     return np.asarray(patch)
 
 
+RUN_JOIN_DIST = 45   # chars within this color distance join the same run
+RUN_SPLIT_DIST = 60  # a line only splits into runs if colors differ this much
+
+
+def _split_color_runs(img: np.ndarray, line: Line, bg_ref: np.ndarray):
+    """Group the line's characters into same-color runs (e.g. a terracotta
+    '⚠ 限制機制：' prefix followed by dark body text). Returns
+    [(char_count, rgb), ...] or None when the line is one color."""
+    if not line.char_boxes or len(line.char_boxes) < 2:
+        return None
+    colors = []
+    for _, l, t, r, b in line.char_boxes:
+        l, t, r, b = int(l), int(t), int(r), int(b)
+        if r - l < 3 or b - t < 3:
+            colors.append(None)
+            continue
+        crop = img[t:b, l:r]
+        ink = np.abs(crop.astype(int) - bg_ref.astype(int)).max(axis=2) > INK_DIST
+        if ink.sum() < 8:
+            colors.append(None)
+            continue
+        colors.append(np.asarray(_core_color(crop, ink, bg_ref)))
+
+    segments: list[list] = []  # [count, color|None]
+    for col in colors:
+        if segments and (
+                col is None or segments[-1][1] is None
+                or np.abs(col - segments[-1][1]).max() <= RUN_JOIN_DIST):
+            segments[-1][0] += 1
+            if segments[-1][1] is None:
+                segments[-1][1] = col
+        else:
+            segments.append([1, col])
+
+    real = [s[1] for s in segments if s[1] is not None]
+    if len(segments) < 2 or not real:
+        return None
+    spread = max(np.abs(a - b).max() for a in real for b in real)
+    if spread < RUN_SPLIT_DIST:
+        return None
+    fallback = real[0]
+    return [(s[0], tuple(int(v) for v in (s[1] if s[1] is not None else fallback)))
+            for s in segments]
+
+
 def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
                    bold_mode: str = "auto") -> Style:
     """px_to_slide_pt: slide points per image pixel (960 / image_width).
@@ -307,4 +352,5 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
         text_rgb=text_rgb,
         bg_rgb=bg_rgb,
         ink_top_px=ink_top_px,
+        runs=_split_color_runs(img, line, bg_ref),
     )

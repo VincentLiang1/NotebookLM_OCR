@@ -58,10 +58,12 @@ def _gap_is_blank(img: np.ndarray, gx0: float, gx1: float,
     return float(ink.mean()) < 0.15
 
 
-def _restore_latin_gaps(text: str, words, img: np.ndarray) -> str:
-    """words: per-char (char, score, quad) tuples for one OCR line."""
+def _restore_latin_gaps(text: str, words, img: np.ndarray):
+    """words: per-char (char, score, quad) tuples for one OCR line.
+    Returns (text, char_boxes) where char_boxes is [(char, l, t, r, b)] for
+    the space-stripped text, or None when word boxes were unusable."""
     if not words:
-        return text
+        return text, None
     chars, geoms = [], []
     for w in words:
         ch, quad = str(w[0]), (w[2] if len(w) > 2 else None)
@@ -69,12 +71,21 @@ def _restore_latin_gaps(text: str, words, img: np.ndarray) -> str:
         geoms.append(_quad_bounds(quad) if quad is not None else None)
     # safety: only trust word boxes if they spell the same text
     if "".join(chars).replace(" ", "") != text.replace(" ", ""):
-        return text
+        return text, None
+
+    def boxes():
+        out = []
+        for ch, g in zip(chars, geoms):
+            for c in ch:
+                if c != " ":
+                    out.append((c, g[0], g[2], g[1], g[3]) if g
+                               else (c, 0.0, 0.0, 0.0, 0.0))
+        return out
 
     latin_widths = [g[1] - g[0] for ch, g in zip(chars, geoms)
                     if g and len(ch) == 1 and _is_latin_alnum(ch) and g[1] > g[0]]
     if not latin_widths:
-        return text
+        return text, boxes()
     med_w = median(latin_widths)
 
     # walk the ORIGINAL text so spaces the rec model itself emitted are
@@ -104,7 +115,44 @@ def _restore_latin_gaps(text: str, words, img: np.ndarray) -> str:
             out.append(" ")
         out.append(ch)
         ci += 1
-    return "".join(out)
+    return "".join(out), boxes()
+
+
+def _looks_like_warning_icon(img: np.ndarray, box) -> bool:
+    """A ⚠ triangle icon is recognized as 'A'. Discriminator: the icon's
+    base is one continuous ink bar (measured 0.93 of box width) while a
+    real letter A ends in two separate legs (measured 0.24)."""
+    _, l, t, r, b = box
+    l, t, r, b = int(l), int(t), int(r), int(b)
+    if r - l < 8 or b - t < 8:
+        return False
+    crop = img[t:b, l:r].astype(int)
+    med = np.median(crop.reshape(-1, 3), axis=0)
+    ink = np.abs(crop - med).max(axis=2) > 60
+    rows = np.where(ink.sum(axis=1) >= 2)[0]
+    if not len(rows):
+        return False
+    h = rows[-1] - rows[0] + 1
+    band = ink[rows[-1] - max(1, h // 6):rows[-1] + 1].any(axis=0)
+    best = cur = 0
+    for v in band:
+        cur = cur + 1 if v else 0
+        best = max(best, cur)
+    return best / max(1, r - l) >= 0.6
+
+
+def _fix_warning_icon(text: str, char_boxes, img: np.ndarray):
+    """Replace a line-leading 'A' that is actually a warning triangle."""
+    if (char_boxes and text[:1] == "A"
+            and (len(text) == 1 or text[1] == " " or ord(text[1]) >= 0x2E80)
+            and _looks_like_warning_icon(img, char_boxes[0])):
+        c = char_boxes[0]
+        char_boxes[0] = ("⚠", c[1], c[2], c[3], c[4])
+        rest = text[1:]
+        if rest and rest[0] != " ":
+            rest = " " + rest
+        return "⚠" + rest
+    return text
 
 
 def _pangu_spacing(text: str) -> str:
@@ -283,7 +331,8 @@ class OcrEngine:
             text = text.strip()
             if not text or score < min_score:
                 continue
-            text = _restore_latin_gaps(text, words, img_rgb)
+            text, char_boxes = _restore_latin_gaps(text, words, img_rgb)
+            text = _fix_warning_icon(text, char_boxes, img_rgb)
             quad = np.asarray(quad, dtype=float)
             x0, y0 = quad.min(axis=0)
             x1, y1 = quad.max(axis=0)
@@ -305,7 +354,8 @@ class OcrEngine:
                               score=float(score),
                               angle=ang,
                               center=(float(cx), float(cy)),
-                              size=(float(w), float(h))))
+                              size=(float(w), float(h)),
+                              char_boxes=char_boxes))
 
         for ln in lines:
             # tilted lines were already rectified by the detector; the
@@ -314,6 +364,7 @@ class OcrEngine:
                 rescued = self._rescue_tilted(img_rgb, ln)
                 if rescued:
                     ln.text, ang, center, size = rescued
+                    ln.char_boxes = None  # boxes no longer match the text
                     if ang:
                         ln.angle, ln.center, ln.size = ang, center, size
             if ln.angle == 0.0:

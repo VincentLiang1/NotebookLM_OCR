@@ -16,6 +16,9 @@ class Line:
     angle: float = 0.0
     center: tuple[float, float] | None = None
     size: tuple[float, float] | None = None
+    # per-character boxes (char, l, t, r, b) in image px for the
+    # space-stripped text; None when word boxes were unusable
+    char_boxes: list[tuple[str, float, float, float, float]] | None = None
 
     @property
     def height(self) -> float:
@@ -33,6 +36,9 @@ class Style:
     text_rgb: tuple[int, int, int]
     bg_rgb: tuple[int, int, int] | None  # None => no cover fill (gradient/photo)
     ink_top_px: float = 0.0  # top of the actual glyph ink, image px
+    # multi-color lines: [(char_count, rgb), ...] over the space-stripped
+    # text; None when the whole line is one color
+    runs: list[tuple[int, tuple[int, int, int]]] | None = None
 
 
 # Paragraph alignment markers (mirrors PP_ALIGN without importing pptx here)
