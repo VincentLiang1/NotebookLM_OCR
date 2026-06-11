@@ -293,6 +293,71 @@ def _chip_room_right(img: np.ndarray, line: Line, bg_rgb, rows,
     return float(room)
 
 
+# Full-width punctuation whose ink does not span the em square — a line
+# whose only CJK characters are these cannot anchor the band measurement
+_CJK_LOW_INK = set("：；。、，·．！？…—～〜「」『』（）《》〈〉【】")
+
+
+def _cjk_band_height(ink: np.ndarray, text: str) -> float | None:
+    """Row extent of the ink under the CJK characters' own columns.
+
+    Column ranges come from per-char advance widths mapped proportionally
+    onto the box width (the real output font when available) — RapidOCR's
+    CTC word boxes are too jittery for this (the boxes for 使用 in
+    "graph.sh 使用" land half a char off and measured 33px instead of
+    58px). Each char window is inset 0.2 em per side to absorb the
+    residual mapping error, so a latin descender next to a CJK char can't
+    bleed in. Returns None when the line has no full-ink CJK glyph to
+    anchor the band (e.g. the only CJK chars are punctuation)."""
+    w = ink.shape[1]
+    chars = text.strip()
+    if not chars or w < 4:
+        return None
+    widths = []
+    for c in chars:
+        adv = _measure_em(c)
+        if not adv:
+            adv = (_EM_CJK if ord(c) >= 0x2E80
+                   else _EM_SPACE if c == " " else _EM_LATIN)
+        widths.append(adv)
+    total = sum(widths)
+    if total <= 0:
+        return None
+    scale = w / total
+    cols = np.zeros(w, dtype=bool)
+    has_glyph = False
+    pos = 0.0
+    for c, adv in zip(chars, widths):
+        # low-ink punctuation is excluded from the window too, not just
+        # from anchoring: a full-width （ descends below the glyph band
+        # (定性 bug（Dict 排 measured 64px instead of 58px through it)
+        if ord(c) >= 0x2E80 and c not in _CJK_LOW_INK:
+            inset = 0.2 * scale
+            a = int(round(pos * scale + inset))
+            b = int(round((pos + adv) * scale - inset))
+            if b > a:
+                cols[max(0, a):min(w, b)] = True
+                has_glyph = True
+        pos += adv
+    if not has_glyph or not cols.any():
+        return None
+    sub = ink[:, cols]
+    counts = sub.sum(axis=1)
+    # no MAX_INK_ROW_FRAC here: the window is glyph columns by
+    # construction, and a long horizontal stroke legitimately fills the
+    # whole narrow window (graph.sh 使用 lost mid-band rows to the 0.85
+    # cap and measured 8pt); solid junk rows are bounded by the caller
+    # taking min(full extent, this extent)
+    rows = np.where(counts >= MIN_INK_ROW_PX)[0]
+    if not len(rows):
+        return None
+    splits = np.where(np.diff(rows) > 8)[0]
+    if len(splits):
+        groups = np.split(rows, splits + 1)
+        rows = max(groups, key=lambda g: int(counts[g].sum()))
+    return float(rows[-1] - rows[0] + 1)
+
+
 def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
                    bold_mode: str = "auto") -> Style:
     """px_to_slide_pt: slide points per image pixel (960 / image_width).
@@ -410,6 +475,25 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
         ink_top_px = float(y0)
         ink_bottom_px = float(y1)
 
+    # --- mixed-line CJK band (font size only): in a CJK line, latin
+    # descenders (g/p/y, parens, /) drop below the ideograph band and
+    # stretch the ink bounds ~0.15 em, so CJK_INK_RATIO oversizes the font
+    # (page 4 "graph.sh 使用": 66px span vs 58px for its same-size pure-CJK
+    # siblings -> 18pt instead of 14pt). Re-measure the row extent over the
+    # CJK characters' own columns. Cover and positioning keep the full
+    # extent (the raster descenders must stay painted over), only the em
+    # estimate shrinks. A sparse-edge-row trim (count < 0.25x band median)
+    # was tried first and over-trimmed: faint-but-real CJK edge rows scale
+    # with line width while descender rows don't, so their relative weights
+    # overlap across short and long lines (p2/p6 titles lost real rows ->
+    # 44pt read 40pt, while the p4 fixes needed the full trim).
+    ink_h_font_px = ink_h_px
+    if (len(rows) and not line.arc_sagitta and not is_pure_latin(line.text)
+            and any(c in _DESC_CHARS for c in line.text)):
+        cjk_h = _cjk_band_height(ink, line.text)
+        if cjk_h:
+            ink_h_font_px = min(ink_h_px, cjk_h)
+
     # --- halo refinement: the cover color should match the pixels near the
     # glyphs, not the ring (which may lie on a different band, e.g. black
     # text on a near-white strip between grey strips). Skip the 3px closest
@@ -434,7 +518,7 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
     cols = np.where(band.sum(axis=0) >= 1)[0]
     ratio = (latin_ink_ratio(line.text) if is_pure_latin(line.text)
              else CJK_INK_RATIO)
-    ink_h_eff = max(ink_h_px - BLUR_PX, ink_h_px * 0.6)
+    ink_h_eff = max(ink_h_font_px - BLUR_PX, ink_h_font_px * 0.6)
     font_pt = ink_h_eff * px_to_slide_pt / ratio
     em_width = _measure_em(line.text) or text_width_em(line.text)
     max_pt, tol = None, 1.10
