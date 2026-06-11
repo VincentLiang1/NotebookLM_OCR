@@ -50,8 +50,10 @@ def text_width_em(text: str) -> float:
 
 def snap_font_size(pt: float, max_pt: float | None = None) -> float:
     best = min(FONT_SIZES, key=lambda s: abs(s - pt))
-    if max_pt is not None and best > max_pt:
-        smaller = [s for s in FONT_SIZES if s <= max_pt]
+    # single-line shapes never wrap, so a ~10% width overshoot is harmless;
+    # a hard cap dropped 15.6 -> 14 (a visible size step) over a sliver
+    if max_pt is not None and best > max_pt * 1.10:
+        smaller = [s for s in FONT_SIZES if s <= max_pt * 1.10]
         if smaller:
             best = smaller[-1]
     return best
