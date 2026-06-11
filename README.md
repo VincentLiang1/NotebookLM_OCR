@@ -30,9 +30,10 @@ pip install -r requirements.txt
 ## 使用方式
 
 ```bash
-python pdf2ppt.py input.pdf                  # 輸出 input.pptx
-python pdf2ppt.py input.pdf -o output.pptx   # 指定輸出檔名
-python pdf2ppt.py input.pdf --pages 1-5,8    # 只轉指定頁
+python pdf2ppt.py input.pdf                    # 輸出 input.pptx
+python pdf2ppt.py input.pdf -o output.pptx     # 指定輸出檔名
+python pdf2ppt.py input.pdf --pages 1-5,8      # 只轉指定頁
+python pdf2ppt.py input.pdf --keep-watermark   # 保留右下角 NotebookLM 浮水印
 ```
 
 ### 選項
