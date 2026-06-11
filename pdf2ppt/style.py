@@ -48,15 +48,53 @@ def text_width_em(text: str) -> float:
     return total
 
 
-def snap_font_size(pt: float, max_pt: float | None = None) -> float:
+def width_tolerance(em_width: float) -> float:
+    """How far the font may exceed the width-fit limit. Short lines keep
+    headroom (the em estimate is noisy and overshoot stays inside the
+    chip); long lines bind tightly (per-char error accumulates and the
+    overflow visibly crosses cell/chip borders)."""
+    if em_width <= 8:
+        return 1.12
+    if em_width >= 12:
+        return 1.03
+    return 1.12 - (em_width - 8) * (0.09 / 4)
+
+
+def snap_font_size(pt: float, max_pt: float | None = None,
+                   tol: float = 1.10) -> float:
     best = min(FONT_SIZES, key=lambda s: abs(s - pt))
-    # single-line shapes never wrap, so a ~10% width overshoot is harmless;
-    # a hard cap dropped 15.6 -> 14 (a visible size step) over a sliver
-    if max_pt is not None and best > max_pt * 1.10:
-        smaller = [s for s in FONT_SIZES if s <= max_pt * 1.10]
+    if max_pt is not None and best > max_pt * tol:
+        smaller = [s for s in FONT_SIZES if s <= max_pt * tol]
         if smaller:
             best = smaller[-1]
     return best
+
+
+_MEASURE_FONT: object = None
+
+
+def _measure_em(text: str) -> float | None:
+    """Exact advance width of the text in em, measured with the real Noto
+    Sans TC font; None when the font file isn't available."""
+    global _MEASURE_FONT
+    if _MEASURE_FONT is None:
+        import os
+
+        from PIL import ImageFont
+
+        for path in (
+            os.path.expandvars(
+                r"%LOCALAPPDATA%\Microsoft\Windows\Fonts\NotoSansTC-Regular.ttf"),
+            r"C:\Windows\Fonts\NotoSansTC-VF.ttf",
+        ):
+            if os.path.exists(path):
+                _MEASURE_FONT = ImageFont.truetype(path, 100)
+                break
+        else:
+            _MEASURE_FONT = False
+    if not _MEASURE_FONT:
+        return None
+    return _MEASURE_FONT.getlength(text) / 100.0
 
 
 def _dominant_color(pixels: np.ndarray) -> tuple[np.ndarray, float]:
@@ -311,13 +349,14 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
     cols = np.where(ink.sum(axis=0) >= 1)[0]
     ratio = LATIN_INK_RATIO if is_pure_latin(line.text) else CJK_INK_RATIO
     font_pt = ink_h_px * px_to_slide_pt / ratio
-    em_width = text_width_em(line.text)
-    max_pt = None
+    em_width = _measure_em(line.text) or text_width_em(line.text)
+    max_pt, tol = None, 1.10
     if em_width > 0 and len(cols):
         ink_w_pt = float(cols[-1] - cols[0] + 1) * px_to_slide_pt
-        max_pt = ink_w_pt / em_width * 1.05
-    font_pt = snap_font_size(min(font_pt, max_pt) if max_pt else font_pt,
-                             max_pt=max_pt)
+        max_pt = ink_w_pt / em_width
+        tol = width_tolerance(em_width)
+    font_pt = snap_font_size(min(font_pt, max_pt * tol) if max_pt else font_pt,
+                             max_pt=max_pt, tol=tol)
 
     # --- text color: blur drags edge pixels toward the background, so
     # average only the stroke cores (the ink pixels farthest from bg) ---
