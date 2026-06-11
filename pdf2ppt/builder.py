@@ -113,6 +113,26 @@ class DeckBuilder:
                 height = ey(cov_y1) - top
                 margin_top = max(0, text_top - top)
 
+            fill = self.cover and block.style.bg_rgb is not None
+            if not tilted and fill and text_top < ey(cov_y0):
+                # the leading-compensation zone above the ink would carry
+                # the fill onto the previous line's descenders in tight
+                # rows; split into a cover rect plus a transparent text box
+                cover = slide.shapes.add_shape(
+                    MSO_SHAPE.RECTANGLE, Emu(max(0, left)),
+                    Emu(max(0, ey(cov_y0))),
+                    Emu(width), Emu(ey(cov_y1) - ey(cov_y0)),
+                )
+                cover.name = f"Text {i} bg"
+                cover.shadow.inherit = False
+                cover.line.fill.background()
+                cover.fill.solid()
+                cover.fill.fore_color.rgb = RGBColor(*block.style.bg_rgb)
+                fill = False
+                top = text_top
+                height = ey(cov_y1) - top
+                margin_top = 0
+
             shape = slide.shapes.add_shape(
                 MSO_SHAPE.RECTANGLE, Emu(max(0, left)), Emu(max(0, top)),
                 Emu(width), Emu(height),
@@ -123,7 +143,7 @@ class DeckBuilder:
             shape.name = f"Text {i}"
             shape.shadow.inherit = False
             shape.line.fill.background()
-            if self.cover and block.style.bg_rgb is not None:
+            if fill:
                 shape.fill.solid()
                 shape.fill.fore_color.rgb = RGBColor(*block.style.bg_rgb)
             else:
