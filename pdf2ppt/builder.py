@@ -33,7 +33,11 @@ class DeckBuilder:
         self.cover = cover
 
     def add_slide(self, png_bytes: bytes, blocks: list[TextBlock],
-                  img_w: int, img_h: int) -> None:
+                  img_w: int, img_h: int,
+                  wipes: list[tuple[tuple, tuple]] | None = None) -> None:
+        """wipes: [(bbox_px, rgb)] — text-less cover rectangles that blank
+        out regions (e.g. the NotebookLM watermark) with the background
+        color."""
         slide = self.prs.slides.add_slide(self.blank_layout)
         pic = slide.shapes.add_picture(
             BytesIO(png_bytes), 0, 0,
@@ -46,6 +50,19 @@ class DeckBuilder:
 
         def ey(px: float) -> int:
             return round(px * self.slide_h_emu / img_h)
+
+        for i, (bbox, rgb) in enumerate(wipes or []):
+            x0, y0, x1, y1 = bbox
+            shape = slide.shapes.add_shape(
+                MSO_SHAPE.RECTANGLE,
+                Emu(max(0, ex(x0))), Emu(max(0, ey(y0))),
+                Emu(ex(x1) - ex(x0)), Emu(ey(y1) - ey(y0)),
+            )
+            shape.name = f"Wipe {i}"
+            shape.shadow.inherit = False
+            shape.line.fill.background()
+            shape.fill.solid()
+            shape.fill.fore_color.rgb = RGBColor(*rgb)
 
         for i, block in enumerate(blocks):
             nudge = round(LEADING_COMP * block.style.font_pt * EMU_PER_PT)

@@ -16,6 +16,25 @@ from .render import render_page
 from .style import estimate_style
 
 
+def is_watermark(line, style, img_w: int, img_h: int) -> bool:
+    """The NotebookLM watermark: logo + 'NotebookLM' in the bottom-right
+    corner (OCR sometimes merges the logo into the text as a stray char)."""
+    text = line.text.replace(" ", "")
+    if not text.endswith("NotebookLM") or len(text) > 13:
+        return False
+    x0, y0, x1, y1 = line.bbox
+    return (y0 > 0.85 * img_h and x1 > 0.65 * img_w
+            and style.bg_rgb is not None)
+
+
+def watermark_wipe(line, style) -> tuple[tuple, tuple]:
+    """Cover box for the watermark: extend left to also hide the logo icon
+    that sits before the text."""
+    x0, y0, x1, y1 = line.bbox
+    h = y1 - y0
+    return (x0 - 1.8 * h, y0 - 0.3 * h, x1 + 0.3 * h, y1 + 0.3 * h), style.bg_rgb
+
+
 def parse_pages(spec: str, page_count: int) -> list[int]:
     """'1-5,8' -> zero-based page indices."""
     indices: list[int] = []
@@ -49,6 +68,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--pages", default=None, help="page selection, e.g. 1-5,8")
     ap.add_argument("--min-score", type=float, default=0.5, help="drop OCR lines below this confidence")
     ap.add_argument("--no-cover", action="store_true", help="no solid fills; text overlays the image")
+    ap.add_argument("--keep-watermark", action="store_true",
+                    help="keep the bottom-right NotebookLM watermark instead of wiping it")
     ap.add_argument("--merge-lines", action="store_true", help="merge adjacent lines into one shape")
     bold = ap.add_mutually_exclusive_group()
     bold.add_argument("--no-bold", action="store_true", help="never mark text bold")
@@ -85,10 +106,23 @@ def main(argv: list[str] | None = None) -> int:
         lines = engine.recognize(img, min_score=args.min_score)
         styles = [estimate_style(img, ln, px_to_slide_pt, bold_mode)
                   for ln in lines]
+
+        wipes = []
+        if not args.keep_watermark:
+            kept_lines, kept_styles = [], []
+            for ln, st in zip(lines, styles):
+                if is_watermark(ln, st, img.shape[1], img.shape[0]):
+                    wipes.append(watermark_wipe(ln, st))
+                else:
+                    kept_lines.append(ln)
+                    kept_styles.append(st)
+            lines, styles = kept_lines, kept_styles
+
         blocks = lines_to_blocks(lines, styles, merge=args.merge_lines)
-        builder.add_slide(png, blocks, img.shape[1], img.shape[0])
+        builder.add_slide(png, blocks, img.shape[1], img.shape[0], wipes=wipes)
         print(f"page {idx + 1} ({n}/{len(page_indices)}): {len(lines)} lines, "
-              f"{len(blocks)} shapes")
+              f"{len(blocks)} shapes"
+              + (f", {len(wipes)} watermark wiped" if wipes else ""))
 
         if args.debug:
             debug_dump.append({
