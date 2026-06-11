@@ -14,3 +14,6 @@ verify/
 
 # Office lock files
 ~$*
+
+# local AI guidance, not published
+CLAUDE.md
