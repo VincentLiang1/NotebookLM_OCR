@@ -65,10 +65,19 @@ class DeckBuilder:
             shape.fill.solid()
             shape.fill.fore_color.rgb = RGBColor(*rgb)
 
+        # arc covers go in first: two arc lines on the same ribbon
+        # interpenetrate, and a later line's cover strips must not paint
+        # over an earlier line's text segments
+        arc_blocks = [(i, b) for i, b in enumerate(blocks)
+                      if len(b.lines) == 1 and b.lines[0].arc_sagitta]
+        for i, block in arc_blocks:
+            self._add_arc_cover(slide, block, i, ex, ey,
+                                px_per_pt=img_w / 960.0)
+
         for i, block in enumerate(blocks):
             if len(block.lines) == 1 and block.lines[0].arc_sagitta:
-                self._add_arc_text(slide, block, i, ex, ey,
-                                   px_per_pt=img_w / 960.0)
+                self._add_arc_segments(slide, block, i, ex, ey,
+                                       px_per_pt=img_w / 960.0)
                 continue
             nudge = round(LEADING_COMP * block.style.font_pt * EMU_PER_PT)
             tilted = (len(block.lines) == 1 and block.lines[0].angle
@@ -147,25 +156,28 @@ class DeckBuilder:
                     font.color.rgb = RGBColor(*rgb)
                     _set_east_asian_font(run, self.font_name)
 
-    def _add_arc_text(self, slide, block, i: int, ex, ey,
-                      px_per_pt: float) -> None:
-        """Ribbon/banner text that follows an arc: a filled cover over the
-        raster band plus a separate WordArt arch-warped text shape.
-        PowerPoint fits the warped text to the shape box, so the box's
-        aspect ratio controls the curvature."""
+    @staticmethod
+    def _arc_geometry(block, px_per_pt: float):
         ln = block.lines[0]
-        style = block.style
         x0, y0, x1, y1 = ln.bbox
-        glyph_h = min(style.font_pt * 1.2 * px_per_pt, (y1 - y0) * 0.8)
+        glyph_h = min(block.style.font_pt * 1.2 * px_per_pt, (y1 - y0) * 0.8)
+        if ln.arc_sagitta > 0:  # arch up: middle at top, edges at bottom
+            y_mid, y_edge = y0 + glyph_h / 2, y1 - glyph_h / 2
+        else:                   # arch down
+            y_mid, y_edge = y1 - glyph_h / 2, y0 + glyph_h / 2
+        return ln, x0, y0, x1, y1, glyph_h, y_mid, y_edge
+
+    def _add_arc_cover(self, slide, block, i: int, ex, ey,
+                       px_per_pt: float) -> None:
+        """Cover strips tracing the arc band (drawn before ALL arc text)."""
+        ln, x0, y0, x1, y1, glyph_h, y_mid, y_edge = \
+            self._arc_geometry(block, px_per_pt)
+        style = block.style
 
         if self.cover and style.bg_rgb is not None:
             # cover strips along the arc rather than one blocky rectangle:
             # reconstruct the parabola from the box (edges hold the glyphs
             # at one end of the box, the middle at the other)
-            if ln.arc_sagitta > 0:  # arch up: middle at top, edges at bottom
-                y_mid, y_edge = y0 + glyph_h / 2, y1 - glyph_h / 2
-            else:                   # arch down
-                y_mid, y_edge = y1 - glyph_h / 2, y0 + glyph_h / 2
             n = 12
             xc, half_w = (x0 + x1) / 2, (x1 - x0) / 2
             for s in range(n):
@@ -190,16 +202,17 @@ class DeckBuilder:
                 strip.fill.solid()
                 strip.fill.fore_color.rgb = RGBColor(*style.bg_rgb)
 
-        # the text itself: chord segments along the parabola, each a small
-        # rotated shape at the local tangent. PowerPoint's prstTxWarp arch
-        # was tried first and abandoned — its drop/frame scaling is opaque
-        # and uncontrollable (see git history for the calibration attempts)
+    def _add_arc_segments(self, slide, block, i: int, ex, ey,
+                          px_per_pt: float) -> None:
+        """The arc text: chord segments along the parabola, each a small
+        rotated shape at the local tangent. PowerPoint's prstTxWarp arch
+        was tried first and abandoned — its drop/frame scaling is opaque
+        and uncontrollable (see git history for the calibration attempts)."""
         import math
 
-        if ln.arc_sagitta > 0:
-            y_mid_t, y_edge_t = y0 + glyph_h / 2, y1 - glyph_h / 2
-        else:
-            y_mid_t, y_edge_t = y1 - glyph_h / 2, y0 + glyph_h / 2
+        ln, x0, y0, x1, y1, glyph_h, y_mid_t, y_edge_t = \
+            self._arc_geometry(block, px_per_pt)
+        style = block.style
         xc, half_w = (x0 + x1) / 2, (x1 - x0) / 2
         n_seg = max(3, min(6, round((x1 - x0) / (3.0 * max(glyph_h, 1)))))
         text = ln.text
