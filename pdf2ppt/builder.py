@@ -189,6 +189,49 @@ class DeckBuilder:
             y_mid, y_edge = y1 - glyph_h / 2, y0 + glyph_h / 2
         return ln, x0, y0, x1, y1, glyph_h, y_mid, y_edge
 
+    @staticmethod
+    def _ribbon_limits(img, cx: float, yc: float, top: float, bot: float,
+                       fill_rgb, max_gap: int) -> tuple[float, float]:
+        """Shrink a cover strip's vertical extent to the ribbon it sits on.
+
+        Walks up/down from the parabola center yc through a 5px-wide column,
+        following pixels near the fill color; glyph strokes interrupt the
+        ribbon for at most ~glyph_h, so gaps up to max_gap are bridged.
+        The walk stops short of the ribbon's edge band (darker rim + bright
+        highlight differ from the body by more than the tolerance), keeping
+        the strip from painting over the edge. Only ever shrinks — if the
+        ribbon fills the whole window the limits come back unchanged."""
+        import numpy as np
+
+        h, w = img.shape[:2]
+        x_lo, x_hi = max(0, int(cx) - 2), min(w, int(cx) + 3)
+        y_lo, y_hi = max(0, int(top)), min(h, int(bot) + 2)
+        if x_hi <= x_lo or y_hi - y_lo < 4:
+            return top, bot
+        band = img[y_lo:y_hi, x_lo:x_hi].astype(int)
+        fill = np.asarray(fill_rgb, dtype=int)
+        col = (np.abs(band - fill).max(axis=2) < 32).mean(axis=1) >= 0.5
+
+        def walk(idx_range):
+            last, gap = None, 0
+            for j in idx_range:
+                if col[j]:
+                    last, gap = j, 0
+                elif last is not None:
+                    gap += 1
+                    if gap > max_gap:
+                        break
+            return last
+
+        start = min(max(int(round(yc)) - y_lo, 0), len(col) - 1)
+        down = walk(range(start, len(col)))
+        up = walk(range(start, -1, -1))
+        new_bot = bot if down is None else min(bot, y_lo + down + 2)
+        new_top = top if up is None else max(top, y_lo + up - 2)
+        if new_bot - new_top < 4:
+            return top, bot
+        return new_top, new_bot
+
     def _add_arc_cover(self, slide, block, i: int, ex, ey,
                        px_per_pt: float, img=None) -> None:
         """Cover strips tracing the arc band (drawn before ALL arc text)."""
@@ -225,6 +268,13 @@ class DeckBuilder:
         n = 12
         xc, half_w = (x0 + x1) / 2, (x1 - x0) / 2
         strip_h = glyph_h * 2.2
+        # adjacent strips differ in rotation; rotating about their own
+        # centers opens wedge gaps at the far corners (~strip_h/2 * dslope
+        # per side) where the original raster peeks through — widen each
+        # strip by the full wedge so neighbors overlap
+        d_slope = abs(2 * (y_edge - y_mid) / half_w) * ((x1 - x0) / n) \
+            / half_w
+        extra_px = strip_h * d_slope
         for s in range(n):
             sx0 = x0 + (x1 - x0) * s / n
             sx1 = x0 + (x1 - x0) * (s + 1) / n
@@ -233,13 +283,23 @@ class DeckBuilder:
             yc = y_mid + (y_edge - y_mid) * t * t
             slope = 2 * (y_edge - y_mid) * t / half_w
             ang = math.degrees(math.atan(slope))
+            top, bot = yc - strip_h / 2, yc + strip_h / 2
+            if img is not None:
+                # the OCR bbox of an arc line is inflated by the rescue
+                # fragments, which can push the strip bottom past the
+                # ribbon's edge band — shrink (never grow) to the ribbon
+                # extent actually present under the strip center
+                top, bot = self._ribbon_limits(
+                    img, cx_s, yc, top, bot, fill_rgb,
+                    max_gap=int(glyph_h))
             width = Emu(round((ex(sx1) - ex(sx0))
-                              / max(0.5, math.cos(math.radians(ang))) * 1.04))
-            height = Emu(ey(yc + strip_h / 2) - ey(yc - strip_h / 2))
+                              / max(0.5, math.cos(math.radians(ang))) * 1.04
+                              + ex(extra_px)))
+            height = Emu(ey(bot) - ey(top))
             strip = slide.shapes.add_shape(
                 MSO_SHAPE.RECTANGLE,
                 Emu(max(0, ex(cx_s) - width // 2)),
-                Emu(max(0, ey(yc) - height // 2)),
+                Emu(max(0, ey((top + bot) / 2) - height // 2)),
                 width, height,
             )
             strip.rotation = ang
