@@ -11,6 +11,7 @@
 ## 特色
 
 - **本地離線**：OCR 使用 [RapidOCR](https://github.com/RapidAI/RapidOCR)（PP-OCRv5 server 模型），只有首次執行需要網路下載模型
+- **GPU 加速**：支援 DirectML（Windows 上任何 DX12 GPU，含 Intel 內顯）與 CUDA，自動偵測選用，實測快約 4×（見[安裝](#gpu-加速選用)）
 - **繁體中文最佳化**：PP-OCRv5 server 模型對繁中準確度遠勝預設模型；自動修正辨識混入的簡體字形（恶→惡），同時保留刻意呈現的純簡體內容
 - **樣式擬真**：字級以字墨高度實證校準、文字色取筆畫核心避免反鋸齒偏色、底色支援緞帶/膠囊/多層背景的判別
 - **傾斜與弧形文字**：偵測器給出旋轉框時直接輸出旋轉文字方塊；弧形緞帶（圓弧排列的橫幅文字）自動偵測曲率，以分段切線文字方塊沿弧線排列、色塊條帶沿弧線覆蓋
@@ -26,6 +27,24 @@ pip install -r requirements.txt
 ```
 
 中文輸出字型預設為 Microsoft YaHei（Windows 內建），可用 `--font` 改成其他字型；英文（拉丁字元）一律輸出為 Arial — 中英混排的行會同時呈現兩種字型（PowerPoint 的字元級字型機制，單一 run 即可承載）。
+
+### GPU 加速（選用）
+
+OCR 推論支援 GPU，實測 **快約 4×**（Intel Arc 140V：整份 15 頁簡報 50 秒，CPU 為 210 秒）。依硬體擇一安裝對應的 onnxruntime 套件（取代預設的 CPU 版 `onnxruntime`）：
+
+```bash
+# Windows（任何支援 DirectX 12 的 GPU：Intel Arc/Iris、AMD、NVIDIA 皆可）
+pip uninstall onnxruntime
+pip install onnxruntime-directml
+
+# NVIDIA GPU（需 CUDA 環境，Windows/Linux）
+pip uninstall onnxruntime
+pip install onnxruntime-gpu
+```
+
+安裝後**不需任何額外設定**：`--device` 預設為 `auto`，會依可用性自動選用 DirectML > CUDA > CPU，執行時會印出 `Inference device: dml/cuda/cpu` 供確認；也可用 `--device dml/cuda/cpu` 強制指定。
+
+> **注意**：DirectML **首次**執行需要一次性的驅動 shader 編譯，該次速度看起來與 CPU 差不多 — 這是正常現象，編譯結果會由顯示驅動快取到磁碟，**第二次起**才會看到完整的 GPU 加速效果。
 
 ## 使用方式
 
