@@ -45,11 +45,17 @@ def _quad_bounds(quad) -> tuple[float, float, float, float] | None:
 
 
 def _gap_is_blank(img: np.ndarray, gx0: float, gx1: float,
-                  gy0: float, gy1: float) -> bool:
+                  gy0: float, gy1: float, min_run: float = 4.0) -> bool:
     """A real word space contains no glyph ink; a CTC word-box artifact
     (the rec model splitting e.g. KEEP between the Es) overlaps strokes.
     Word-box edges are sloppy, so only the middle half of the gap is
-    sampled (measured: real spaces 0.00-0.10 ink, artifact 0.24)."""
+    sampled (measured: real spaces 0.00-0.10 ink, artifact 0.24).
+
+    The ink fraction alone misses gaps next to glyphs with open sides:
+    the r in p6's Transformer has a sparse lower-right, so 'r m' passed
+    at < 0.15. A real space also shows a WIDE run of fully blank columns
+    (Git Commit: 23px) while a blur-bridged letter gap shows none
+    (r->m: 0px, m->e: 3px) — require both."""
     gw = gx1 - gx0
     strip = img[int(gy0):int(gy1),
                 int(gx0 + 0.25 * gw):int(gx1 - 0.25 * gw) + 1]
@@ -57,7 +63,17 @@ def _gap_is_blank(img: np.ndarray, gx0: float, gx1: float,
         return False
     med = np.median(strip.reshape(-1, 3), axis=0)
     ink = np.abs(strip.astype(int) - med).max(axis=2) > 60
-    return float(ink.mean()) < 0.15
+    if float(ink.mean()) >= 0.15:
+        return False
+    wide = img[int(gy0):int(gy1), max(0, int(gx0) - 3):int(gx1) + 3]
+    wmed = np.median(wide.reshape(-1, 3), axis=0)
+    cols = (np.abs(wide.astype(int) - wmed).max(axis=2) > 60).sum(axis=0)
+    blank = cols <= max(1, round(0.05 * wide.shape[0]))
+    best = cur = 0
+    for b in blank:
+        cur = cur + 1 if b else 0
+        best = max(best, cur)
+    return best >= min_run
 
 
 def _restore_latin_gaps(text: str, words, img: np.ndarray):
@@ -113,7 +129,8 @@ def _restore_latin_gaps(text: str, words, img: np.ndarray):
                 and _is_latin_alnum(flat_chars[ci])
                 and g[0] - p[1] > LATIN_GAP_FACTOR * med_w
                 and _gap_is_blank(img, p[1], g[0],
-                                  min(p[2], g[2]), max(p[3], g[3]))):
+                                  min(p[2], g[2]), max(p[3], g[3]),
+                                  min_run=max(4.0, 0.2 * med_w))):
             out.append(" ")
         out.append(ch)
         ci += 1
