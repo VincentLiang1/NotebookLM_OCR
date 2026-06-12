@@ -482,7 +482,17 @@ def _detect_bg_split(inner: np.ndarray):
     lo, hi = int(0.2 * w), int(0.8 * w)
     if hi - lo < 2:
         return None
-    c = lo + int(np.argmax(np.abs(np.diff(col))[lo:hi])) + 1
+    peak = lo + int(np.argmax(np.abs(np.diff(col))[lo:hi]))
+    # refine the cover edge to the mid-level crossing near the gradient
+    # peak — that is the geometric center of the dark/light boundary (the
+    # raw argmax sits a few px to one side). It falls in the inter-glyph
+    # gap by construction (the source never splits a glyph's own fill), so
+    # no char-gap snapping is needed: snapping to the padded char box over-
+    # shot 27px into the white fill (p2's 個 box pads to 1931, ink ends ~1911)
+    mid = (left_lvl + right_lvl) / 2.0
+    win = max(5, int(0.06 * w))
+    a, b = max(0, peak - win), min(w - 1, peak + win)
+    c = a + int(np.argmin(np.abs(col[a:b + 1] - mid)))
     # each side must be internally uniform — a gradient or photo fails this
     if float(col[:c].std()) > 32 or float(col[c:].std()) > 32:
         return None
@@ -1041,15 +1051,6 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
         if split is not None:
             c, left_bg, right_bg = split
             sx = float(max(0, x0) + c)
-            # snap the split to the widest inter-char gap near it so a
-            # boundary glyph isn't sliced across the two fills (the bg
-            # gradient peak lands a few px inside the last dark glyph)
-            cb = line.char_boxes
-            if cb and len(cb) >= 2:
-                gaps = [((a[3] + b[1]) / 2.0) for a, b in zip(cb, cb[1:])]
-                near = min(gaps, key=lambda g: abs(g - sx))
-                if abs(near - sx) <= 1.5 * max(ink_h_px, 20.0):
-                    sx = near
             segs = [(float(max(0, x0)), sx, left_bg),
                     (sx, float(x1), right_bg)]
             seg_runs = _split_color_runs_segmented(img, line, segs)
