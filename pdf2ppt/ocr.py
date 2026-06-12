@@ -243,9 +243,28 @@ def _pangu_spacing(text: str) -> str:
     return re.sub(r" {2,}", " ", text)
 
 
+def resolve_device(device: str = "auto") -> str:
+    """'auto' picks the best available onnxruntime provider: DirectML
+    (any DX12 GPU on Windows, e.g. Intel Arc) > CUDA > CPU. An explicit
+    'dml'/'cuda'/'cpu' is honored as given."""
+    if device != "auto":
+        return device
+    try:
+        import onnxruntime as ort
+
+        providers = ort.get_available_providers()
+    except ImportError:
+        return "cpu"
+    if "DmlExecutionProvider" in providers:
+        return "dml"
+    if "CUDAExecutionProvider" in providers:
+        return "cuda"
+    return "cpu"
+
+
 class OcrEngine:
     def __init__(self, lang: str | None = None, fast: bool = False,
-                 s2t: bool = True):
+                 s2t: bool = True, device: str = "auto"):
         # heavy imports deferred until needed
         from rapidocr import ModelType, OCRVersion, RapidOCR
 
@@ -261,6 +280,11 @@ class OcrEngine:
             from rapidocr import LangRec
 
             params["Rec.lang_type"] = LangRec(lang)
+        self.device = resolve_device(device)
+        if self.device == "dml":
+            params["EngineConfig.onnxruntime.use_dml"] = True
+        elif self.device == "cuda":
+            params["EngineConfig.onnxruntime.use_cuda"] = True
         self.engine = RapidOCR(params=params)
 
         # the rec model occasionally emits simplified lookalikes (惡→恶)

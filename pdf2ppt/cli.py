@@ -63,6 +63,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--lang", default=None, help="RapidOCR rec language (default: chinese+english)")
     ap.add_argument("--fast", action="store_true",
                     help="use the mobile recognition model (faster, less accurate on Traditional Chinese)")
+    ap.add_argument("--device", default="auto", choices=["auto", "cpu", "dml", "cuda"],
+                    help="inference device (default auto: DirectML > CUDA > CPU by availability)")
     ap.add_argument("--no-s2t", action="store_true",
                     help="keep OCR output as-is instead of normalizing simplified strays to Traditional Chinese")
     ap.add_argument("--pages", default=None, help="page selection, e.g. 1-5,8")
@@ -91,7 +93,9 @@ def main(argv: list[str] | None = None) -> int:
         ap.error("no pages selected")
 
     print("Loading OCR engine...")
-    engine = OcrEngine(lang=args.lang, fast=args.fast, s2t=not args.no_s2t)
+    engine = OcrEngine(lang=args.lang, fast=args.fast, s2t=not args.no_s2t,
+                       device=args.device)
+    print(f"Inference device: {engine.device}")
 
     first = doc[page_indices[0]]
     builder = DeckBuilder(first.rect.width, first.rect.height,
