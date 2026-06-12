@@ -872,17 +872,20 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
             font_pt = float(best)
     # title footprint check: page titles sit in open space (no ceiling)
     # and their height estimate rides snap midpoints — p8's title at est
-    # 38.3 rounded up to 40 and rendered 11% wider than the raster ink,
-    # its tail crowding the page edge while the raster sits centered
-    # (left margin == right margin at 36pt exactly). When the snapped
-    # title renders >9% wider than the raster footprint and one step
-    # down still covers >=90% of it, take the smaller size. Titles only:
-    # body text measures a uniform ~10% footprint surplus (tighter
-    # source tracking) and a document-wide rule strangles it.
-    if (font_pt >= NARROW_MIN_PT and em_width >= 3.5 and len(cols)
+    # 39 rounded up to 40 and rendered 21% wider than the raster ink,
+    # its tail crowding the page edge while the raster sits centered.
+    # When the snapped title renders >7% wider than the raster footprint
+    # and one step down still covers >=90% of it, take the smaller size
+    # (1.09 missed the p1 cover title at 1.072 — user-rejected; the doc's
+    # un-flagged titles sit at <=1.07). Long titles only: body text
+    # measures a uniform ~10% footprint surplus (tighter source
+    # tracking) and a document-wide rule strangles it; the p15 quote
+    # blocks (em 4-6) scatter +-8% within one true size, so short lines
+    # are exempt.
+    if (font_pt >= NARROW_MIN_PT and em_width >= 10 and len(cols)
             and not line.angle and not line.arc_sagitta):
         ink_w_pt = float(cols[-1] - cols[0] + 1) * px_to_slide_pt
-        if font_pt * em_width > 1.09 * ink_w_pt:
+        if font_pt * em_width > 1.07 * ink_w_pt:
             smaller = [s for s in FONT_SIZES if s < font_pt]
             if smaller and smaller[-1] * em_width >= 0.90 * ink_w_pt:
                 font_pt = smaller[-1]
