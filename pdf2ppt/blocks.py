@@ -91,7 +91,9 @@ def harmonize_font_sizes(lines: list[Line], styles: list[Style],
                 continue
             if max(abs(x - y) for x, y in zip(sa.text_rgb, sb.text_rgb)) > 45:
                 continue
-            if abs(sa.est_pt - sb.est_pt) > 0.12 * max(sa.est_pt, sb.est_pt):
+            # 14%: p11's wrap pair V1 輿 V2 同時回 (11.8) / AI 要求比對
+            # 差距 (13.5) differs 12.6%; a true 12-vs-14 pair differs ~19%
+            if abs(sa.est_pt - sb.est_pt) > 0.14 * max(sa.est_pt, sb.est_pt):
                 continue
             parent[find(i)] = find(j)
 
@@ -146,7 +148,10 @@ def harmonize_bold(lines: list[Line], styles: list[Style]) -> None:
             for i in idxs:
                 if not styles[i].bold and styles[i].stroke_rel >= 0.115:
                     styles[i].bold = True
-        elif bold_n * 6 <= n:
+        elif bold_n * 5 <= n:  # 1/5: p7's Before sat at 2/11 after the
+            # size pass moved a member out of the cohort; the protected
+            # header cases (p10 Input:/OutputA 4/12, p11 步驟 2 at 1/3)
+            # stay well above this
             for i in idxs:
                 if styles[i].bold and styles[i].stroke_rel <= 0.15:
                     styles[i].bold = False

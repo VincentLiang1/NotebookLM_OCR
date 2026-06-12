@@ -249,6 +249,21 @@ def _split_color_runs(img: np.ndarray, line: Line, bg_ref: np.ndarray):
         else:
             segments.append([1, col])
 
+    # a single-char segment between two same-color neighbors is CTC box
+    # jitter, not emphasis: the final t of p4's "Idempotent(" sampled the
+    # anti-aliasing grey (150,150,150) from a box landing half on the "("
+    # gap and split the run mid-word. Genuine one-char emphasis between
+    # two parts of the SAME color does not occur in these decks.
+    i = 1
+    while i < len(segments) - 1:
+        prev_c, mid, next_c = segments[i - 1][1], segments[i], segments[i + 1][1]
+        if (mid[0] == 1 and prev_c is not None and next_c is not None
+                and np.abs(prev_c - next_c).max() <= RUN_JOIN_DIST):
+            segments[i - 1][0] += mid[0] + segments[i + 1][0]
+            del segments[i:i + 2]
+        else:
+            i += 1
+
     real = [s[1] for s in segments if s[1] is not None]
     if len(segments) < 2 or not real:
         return None
@@ -298,7 +313,8 @@ def _chip_room_right(img: np.ndarray, line: Line, bg_rgb, rows,
 _CJK_LOW_INK = set("：；。、，·．！？…—～〜「」『』（）《》〈〉【】")
 
 
-def _cjk_band_height(ink: np.ndarray, text: str) -> float | None:
+def _cjk_band_height(ink: np.ndarray, text: str,
+                     min_extents: int = 1) -> float | None:
     """Glyph-band height measured per CJK character, with a consensus vote.
 
     Column ranges come from per-char advance widths mapped proportionally
@@ -363,10 +379,15 @@ def _cjk_band_height(ink: np.ndarray, text: str) -> float | None:
                                    key=lambda g: int(counts[g].sum()))
                     extents.append(float(rows[-1] - rows[0] + 1))
         pos += adv
-    if not extents:
+    if len(extents) < max(1, min_extents):
         return None
     med = float(np.median(extents))
-    cluster = [e for e in extents if abs(e - med) <= 0.02 * med]
+    # 4%: wide enough that normal glyph variance clusters (p14 轉化為的
+    # at [80,75,93,75] — 2% left the cluster empty and the max() fallback
+    # picked the 93px char whose window caught the line above's
+    # descenders -> 24pt instead of 20pt), narrow enough to still exclude
+    # the +5% blur flukes (序/譜 61px vs four 58px siblings) and junk
+    cluster = [e for e in extents if abs(e - med) <= 0.04 * med]
     if 2 * len(cluster) >= len(extents):
         return max(cluster)
     return max(extents)
@@ -455,7 +476,15 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
             idx = range(len(clusters))
             bg_i = max(idx, key=lambda i: (clusters[i][1] >= 0.25, survs[i]))
             tx_i = min((i for i in idx if i != bg_i), key=lambda i: survs[i])
-            if survs[bg_i] - survs[tx_i] > 0.15:
+            # a real spilled pill re-derives a bg that DIFFERS from the
+            # ring (that mismatch is the whole failure mode); when the
+            # re-derived bg matches the ring this is just dense bold text
+            # that crossed the ink.mean threshold (p15 把精力保留… at
+            # ink.mean 0.46), and the least-solid cluster would be the
+            # anti-aliasing shell — overriding paints the text grey
+            if (survs[bg_i] - survs[tx_i] > 0.15
+                    and np.abs(clusters[bg_i][0].astype(int)
+                               - bg_ref.astype(int)).max() >= 40):
                 bg_ref = clusters[bg_i][0]
                 bg_rgb = tuple(int(v) for v in bg_ref)
                 text_rgb_override = _core_color(inner, masks[tx_i], bg_ref)
@@ -510,9 +539,18 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
     # to the lone char's band). Cross-line agreement is instead restored
     # by harmonize_font_sizes in blocks.py.
     ink_h_font_px = ink_h_px
+    has_desc = any(c in _DESC_CHARS for c in line.text)
+    has_latin = any(c.isascii() and c.isalnum() for c in line.text)
     if (len(rows) and not line.arc_sagitta and not is_pure_latin(line.text)
-            and any(c in _DESC_CHARS for c in line.text)):
-        cjk_h = _cjk_band_height(ink, line.text)
+            and (has_desc or has_latin)):
+        # descender lines may hang their consensus on a single CJK char
+        # (跨 Viewer needs 跨 alone); other latin-mixed lines need >= 2
+        # ideograph votes or single-CJK lines like "2025 年" collapse to
+        # the lone char's band (p14 轉化為 AI 的 Guardrails: no descender
+        # chars at all, but the line above's p/q stems bridged into the
+        # union -> 24pt instead of 20pt, so desc-only gating is not enough)
+        cjk_h = _cjk_band_height(ink, line.text,
+                                 min_extents=1 if has_desc else 2)
         if cjk_h:
             ink_h_font_px = min(ink_h_px, cjk_h)
 

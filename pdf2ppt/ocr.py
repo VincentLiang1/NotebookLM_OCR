@@ -338,20 +338,47 @@ class OcrEngine:
         if strip.size == 0 or strip.std() < 12:
             return None
 
-        crop = img_rgb[y0:y1, x0:min(iw, x1 + round(1.2 * h))]
-        res = self.engine(crop[:, :, ::-1], use_det=False, use_cls=False,
-                          use_rec=True)
-        if res is None or res.txts is None or not res.txts:
-            return None
-        cand = res.txts[0].strip()
-        score = float(res.scores[0])
-
         plain_old = line.text.replace(" ", "")
-        plain_new = cand.replace(" ", "")
-        if not (score >= 0.8 and plain_new.startswith(plain_old)
-                and 1 <= len(plain_new) - len(plain_old) <= 2
-                and all(c in TRAIL_PUNCT for c in plain_new[len(plain_old):])):
-            return None
+
+        # a line-final OPENING bracket is usually hallucinated from the
+        # left arc of a 。 that sits past the box edge (p6 "…TOC 直跳」「"
+        # — the real 。 is 12px outside the box). Re-reading the WHOLE
+        # line cannot fix it: rec on a squeezed 3400px line drops chars
+        # (翻 N 本 -> 翻本) and the startswith check dies. Re-read only
+        # the tail strip and match on a short suffix instead. A genuine
+        # wrap-opening quote re-reads as 「 again, fails TRAIL_PUNCT, and
+        # the original text is kept.
+        if plain_old and plain_old[-1] in "「『（【《〈" and len(plain_old) >= 5:
+            tx0 = max(x0, x1 - 5 * h)
+            crop = img_rgb[y0:y1, tx0:min(iw, x1 + round(1.2 * h))]
+            res = self.engine(crop[:, :, ::-1], use_det=False, use_cls=False,
+                              use_rec=True)
+            if res is None or res.txts is None or not res.txts:
+                return None
+            tail_new = res.txts[0].replace(" ", "")
+            suffix = plain_old[:-1][-4:]
+            pos = tail_new.rfind(suffix)
+            if float(res.scores[0]) < 0.8 or pos < 0:
+                return None
+            appended = tail_new[pos + len(suffix):]
+            if not (1 <= len(appended) <= 2
+                    and all(c in TRAIL_PUNCT for c in appended)):
+                return None
+            cand = line.text.rstrip()[:-1] + appended
+        else:
+            crop = img_rgb[y0:y1, x0:min(iw, x1 + round(1.2 * h))]
+            res = self.engine(crop[:, :, ::-1], use_det=False, use_cls=False,
+                              use_rec=True)
+            if res is None or res.txts is None or not res.txts:
+                return None
+            cand = res.txts[0].strip()
+            score = float(res.scores[0])
+            plain_new = cand.replace(" ", "")
+            if not (score >= 0.8 and plain_new.startswith(plain_old)
+                    and 1 <= len(plain_new) - len(plain_old) <= 2
+                    and all(c in TRAIL_PUNCT
+                            for c in plain_new[len(plain_old):])):
+                return None
         # widen the box to the recovered punctuation's actual ink, so the
         # cover hides the raster glyph too; stop at the first big gap so a
         # neighboring column's ink can't drag the box across
