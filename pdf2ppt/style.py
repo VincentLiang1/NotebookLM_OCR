@@ -116,6 +116,13 @@ def snap_font_size(pt: float, max_pt: float | None = None,
 
 _MEASURE_FONT: object = None
 _MEASURE_FONT_LATIN: object = None
+_MEASURE_FONT_NARROW: object = None
+
+# Page titles emit their latin runs in Arial Narrow (user request: the
+# source deck's latin is ~14% narrower than Arial and long mixed titles
+# like p4 "Layer 0: 三層架構分工與 Karpathy 模式知識庫" ran visibly long;
+# Narrow keeps the faithful point size instead of dropping a snap step).
+NARROW_MIN_PT = 28
 
 
 def _load_measure_font(paths):
@@ -129,14 +136,30 @@ def _load_measure_font(paths):
     return False
 
 
-def _measure_em(text: str) -> float | None:
+def _latin_measure_font(narrow: bool):
+    global _MEASURE_FONT_LATIN, _MEASURE_FONT_NARROW
+    if narrow:
+        if _MEASURE_FONT_NARROW is None:
+            _MEASURE_FONT_NARROW = _load_measure_font(
+                (r"C:\Windows\Fonts\ARIALN.TTF",
+                 r"C:\Windows\Fonts\arialn.ttf"))
+        if _MEASURE_FONT_NARROW:
+            return _MEASURE_FONT_NARROW
+    if _MEASURE_FONT_LATIN is None:
+        _MEASURE_FONT_LATIN = _load_measure_font(
+            (r"C:\Windows\Fonts\arial.ttf",))
+    return _MEASURE_FONT_LATIN
+
+
+def _measure_em(text: str, narrow: bool = False) -> float | None:
     """Exact advance width of the text in em, measured with the real
     output font; None when no font file is available. Pure-latin lines
     are emitted in Arial (builder.LATIN_FONT), so multi-char pure-latin
     strings measure with Arial — single chars keep the CJK font: they are
     the per-char window mapping inside mixed lines, which is calibrated
-    against the CJK font's advances."""
-    global _MEASURE_FONT, _MEASURE_FONT_LATIN
+    against the CJK font's advances. narrow=True measures latin with
+    Arial Narrow (page titles >= NARROW_MIN_PT emit that face)."""
+    global _MEASURE_FONT
     if _MEASURE_FONT is None:
         import os
         _MEASURE_FONT = _load_measure_font((
@@ -150,11 +173,9 @@ def _measure_em(text: str) -> float | None:
     # loosened max_pt by 7%), and at that length the metric difference is
     # invisible in the rendered output anyway
     if len(text) > 2 and is_pure_latin(text):
-        if _MEASURE_FONT_LATIN is None:
-            _MEASURE_FONT_LATIN = _load_measure_font(
-                (r"C:\Windows\Fonts\arial.ttf",))
-        if _MEASURE_FONT_LATIN:
-            return _MEASURE_FONT_LATIN.getlength(text) / 100.0
+        latin_font = _latin_measure_font(narrow)
+        if latin_font:
+            return latin_font.getlength(text) / 100.0
     if not _MEASURE_FONT:
         return None
     # mixed line: the builder emits latin characters in Arial, which runs
@@ -164,17 +185,15 @@ def _measure_em(text: str) -> float | None:
     # 24pt -> 20pt). Sum per-script runs with each output font.
     if len(text) > 2 and any(ord(c) >= 0x2E80 for c in text) \
             and any(ord(c) < 0x2E80 for c in text):
-        if _MEASURE_FONT_LATIN is None:
-            _MEASURE_FONT_LATIN = _load_measure_font(
-                (r"C:\Windows\Fonts\arial.ttf",))
-        if _MEASURE_FONT_LATIN:
+        latin_font = _latin_measure_font(narrow)
+        if latin_font:
             total, i = 0.0, 0
             while i < len(text):
                 latin = ord(text[i]) < 0x2E80
                 j = i
                 while j < len(text) and (ord(text[j]) < 0x2E80) == latin:
                     j += 1
-                font = _MEASURE_FONT_LATIN if latin else _MEASURE_FONT
+                font = latin_font if latin else _MEASURE_FONT
                 total += font.getlength(text[i:j])
                 i = j
             return total / 100.0
@@ -792,7 +811,8 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
              else CJK_INK_RATIO)
     ink_h_eff = max(ink_h_font_px - BLUR_PX, ink_h_font_px * 0.6)
     font_pt = ink_h_eff * px_to_slide_pt / ratio
-    em_width = _measure_em(line.text) or text_width_em(line.text)
+    em_width = (_measure_em(line.text, narrow=font_pt >= NARROW_MIN_PT)
+                or text_width_em(line.text))
     max_pt, tol, cliff_ok = None, 1.10, True
     if line.arc_sagitta and em_width > 0:
         # arc text must fit its chord with margin: the chord segments

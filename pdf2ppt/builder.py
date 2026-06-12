@@ -15,8 +15,17 @@ from .models import ALIGN_CENTER, ALIGN_RIGHT, TextBlock
 
 # ALL latin characters render in a dedicated latin face (user request);
 # OOXML fonts are per-character-class, so one run carries <a:latin>=Arial
-# for its English and <a:ea>=YaHei for its CJK — no run splitting needed
+# for its English and <a:ea>=YaHei for its CJK — no run splitting needed.
+# Page titles (>= NARROW_MIN_PT) use Arial Narrow instead (user request:
+# the source deck's latin is narrower than Arial and long mixed titles
+# like p4 Layer 0 ran visibly long; style.py measures widths to match).
 LATIN_FONT = "Arial"
+LATIN_FONT_NARROW = "Arial Narrow"
+
+
+def _latin_font(pt: float) -> str:
+    from .style import NARROW_MIN_PT
+    return LATIN_FONT_NARROW if pt >= NARROW_MIN_PT else LATIN_FONT
 
 SLIDE_W_EMU = 12192000  # 13.333 in, matches the example deck
 EMU_PER_PT = 12700
@@ -186,7 +195,7 @@ class DeckBuilder:
                     font = run.font
                     font.size = Pt(block.style.font_pt)
                     font.bold = block.style.bold
-                    font.name = LATIN_FONT  # sets <a:latin> only
+                    font.name = _latin_font(block.style.font_pt)  # <a:latin>
                     font.color.rgb = RGBColor(*rgb)
                     _set_east_asian_font(run, self.font_name)
 
@@ -523,7 +532,7 @@ class DeckBuilder:
             font = run.font
             font.size = Pt(style.font_pt)
             font.bold = style.bold
-            font.name = LATIN_FONT
+            font.name = _latin_font(style.font_pt)
             font.color.rgb = RGBColor(*style.text_rgb)
             _set_east_asian_font(run, self.font_name)
 

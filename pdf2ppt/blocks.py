@@ -361,7 +361,9 @@ def clamp_row_neighbors(lines: list[Line], styles: list[Style],
                 nb = j
         if nb is None:
             continue
-        em = _measure_em(li.text) or text_width_em(li.text)
+        em = (_measure_em(li.text,
+                          narrow=si.font_pt >= style_mod.NARROW_MIN_PT)
+              or text_width_em(li.text))
         if em <= 0:
             continue
         avail_pt = (lines[nb].bbox[0] - li.bbox[0]) * px_to_slide_pt
