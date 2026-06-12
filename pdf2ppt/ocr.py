@@ -305,13 +305,17 @@ class OcrEngine:
         self.engine = RapidOCR(params=params)
 
         # the rec model occasionally emits simplified lookalikes (惡→恶)
-        # even for Traditional Chinese input; OpenCC normalizes them back
+        # even for Traditional Chinese input; OpenCC normalizes them back.
+        # s2tw, not s2t: the orthodox s2t dictionary rewrites characters
+        # that are perfectly valid Taiwan Traditional (吃→喫 turned a
+        # correctly-read 越吃重 into 越喫重); the Taiwan-standard target
+        # leaves them alone while still fixing true strays (恶→惡)
         self._s2t = self._t2s = None
         if s2t:
             try:
                 from opencc import OpenCC
 
-                self._s2t = OpenCC("s2t")
+                self._s2t = OpenCC("s2tw")
                 self._t2s = OpenCC("t2s")
             except ImportError:
                 pass
