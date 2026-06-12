@@ -580,6 +580,7 @@ class OcrEngine:
                     break
 
         self._vocab_correct(lines)
+        self._confirm_simplified_strays(lines)
         self._rescue_sibling_bands(img_rgb, lines)
 
         lines.sort(key=lambda ln: (ln.bbox[1], ln.bbox[0]))
@@ -645,6 +646,45 @@ class OcrEngine:
                 else:
                     ln.char_boxes = None
                 ln.text = fixed
+
+    def _confirm_simplified_strays(self, lines) -> None:
+        """The mixed-script test in _fix_simplified_strays never fires
+        when every CJK char of a line slips to simplified at once (p3
+        'AI 执行：', p9 'LLM 合规'): the line reads as pure simplified,
+        which is normally intentional depicted content (p4's search query
+        掌控习惯) and must not be touched. Disambiguate with the page
+        vocabulary: convert only when every changed CJK run of the
+        Traditional reading appears verbatim in a confidently-read line
+        on the same page (執行 backed by …AI 執行的自動化編譯…)."""
+        if self._s2t is None:
+            return
+        vocab = self._page_vocab(lines)
+        if not vocab:
+            return
+        for ln in lines:
+            as_trad = self._s2t.convert(ln.text)
+            if as_trad == ln.text or len(as_trad) != len(ln.text):
+                continue
+            runs, start, changed = [], None, False
+            for i, c in enumerate(as_trad + " "):
+                if "一" <= c <= "鿿":
+                    if start is None:
+                        start = i
+                    changed = changed or c != ln.text[i]
+                    continue
+                if start is not None and changed:
+                    runs.append(as_trad[start:i])
+                start, changed = None, False
+            if not runs or not all(2 <= len(r) <= 4 and r in vocab
+                                   for r in runs):
+                continue
+            ns = as_trad.replace(" ", "")
+            if ln.char_boxes and len(ln.char_boxes) == len(ns):
+                ln.char_boxes = [(c, *b[1:]) for c, b
+                                 in zip(ns, ln.char_boxes)]
+            else:
+                ln.char_boxes = None
+            ln.text = as_trad
 
     def _rescue_sibling_bands(self, img_rgb: np.ndarray, lines) -> None:
         """Detection misses the second line of tiny two-line chips
