@@ -269,6 +269,7 @@ def _pangu_spacing(text: str) -> str:
 _CONFUSION_BIGRAMS = {
     "反椎": "反推",   # p12 從修正反推規則 (扌 read as 木)
     "雨份": "兩份",   # p13 第一兩份資料 (兩 read as 雨)
+    "幹擾": "干擾",   # p13 會變成干擾閱讀 (干 read as 幹)
 }
 
 _BULLET_RE = re.compile(r"^[·‧・∙]\s?")

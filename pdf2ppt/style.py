@@ -74,6 +74,11 @@ _EM_CJK = 1.0
 _EM_LATIN = 0.52
 _EM_SPACE = 0.33
 
+# Margin (slide pt) kept between rendered text and a hit obstruction, so a
+# line clamped against a grid line / card border leaves visible breathing
+# room instead of touching it (user request: p2, p8).
+OBSTACLE_MARGIN_PT = 3.0
+
 
 def is_pure_latin(text: str) -> bool:
     return all(ord(c) < 0x2E80 for c in text)
@@ -814,6 +819,7 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
     em_width = (_measure_em(line.text, narrow=font_pt >= NARROW_MIN_PT)
                 or text_width_em(line.text))
     max_pt, tol, cliff_ok = None, 1.10, True
+    clamp_pt = None
     if line.arc_sagitta and em_width > 0:
         # arc text must fit its chord with margin: the chord segments
         # overlap slightly at their joints, so err small
@@ -822,17 +828,19 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
         room = _chip_room_right(img, line, bg_rgb, rows, y0)
         ink_w_pt = float(cols[-1] - cols[0] + 1) * px_to_slide_pt
         if room is not None and room != float("inf"):
-            # an obstruction bounds growth near-absolutely: the measured
-            # free space plus ~3.5pt of rendered width, and the snap
-            # cliff guard stays off. Relative tolerances + cliff let
-            # 21-em card bodies stab 80px through their card border
-            # (p13) and put Git Hook's 化 onto the leader dot
-            # (user-rejected) — a clamped header drags its design twins
-            # down via sync_clamped_twins instead of rounding up.
-            avail_pt = ((x1 - x0) + room) * px_to_slide_pt
+            # an obstruction bounds growth: the measured free space LESS a
+            # small margin (text sized to just touch a grid line / card
+            # border reads as crowding — p2 John card body, p8 VS Code 內建
+            # / Working Copy pressed their column rule; the user wants one
+            # step down), and the snap cliff guard stays off. Relative
+            # tolerances + cliff let 21-em card bodies stab 80px through
+            # their card border (p13) and put Git Hook's 化 onto the leader
+            # dot (user-rejected).
+            avail_pt = ((x1 - x0) + room) * px_to_slide_pt - OBSTACLE_MARGIN_PT
             max_pt = avail_pt / em_width
-            tol = 1.0 + min(0.02, 3.5 / max(avail_pt, 1.0))
+            tol = 1.0
             cliff_ok = False
+            clamp_pt = max_pt
         elif room is None:
             max_pt = ink_w_pt / em_width
             tol = width_tolerance(em_width)
@@ -953,6 +961,7 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
         stroke_rel=stroke_rel,
         bold_r=bold_r,
         max_fit_pt=max_fit_pt,
+        clamp_pt=clamp_pt,
         text_rgb=text_rgb,
         bg_rgb=bg_rgb,
         ink_top_px=ink_top_px,

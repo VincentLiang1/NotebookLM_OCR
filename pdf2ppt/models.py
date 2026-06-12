@@ -54,6 +54,12 @@ class Style:
     # tolerance applied); None when nothing binds. Wrap-group unification
     # must not exceed any member's ceiling.
     max_fit_pt: float | None = None
+    # obstacle-derived width ceiling in pt (a real grid line / card border
+    # the room scan hit). Unlike max_fit_pt this is NOT the slide edge, but
+    # the wrap-group harmonizer caps its unified size by it so a body block
+    # constrained by its card can't be re-rounded up past the card boundary
+    # (p2 John Gruber card body). None when no obstacle bounded the line.
+    clamp_pt: float | None = None
     ink_top_px: float = 0.0     # top of the actual glyph ink, image px
     ink_bottom_px: float = 0.0  # bottom of the actual glyph ink, image px
     # multi-color lines: [(char_count, rgb), ...] over the space-stripped

@@ -9,8 +9,10 @@ from pathlib import Path
 
 import pymupdf
 
-from .blocks import (clamp_row_neighbors, drop_illegible_lines, harmonize_bold, sync_clamped_twins,
-                     harmonize_font_sizes, lines_to_blocks)
+from .blocks import (clamp_row_neighbors, drop_illegible_lines, drop_unreproducible,
+                     harmonize_bold, harmonize_code_block_latin, merge_row_title_fragments,
+                     propagate_column_clamp, sync_clamped_twins, harmonize_font_sizes,
+                     lines_to_blocks)
 from .builder import DeckBuilder
 from .ocr import OcrEngine
 from .render import render_page
@@ -126,15 +128,26 @@ def main(argv: list[str] | None = None) -> int:
                     kept_styles.append(st)
             lines, styles = kept_lines, kept_styles
 
+        # icons-as-letters, markup strikethroughs and sub/superscript
+        # formulas can't be rendered as faithful text — leave the raster
+        lines, styles, n_unrepr = drop_unreproducible(lines, styles, img)
+
         n_tiny = 0
         if not args.keep_tiny_text:
             lines, styles, n_tiny = drop_illegible_lines(lines, styles)
+        n_tiny += n_unrepr
+
+        # merge detector-shattered title fragments into one line before
+        # harmonizing (p6 釐清「方言」：markdown 的規格體系)
+        lines, styles = merge_row_title_fragments(lines, styles)
 
         # size first: wrap-mates unified into their true size leave the
         # same-size bold cohorts cleaner (SKILL.md belongs to 自動產出's
         # 18pt chip, not to the 16pt 步驟 headers it was born sized as)
         harmonize_font_sizes(lines, styles)
+        harmonize_code_block_latin(lines, styles)
         sync_clamped_twins(lines, styles)
+        propagate_column_clamp(lines, styles)
         if bold_mode == "auto":
             harmonize_bold(lines, styles)
         clamp_row_neighbors(lines, styles, px_to_slide_pt)

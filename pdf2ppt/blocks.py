@@ -145,6 +145,223 @@ def drop_illegible_lines(lines: list[Line], styles: list[Style],
     return kept_lines, kept_styles, sum(drop)
 
 
+def _is_decorative_icon(line: Line, style: Style, others: list[Line]) -> bool:
+    """A single large latin letter alone in its row is a line-drawing icon
+    misread as a glyph (p4's shuffle / crossing-arrows icon read as 'X' at
+    40pt). Real single-letter content (an X² variable) is never isolated at
+    title size — it sits beside other text on its row."""
+    t = line.text.strip()
+    if len(t) != 1 or not (t.isascii() and t.isalpha()):
+        return False
+    if style.font_pt < 28:
+        return False
+    x0, y0, x1, y1 = line.bbox
+    h = max(1.0, y1 - y0)
+    for o in others:
+        if o is line:
+            continue
+        if min(y1, o.bbox[3]) - max(y0, o.bbox[1]) > 0.3 * h:
+            return False  # shares the row with real text
+    return True
+
+
+def _is_markup_strikethrough(line: Line) -> bool:
+    """A ==highlight== markup demo with a red ✗ struck over a character
+    reads as '==螢×==' (p13): the strikethrough overlay can't be rendered
+    as editable text, so the raster must stay."""
+    t = line.text
+    return "==" in t and "×" in t
+
+
+def _has_baseline_shift(img, line: Line) -> bool:
+    """A short formula with sub/superscript digits (p12 H₂O X² flattened by
+    the rec model to 'H2OX2'): rendering it on one baseline is wrong, keep
+    the raster. Gate to short pure-alphanumeric lines carrying a digit, then
+    segment the raster into glyph columns and flag a >0.25 line-height
+    spread in their ink centroids (a sub/superscript baseline jump)."""
+    t = line.text.strip()
+    if not (3 <= len(t) <= 8) or any(ord(c) >= 0x2E80 for c in t):
+        return False
+    if not any(c.isdigit() for c in t) or not any(c.isalpha() for c in t):
+        return False
+    x0, y0, x1, y1 = (int(round(v)) for v in line.bbox)
+    crop = img[max(0, y0):y1, max(0, x0):x1]
+    if crop.size == 0:
+        return False
+    med = np.median(crop.reshape(-1, 3), axis=0)
+    ink = np.abs(crop.astype(int) - med).max(axis=2) > 60
+    col_has = ink.sum(axis=0) >= 2
+    segs, s = [], None
+    for j, v in enumerate(col_has):
+        if v and s is None:
+            s = j
+        elif not v and s is not None:
+            segs.append((s, j))
+            s = None
+    if s is not None:
+        segs.append((s, len(col_has)))
+    segs = [seg for seg in segs if seg[1] - seg[0] >= 3]
+    if len(segs) < 3:
+        return False
+    h = ink.shape[0]
+    centers = []
+    for a, b in segs:
+        rows = np.where(ink[:, a:b].sum(axis=1) >= 1)[0]
+        if len(rows):
+            centers.append((rows[0] + rows[-1]) / 2.0)
+    if len(centers) < 3:
+        return False
+    return (max(centers) - min(centers)) > 0.25 * h
+
+
+def drop_unreproducible(lines: list[Line], styles: list[Style], img,
+                        ) -> tuple[list[Line], list[Style], int]:
+    """Drop lines whose visual content can't be faithfully rendered as
+    editable text, leaving the raster exposed: decorative icons misread as
+    letters (p4 crossing-arrows → X), markup-demo strikethroughs (p13
+    ==螢×==), and sub/superscript formulas the rec model flattens (p12
+    H₂O X² → H2OX2)."""
+    keep_l, keep_s, n = [], [], 0
+    for ln, st in zip(lines, styles):
+        if (_is_decorative_icon(ln, st, lines)
+                or _is_markup_strikethrough(ln)
+                or _has_baseline_shift(img, ln)):
+            n += 1
+            continue
+        keep_l.append(ln)
+        keep_s.append(st)
+    return keep_l, keep_s, n
+
+
+def _norm_punct(c: str) -> str:
+    """Fold full-width punctuation onto its ASCII form so a duplicate
+    boundary read (： vs :) compares equal."""
+    table = {"：": ":", "，": ",", "。": ".", "；": ";", "（": "(", "）": ")"}
+    return table.get(c, c)
+
+
+def merge_row_title_fragments(lines: list[Line], styles: list[Style],
+                              ) -> tuple[list[Line], list[Style]]:
+    """The detector sometimes shatters one title into side-by-side
+    fragments at mixed sizes (p6 釐清 / 「方言」： / markdown / 的規格體系
+    snapped 36/28/28/36 because the overlapping boxes clamped each other).
+    Merge same-row title fragments (large font, heavy vertical overlap,
+    horizontally adjacent, matched weight/color) into one line at the
+    largest fragment's size. Overlapping boxes that re-read the same
+    boundary punctuation (： then :) get the duplicate dropped."""
+    from .ocr import _pangu_spacing
+
+    n = len(lines)
+    used = [False] * n
+    order = sorted(range(n), key=lambda i: lines[i].bbox[0])
+
+    def same_row_title(i: int, j: int) -> bool:
+        a, b = lines[i], lines[j]
+        sa, sb = styles[i], styles[j]
+        if a.angle or b.angle or a.arc_sagitta or b.arc_sagitta:
+            return False
+        if sa.font_pt < 28 or sb.font_pt < 28 or sa.bold != sb.bold:
+            return False
+        h = min(a.height, b.height)
+        oy = min(a.bbox[3], b.bbox[3]) - max(a.bbox[1], b.bbox[1])
+        if oy < 0.6 * h:
+            return False
+        # horizontally adjacent or overlapping (left edge of the righter box
+        # within ~0.8 line-height of the lefter box's right edge)
+        lft, rgt = (i, j) if a.bbox[0] <= b.bbox[0] else (j, i)
+        gap = lines[rgt].bbox[0] - lines[lft].bbox[2]
+        if gap > 0.8 * h:
+            return False
+        if max(abs(p - q) for p, q in zip(sa.text_rgb, sb.text_rgb)) > 45:
+            return False
+        return (sa.bg_rgb is None) == (sb.bg_rgb is None)
+
+    out_l, out_s = [], []
+    for i in order:
+        if used[i]:
+            continue
+        group = [i]
+        used[i] = True
+        # grow the chain transitively across the row
+        changed = True
+        while changed:
+            changed = False
+            for j in order:
+                if used[j]:
+                    continue
+                if any(same_row_title(g, j) for g in group):
+                    group.append(j)
+                    used[j] = True
+                    changed = True
+        if len(group) == 1:
+            out_l.append(lines[i])
+            out_s.append(styles[i])
+            continue
+        group.sort(key=lambda k: lines[k].bbox[0])
+        text = lines[group[0]].text
+        x0 = lines[group[0]].bbox[0]
+        y0 = min(lines[k].bbox[1] for k in group)
+        x1 = lines[group[0]].bbox[2]
+        y1 = max(lines[k].bbox[3] for k in group)
+        for k in group[1:]:
+            nt = lines[k].text
+            # an overlapping box that re-read the boundary punctuation
+            # duplicates the last char — drop it (p6 ：/: ); different
+            # boundary chars (p2 了 / 「) are kept
+            if (nt and text and lines[k].bbox[0] < x1
+                    and _norm_punct(nt[0]) == _norm_punct(text[-1])):
+                nt = nt[1:]
+            text += nt
+            x1 = max(x1, lines[k].bbox[2])
+        text = _pangu_spacing(text).strip()
+        big = max(group, key=lambda k: styles[k].est_pt)
+        st = styles[big]
+        st.font_pt = max(styles[k].font_pt for k in group)
+        out_l.append(Line(text=text, bbox=(x0, y0, x1, y1),
+                          score=min(lines[k].score for k in group)))
+        out_s.append(st)
+    return out_l, out_s
+
+
+def harmonize_code_block_latin(lines: list[Line], styles: list[Style],
+                               ) -> None:
+    """A pure-latin code line over-measures next to its CJK-bearing
+    sibling: backtick + underscore span the full em box and inflate the
+    estimate (p4 `name: analyze_data\\`` read 18pt while its stacked twin
+    `description：分析資料庫\\`` measured 14pt from the CJK glyph band — same
+    source size). When a pure-latin line carrying code punctuation (_ or `)
+    is left-aligned and stacked on a same-color, same-background CJK line
+    of smaller size, trust the CJK measurement and clamp the latin down."""
+    n = len(lines)
+    for i in range(n):
+        li, si = lines[i], styles[i]
+        t = li.text.strip()
+        if (li.angle or li.arc_sagitta or not style_mod.is_pure_latin(t)
+                or not any(c in t for c in "_`")):
+            continue
+        for j in range(n):
+            if j == i:
+                continue
+            lj, sj = lines[j], styles[j]
+            if not _CJK_RE.search(lj.text) or sj.font_pt >= si.font_pt:
+                continue
+            h = min(li.height, lj.height)
+            if abs(li.bbox[0] - lj.bbox[0]) > 0.5 * h:
+                continue  # not left-aligned in the same column
+            gap = max(li.bbox[1], lj.bbox[1]) - min(li.bbox[3], lj.bbox[3])
+            if gap > 0.6 * h:
+                continue  # not vertically stacked / adjacent
+            if (si.bg_rgb is None) != (sj.bg_rgb is None):
+                continue
+            if si.bg_rgb is not None and max(
+                    abs(a - b) for a, b in zip(si.bg_rgb, sj.bg_rgb)) > 25:
+                continue
+            if max(abs(a - b) for a, b in zip(si.text_rgb, sj.text_rgb)) > 45:
+                continue
+            si.font_pt = sj.font_pt
+            break
+
+
 def lines_to_blocks(lines: list[Line], styles: list[Style],
                     merge: bool = False) -> list[TextBlock]:
     if not merge:
@@ -281,9 +498,14 @@ def harmonize_font_sizes(lines: list[Line], styles: list[Style],
         # unified size must fit every wrap-mate or the clamped line
         # overflows again (p15: 不再滿足於… capped at 31.3pt by the slide
         # edge; the tie-break median re-snapped the pair to 32 and pushed
-        # it back off the slide — both lines belong at 28)
-        ceil = min((styles[i].max_fit_pt for i in g
-                    if styles[i].max_fit_pt is not None), default=None)
+        # it back off the slide — both lines belong at 28). Both the
+        # slide-edge ceiling and an obstacle ceiling (card border / grid
+        # line) bind: p2's John Gruber card body has two lines clamped to
+        # 14 by the card border while two shorter lines fit 16 — the 2-2
+        # tie-break would re-round the block to 16 and re-cross the border.
+        ceil = min((c for i in g
+                    for c in (styles[i].max_fit_pt, styles[i].clamp_pt)
+                    if c is not None), default=None)
         if ceil is not None and target > ceil:
             smaller = [s for s in FONT_SIZES if s <= ceil]
             if smaller:
@@ -330,6 +552,46 @@ def sync_clamped_twins(lines: list[Line], styles: list[Style]) -> None:
             if emi and emj and not (0.6 <= emi / emj <= 1.6):
                 continue
             sj.font_pt = si.font_pt
+
+
+def propagate_column_clamp(lines: list[Line], styles: list[Style]) -> None:
+    """An obstacle-clamped label drags its same-column, same-true-size
+    siblings down to match. p8: VS Code 內建 / Working Copy clamped to 20pt
+    by the table grid line while GitHub Web / Obsidian — shorter, so
+    unobstructed — rounded to 24pt and auto-bolded; the source column is
+    uniform regular. Strict gate: the sibling shares the column (left
+    edge), snaps to the SAME natural size pre-clamp, sits exactly one step
+    higher, and matches color / background. It inherits the clamped line's
+    weight too (the 24pt auto-bold was an artifact of the round-up)."""
+    n = len(lines)
+    for i in range(n):
+        si, li = styles[i], lines[i]
+        if (si.clamp_pt is None or li.angle or li.arc_sagitta
+                or si.est_pt <= 0 or si.font_pt not in FONT_SIZES):
+            continue
+        natural = snap_font_size(si.est_pt)
+        if (natural not in FONT_SIZES or si.font_pt >= natural
+                or FONT_SIZES.index(natural) - FONT_SIZES.index(si.font_pt) != 1):
+            continue  # not clamped exactly one step below its natural size
+        for j in range(n):
+            if j == i:
+                continue
+            sj, lj = styles[j], lines[j]
+            if (lj.angle or lj.arc_sagitta or sj.est_pt <= 0
+                    or sj.font_pt != natural
+                    or snap_font_size(sj.est_pt) != natural):
+                continue
+            if abs(li.bbox[0] - lj.bbox[0]) > 0.5 * min(li.height, lj.height):
+                continue  # same column (shared left edge)
+            if max(abs(a - b) for a, b in zip(si.text_rgb, sj.text_rgb)) > 45:
+                continue
+            if (si.bg_rgb is None) != (sj.bg_rgb is None):
+                continue
+            if si.bg_rgb is not None and max(
+                    abs(a - b) for a, b in zip(si.bg_rgb, sj.bg_rgb)) > 25:
+                continue
+            sj.font_pt = si.font_pt
+            sj.bold = si.bold
 
 
 def clamp_row_neighbors(lines: list[Line], styles: list[Style],
@@ -442,6 +704,16 @@ def harmonize_bold(lines: list[Line], styles: list[Style]) -> None:
             # stay well above this
             for i in idxs:
                 if styles[i].bold and _bold_demote_ok(styles[i]):
+                    styles[i].bold = False
+        elif len(idxs) <= 4 and bold_n == 1:
+            # a lone TEMPLATE-marginal bold in a tiny same-size cohort is a
+            # threshold coin-flip: p3's three [chip] labels measured r=0.19
+            # (最大化可讀性, reads bold) vs 0.07/0.09 (its two siblings) yet
+            # are visually identical. Only marginal template bolds (r<0.22)
+            # demote here — real isolated emphasis (人類輸入 r=0.25) and any
+            # stroke-decided header (bold_r None) are untouched.
+            for i in idxs:
+                if _tpl_marginal_bold(styles[i]):
                     styles[i].bold = False
 
 
