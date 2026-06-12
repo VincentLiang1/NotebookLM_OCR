@@ -575,5 +575,132 @@ class OcrEngine:
                     ln.arc_sagitta = a.arc_sagitta * scale
                     break
 
+        self._vocab_correct(lines)
+        self._rescue_sibling_bands(img_rgb, lines)
+
         lines.sort(key=lambda ln: (ln.bbox[1], ln.bbox[0]))
         return lines
+
+    @staticmethod
+    def _page_vocab(lines):
+        """All 2-4 char CJK substrings of confidently-read lines, with
+        occurrence counts: substrings that span word boundaries (架的 out
+        of 框架的…) pollute the candidate set, but real tokens repeat
+        across the page (架構 in 資訊架構 + RAG架構) — frequency breaks
+        the tie."""
+        from collections import Counter
+
+        vocab: Counter = Counter()
+        for ln in lines:
+            if ln.score < 0.8:
+                continue
+            run = []
+            for c in ln.text + " ":
+                if "一" <= c <= "鿿":
+                    run.append(c)
+                    continue
+                for n in (2, 3, 4):
+                    for i in range(len(run) - n + 1):
+                        vocab["".join(run[i:i + n])] += 1
+                run = []
+        return vocab
+
+    @staticmethod
+    def _vocab_match(vocab, cand: str) -> str | None:
+        """The unique strictly-most-frequent vocab token within one char
+        of cand; None when absent or ambiguous."""
+        scores = {v: c for v, c in vocab.items()
+                  if len(v) == len(cand)
+                  and sum(a != b for a, b in zip(v, cand)) == 1}
+        if not scores:
+            return None
+        best = max(scores.values())
+        winners = [v for v, c in scores.items() if c == best]
+        return winners[0] if len(winners) == 1 else None
+
+    def _vocab_correct(self, lines) -> None:
+        """The smallest chips on dense diagram pages are too degraded for
+        the rec model (p9's 資訊 at 72dpi reads as 黃訊 with score 0.66),
+        but the page usually names the same tokens in a bigger, cleanly
+        read line (商業驅動>資訊架構>系統建設 at 0.85). Replace a low-score
+        short pure-CJK line when it differs from exactly one same-length
+        vocab token by exactly one character."""
+        vocab = self._page_vocab(lines)
+        if not vocab:
+            return
+        for ln in lines:
+            t = ln.text.strip()
+            if (ln.score >= 0.8 or not (2 <= len(t) <= 4) or t in vocab
+                    or not all("一" <= c <= "鿿" for c in t)):
+                continue
+            fixed = self._vocab_match(vocab, t)
+            if fixed:
+                if ln.char_boxes and len(ln.char_boxes) == len(fixed):
+                    ln.char_boxes = [(c, *b[1:]) for c, b
+                                     in zip(fixed, ln.char_boxes)]
+                else:
+                    ln.char_boxes = None
+                ln.text = fixed
+
+    def _rescue_sibling_bands(self, img_rgb: np.ndarray, lines) -> None:
+        """Detection misses the second line of tiny two-line chips
+        entirely (p9: 資訊 found, 架構 below it invisible to det at any
+        scale). Probe directly above/below each small chip-sized CJK line
+        for an ink band, rec-only it, and accept ONLY when the page
+        vocabulary validates the result (exact or one-char-off match) —
+        an unvalidated band would paint a cover over correct raster text
+        and display garbage instead."""
+        vocab = self._page_vocab(lines)
+        if not vocab:
+            return
+        new_lines = []
+        for ln in lines:
+            t = ln.text.strip()
+            x0, y0, x1, y1 = ln.bbox
+            h = y1 - y0
+            if (ln.angle or ln.arc_sagitta
+                    or not (2 <= len(t) <= 4) or h > 90
+                    or not all("一" <= c <= "鿿" for c in t)):
+                continue
+            for band_y0, band_y1 in ((y1 - 0.1 * h, y1 + 1.1 * h),
+                                     (y0 - 1.1 * h, y0 + 0.1 * h)):
+                if band_y0 < 0 or band_y1 > img_rgb.shape[0]:
+                    continue
+                box = (x0 - 0.2 * h, band_y0, x1 + 0.2 * h, band_y1)
+                if any(self._overlaps(box, o.bbox, 0.3) for o in lines):
+                    continue
+                crop = img_rgb[int(band_y0):int(band_y1),
+                               int(max(0, x0 - 0.2 * h)):int(x1 + 0.2 * h)]
+                if crop.size == 0 or crop.std() < 12:
+                    continue
+                res = self.engine(crop[:, :, ::-1], use_det=False,
+                                  use_cls=False, use_rec=True)
+                if res is None or res.txts is None or not res.txts:
+                    continue
+                cand = self._fix_simplified_strays(res.txts[0].strip())
+                if not (res.scores and float(res.scores[0]) >= 0.5
+                        and 2 <= len(cand) <= 4
+                        and all("一" <= c <= "鿿" for c in cand)):
+                    continue
+                if cand not in vocab:
+                    fixed = self._vocab_match(vocab, cand)
+                    if not fixed:
+                        continue
+                    cand = fixed
+                new_lines.append(Line(
+                    text=cand,
+                    bbox=(x0, float(band_y0 + 0.1 * h),
+                          x1, float(band_y1 - 0.1 * h)),
+                    score=float(res.scores[0])))
+        lines.extend(new_lines)
+
+    @staticmethod
+    def _overlaps(a, b, frac: float) -> bool:
+        ox = min(a[2], b[2]) - max(a[0], b[0])
+        oy = min(a[3], b[3]) - max(a[1], b[1])
+        if ox <= 0 or oy <= 0:
+            return False
+        inter = ox * oy
+        area = min((a[2] - a[0]) * (a[3] - a[1]),
+                   (b[2] - b[0]) * (b[3] - b[1]))
+        return inter > frac * max(1.0, area)

@@ -535,6 +535,23 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
         ink_top_px = float(y0)
         ink_bottom_px = float(y1)
 
+    # --- no-cover rescue: the ring failed (p8's tilted green chips: the
+    # axis-aligned box spans chip + page bg + neighbors, and the cluster
+    # branch sees two SOLID surfaces with no survival gap) so bg stayed
+    # None and the editable digits doubled over the raster. The glyphs
+    # may still sit on a locally solid surface: sample the halo around
+    # the ink band; a clearly dominant color is a usable cover. Gradient
+    # or illustration backgrounds stay uncovered (dominant share low). ---
+    if bg_rgb is None and len(rows) and ink.sum() >= 30:
+        band_ink = np.zeros_like(ink)
+        band_ink[rows[0]:rows[-1] + 1] = ink[rows[0]:rows[-1] + 1]
+        near = _dilate(band_ink, 3)
+        halo = _dilate(near, 3) & ~near
+        if halo.sum() >= 60:
+            halo_col, share = _dominant_color(inner[halo])
+            if share >= 0.65:
+                bg_rgb = tuple(int(v) for v in halo_col)
+
     # --- mixed-line CJK band (font size only): latin descenders (g/p/y,
     # parens, /) drop below the ideograph band and stretch the whole-line
     # ink union ~0.15 em, so CJK_INK_RATIO oversizes the font (page 4
