@@ -836,7 +836,12 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
         elif room is None:
             max_pt = ink_w_pt / em_width
             tol = width_tolerance(em_width)
-        # room == inf: open space, no width ceiling (slide edge still caps)
+        # room == inf: open space, no width ceiling (slide edge still
+        # caps). A document-wide ink-footprint ceiling was tried and
+        # reverted: the source deck's CJK tracking is uniformly ~10%
+        # tighter than YaHei, so a tolerance tight enough to catch an
+        # oversized title (footprint ratio 1.114) also strangles normal
+        # body text (1.098) — 56 lines dropped a step.
     chord_ceil = max_pt * tol if max_pt else None
     # the slide edge is a hard wall: chip-room growth and generous short-
     # line tolerances may not push the rendered text off the 960pt slide
@@ -865,6 +870,22 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
                 and (best - chord_ceil) * em_width <= 3.0
                 and (slide_ceil is None or best <= slide_ceil)):
             font_pt = float(best)
+    # title footprint check: page titles sit in open space (no ceiling)
+    # and their height estimate rides snap midpoints — p8's title at est
+    # 38.3 rounded up to 40 and rendered 11% wider than the raster ink,
+    # its tail crowding the page edge while the raster sits centered
+    # (left margin == right margin at 36pt exactly). When the snapped
+    # title renders >9% wider than the raster footprint and one step
+    # down still covers >=90% of it, take the smaller size. Titles only:
+    # body text measures a uniform ~10% footprint surplus (tighter
+    # source tracking) and a document-wide rule strangles it.
+    if (font_pt >= NARROW_MIN_PT and em_width >= 3.5 and len(cols)
+            and not line.angle and not line.arc_sagitta):
+        ink_w_pt = float(cols[-1] - cols[0] + 1) * px_to_slide_pt
+        if font_pt * em_width > 1.09 * ink_w_pt:
+            smaller = [s for s in FONT_SIZES if s < font_pt]
+            if smaller and smaller[-1] * em_width >= 0.90 * ink_w_pt:
+                font_pt = smaller[-1]
     # only the slide-edge ceiling propagates to wrap-groups (max_fit_pt):
     # the chord/ink ceiling is soft — a few percent of in-card overshoot
     # is survivable and the group majority legitimately overrides it
