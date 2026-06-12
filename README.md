@@ -25,7 +25,7 @@
 pip install -r requirements.txt
 ```
 
-預設輸出字型為 Microsoft YaHei（Windows 內建），可用 `--font` 改成其他字型。
+預設輸出字型為 Microsoft YaHei（Windows 內建），可用 `--font` 改成其他字型；純英文的文字塊自動改用 Arial。
 
 ## 使用方式
 

@@ -90,29 +90,46 @@ def snap_font_size(pt: float, max_pt: float | None = None,
 
 
 _MEASURE_FONT: object = None
+_MEASURE_FONT_LATIN: object = None
+
+
+def _load_measure_font(paths):
+    import os
+
+    from PIL import ImageFont
+
+    for path in paths:
+        if os.path.exists(path):
+            return ImageFont.truetype(path, 100)
+    return False
 
 
 def _measure_em(text: str) -> float | None:
     """Exact advance width of the text in em, measured with the real
-    output font (Microsoft YaHei, Noto fallback); None when no font file
-    is available."""
-    global _MEASURE_FONT
+    output font; None when no font file is available. Pure-latin lines
+    are emitted in Arial (builder.LATIN_FONT), so multi-char pure-latin
+    strings measure with Arial — single chars keep the CJK font: they are
+    the per-char window mapping inside mixed lines, which is calibrated
+    against the CJK font's advances."""
+    global _MEASURE_FONT, _MEASURE_FONT_LATIN
     if _MEASURE_FONT is None:
         import os
-
-        from PIL import ImageFont
-
-        for path in (
+        _MEASURE_FONT = _load_measure_font((
             r"C:\Windows\Fonts\msyh.ttc",
             os.path.expandvars(
                 r"%LOCALAPPDATA%\Microsoft\Windows\Fonts\NotoSansTC-Regular.ttf"),
             r"C:\Windows\Fonts\NotoSansTC-VF.ttf",
-        ):
-            if os.path.exists(path):
-                _MEASURE_FONT = ImageFont.truetype(path, 100)
-                break
-        else:
-            _MEASURE_FONT = False
+        ))
+    # >= 3 chars: the width clamp on 2-char strings rides snap ties (the
+    # p8 "98" chip jumped 20pt -> 24pt+bold when Arial's narrower digits
+    # loosened max_pt by 7%), and at that length the metric difference is
+    # invisible in the rendered output anyway
+    if len(text) > 2 and is_pure_latin(text):
+        if _MEASURE_FONT_LATIN is None:
+            _MEASURE_FONT_LATIN = _load_measure_font(
+                (r"C:\Windows\Fonts\arial.ttf",))
+        if _MEASURE_FONT_LATIN:
+            return _MEASURE_FONT_LATIN.getlength(text) / 100.0
     if not _MEASURE_FONT:
         return None
     return _MEASURE_FONT.getlength(text) / 100.0

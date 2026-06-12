@@ -12,6 +12,11 @@ from pptx.oxml.ns import qn
 from pptx.util import Emu, Pt
 
 from .models import ALIGN_CENTER, ALIGN_RIGHT, TextBlock
+from .style import is_pure_latin
+
+# pure-latin text reads better in a dedicated latin face than in the CJK
+# font's latin glyphs (user request)
+LATIN_FONT = "Arial"
 
 SLIDE_W_EMU = 12192000  # 13.333 in, matches the example deck
 EMU_PER_PT = 12700
@@ -175,15 +180,17 @@ class DeckBuilder:
                     pieces = _split_text_runs(line.text, block.style.runs)
                 if pieces is None:
                     pieces = [(line.text, block.style.text_rgb)]
+                name = (LATIN_FONT if is_pure_latin(line.text)
+                        else self.font_name)
                 for piece, rgb in pieces:
                     run = para.add_run()
                     run.text = piece
                     font = run.font
                     font.size = Pt(block.style.font_pt)
                     font.bold = block.style.bold
-                    font.name = self.font_name  # sets <a:latin> only
+                    font.name = name  # sets <a:latin> only
                     font.color.rgb = RGBColor(*rgb)
-                    _set_east_asian_font(run, self.font_name)
+                    _set_east_asian_font(run, name)
 
     @staticmethod
     def _trim_row_overlaps(blocks, img) -> None:
@@ -518,9 +525,12 @@ class DeckBuilder:
             font = run.font
             font.size = Pt(style.font_pt)
             font.bold = style.bold
-            font.name = self.font_name
+            # font decided by the whole arc line, not the segment: a latin
+            # word inside a CJK banner must not switch faces mid-arc
+            name = LATIN_FONT if is_pure_latin(text) else self.font_name
+            font.name = name
             font.color.rgb = RGBColor(*style.text_rgb)
-            _set_east_asian_font(run, self.font_name)
+            _set_east_asian_font(run, name)
 
     def save(self, path: str) -> None:
         self.prs.save(path)
