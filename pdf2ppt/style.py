@@ -458,51 +458,93 @@ def _group_color_runs(colors):
             for s in segments]
 
 
-def _detect_bg_split(inner: np.ndarray):
-    """A banner that runs across a sharp background step (p2's BSD caption:
-    dark fill left, light fill right). Sample the box's top+bottom edge
-    rows (pure background, above/below the glyph band) and find a single
-    sharp luminance transition. Returns (split_col_px, left_bg, right_bg)
-    in box-local coords, or None when the background is uniform or a smooth
-    gradient (the two sides must each be internally flat)."""
+BG_SEG_MERGE = 26     # columns within this Chebyshev distance share a bg run
+BG_SEG_STD = 16       # a clean flat fill's per-column color std stays below this
+BG_SEG_DIST = 32      # adjacent fills must differ by at least this to stay split
+
+
+def _detect_bg_segments(inner: np.ndarray):
+    """Run-length the box's per-column background color into flat fills.
+
+    The background of each column is the median of its top+bottom edge rows
+    (above/below the glyph band, so pure background regardless of glyph
+    density — a full-column median is pulled dark by dense strokes, and a
+    single-bg-ref ink mask inverts in a banner's far fill). Consecutive
+    columns within BG_SEG_MERGE of a running mean form one fill. Handles a
+    two-tone banner (dark|light, p2 BSD caption) AND an inline highlight
+    (light|lavender|light, p2 `Perl` / `Email` code chips) the same way.
+    Returns [(x0_local, x1_local, rgb), ...] (>=2 clean fills covering the
+    width) or None for a uniform background or a smooth gradient — gradual
+    columns merge into one run, and a run whose own columns vary more than
+    BG_SEG_STD is rejected (a gradient/photo never resolves into flat
+    blocks). Internal boundaries are refined to the per-channel mid-
+    crossing so a fill edge lands in the inter-glyph gap, not inside a
+    boundary glyph (the source never splits a glyph's own fill)."""
     h, w = inner.shape[:2]
     if w < 80 or h < 12:
         return None
     k = max(3, h // 8)
-    edge = np.concatenate([inner[:k], inner[-k:]], axis=0).astype(int)
-    lum = edge @ np.array([0.299, 0.587, 0.114])
-    col = np.median(lum, axis=0)
-    if len(col) >= 5:
-        col = np.convolve(col, np.ones(5) / 5.0, mode="same")
-    m = max(1, int(0.12 * w))
-    left_lvl = float(np.median(col[:m]))
-    right_lvl = float(np.median(col[-m:]))
-    if abs(left_lvl - right_lvl) < 110:
+    edge = np.concatenate([inner[:k], inner[-k:]], axis=0).astype(float)
+    colc = np.median(edge, axis=0)  # (w, 3) per-column background
+    if w >= 5:
+        ker = np.ones(5) / 5.0
+        colc = np.stack([np.convolve(colc[:, i], ker, "same") for i in range(3)], 1)
+
+    bounds, mean, n = [0], colc[0].copy(), 1
+    for x in range(1, w):
+        if np.abs(colc[x] - mean).max() <= BG_SEG_MERGE:
+            mean = (mean * n + colc[x]) / (n + 1)
+            n += 1
+        else:
+            bounds.append(x)
+            mean, n = colc[x].copy(), 1
+    bounds.append(w)
+    segs = [[bounds[i], bounds[i + 1]] for i in range(len(bounds) - 1)]
+
+    def seg_color(a, b):
+        return np.median(edge[:, a:b].reshape(-1, 3), axis=0)
+
+    minw = max(10, int(0.03 * w))
+    changed = True
+    while changed and len(segs) > 1:
+        changed = False
+        for i, (a, b) in enumerate(segs):
+            if b - a >= minw:
+                continue
+            ci = seg_color(a, b)
+            cand = []
+            if i > 0:
+                cand.append((float(np.abs(ci - seg_color(*segs[i - 1])).max()), i - 1))
+            if i < len(segs) - 1:
+                cand.append((float(np.abs(ci - seg_color(*segs[i + 1])).max()), i + 1))
+            j = min(cand)[1]
+            segs[min(i, j)] = [min(a, segs[j][0]), max(b, segs[j][1])]
+            del segs[max(i, j)]
+            changed = True
+            break
+    if len(segs) < 2:
         return None
-    lo, hi = int(0.2 * w), int(0.8 * w)
-    if hi - lo < 2:
-        return None
-    peak = lo + int(np.argmax(np.abs(np.diff(col))[lo:hi]))
-    # refine the cover edge to the mid-level crossing near the gradient
-    # peak — that is the geometric center of the dark/light boundary (the
-    # raw argmax sits a few px to one side). It falls in the inter-glyph
-    # gap by construction (the source never splits a glyph's own fill), so
-    # no char-gap snapping is needed: snapping to the padded char box over-
-    # shot 27px into the white fill (p2's 個 box pads to 1931, ink ends ~1911)
-    mid = (left_lvl + right_lvl) / 2.0
-    win = max(5, int(0.06 * w))
-    a, b = max(0, peak - win), min(w - 1, peak + win)
-    c = a + int(np.argmin(np.abs(col[a:b + 1] - mid)))
-    # each side must be internally uniform — a gradient or photo fails this
-    if float(col[:c].std()) > 32 or float(col[c:].std()) > 32:
-        return None
-    left_bg = tuple(int(v) for v in np.median(
-        np.concatenate([inner[:k, :c], inner[-k:, :c]], axis=0).reshape(-1, 3),
-        axis=0))
-    right_bg = tuple(int(v) for v in np.median(
-        np.concatenate([inner[:k, c:], inner[-k:, c:]], axis=0).reshape(-1, 3),
-        axis=0))
-    return c, left_bg, right_bg
+
+    colors = [seg_color(a, b) for a, b in segs]
+    for a, b in segs:
+        if float(colc[a:b].std(axis=0).max()) > BG_SEG_STD:
+            return None  # a fill must be flat; a gradient run fails this
+    for i in range(len(segs) - 1):
+        if np.abs(colors[i] - colors[i + 1]).max() < BG_SEG_DIST:
+            return None  # neighboring fills too similar to be intentional
+
+    out = [0]
+    for i in range(len(segs) - 1):
+        raw = segs[i][1]
+        cA, cB = colors[i], colors[i + 1]
+        ch = int(np.argmax(np.abs(cA - cB)))
+        mid = (cA[ch] + cB[ch]) / 2.0
+        win = max(4, int(0.04 * w))
+        a0, b0 = max(out[-1] + 1, raw - win), min(w - 1, raw + win)
+        out.append(a0 + int(np.argmin(np.abs(colc[a0:b0 + 1, ch] - mid))))
+    out.append(w)
+    return [(float(out[i]), float(out[i + 1]),
+             tuple(int(v) for v in colors[i])) for i in range(len(segs))]
 
 
 def _split_color_runs_segmented(img: np.ndarray, line: Line, segments):
@@ -1047,17 +1089,20 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
     bg_segments = None
     runs = _split_color_runs(img, line, bg_ref)
     if (bg_rgb is not None and not line.angle and not line.arc_sagitta):
-        split = _detect_bg_split(inner)
-        if split is not None:
-            c, left_bg, right_bg = split
-            sx = float(max(0, x0) + c)
-            segs = [(float(max(0, x0)), sx, left_bg),
-                    (sx, float(x1), right_bg)]
+        local = _detect_bg_segments(inner)
+        if local is not None:
+            ox = float(max(0, x0))
+            segs = [(ox + a, (ox + b if i < len(local) - 1 else float(x1)),
+                     c) for i, (a, b, c) in enumerate(local)]
+            bg_segments = segs
+            # re-measure each char's color against its own segment's fill so
+            # dark-on-light text doesn't sample a bright fill as ink (two-tone
+            # banner); an inline highlight keeps one text color and just gets
+            # its background box back
             seg_runs = _split_color_runs_segmented(img, line, segs)
             if seg_runs is not None:
-                bg_segments = segs
                 runs = seg_runs
-                bg_rgb = left_bg
+            bg_rgb = segs[-1][2]
 
     return Style(
         font_pt=font_pt,
