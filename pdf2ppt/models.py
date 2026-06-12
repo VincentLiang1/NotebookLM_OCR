@@ -65,6 +65,10 @@ class Style:
     # multi-color lines: [(char_count, rgb), ...] over the space-stripped
     # text; None when the whole line is one color
     runs: list[tuple[int, tuple[int, int, int]]] | None = None
+    # two-tone banner: the line runs across a sharp background step (p2's
+    # BSD caption: dark-bg/white-text left, light-bg/dark-text right).
+    # [(x0_px, x1_px, bg_rgb), ...] in image px; None for a single fill.
+    bg_segments: list[tuple[float, float, tuple[int, int, int]]] | None = None
 
 
 # Paragraph alignment markers (mirrors PP_ALIGN without importing pptx here)

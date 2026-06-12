@@ -415,6 +415,12 @@ def _split_color_runs(img: np.ndarray, line: Line, bg_ref: np.ndarray):
             continue
         colors.append(np.asarray(_core_color(crop, ink, bg_ref)))
 
+    return _group_color_runs(colors)
+
+
+def _group_color_runs(colors):
+    """Group per-char colors (or None) into [(count, rgb), ...] runs, or
+    None when the line is effectively one color."""
     segments: list[list] = []  # [count, color|None]
     for col in colors:
         if segments and (
@@ -450,6 +456,74 @@ def _split_color_runs(img: np.ndarray, line: Line, bg_ref: np.ndarray):
     fallback = real[0]
     return [(s[0], tuple(int(v) for v in (s[1] if s[1] is not None else fallback)))
             for s in segments]
+
+
+def _detect_bg_split(inner: np.ndarray):
+    """A banner that runs across a sharp background step (p2's BSD caption:
+    dark fill left, light fill right). Sample the box's top+bottom edge
+    rows (pure background, above/below the glyph band) and find a single
+    sharp luminance transition. Returns (split_col_px, left_bg, right_bg)
+    in box-local coords, or None when the background is uniform or a smooth
+    gradient (the two sides must each be internally flat)."""
+    h, w = inner.shape[:2]
+    if w < 80 or h < 12:
+        return None
+    k = max(3, h // 8)
+    edge = np.concatenate([inner[:k], inner[-k:]], axis=0).astype(int)
+    lum = edge @ np.array([0.299, 0.587, 0.114])
+    col = np.median(lum, axis=0)
+    if len(col) >= 5:
+        col = np.convolve(col, np.ones(5) / 5.0, mode="same")
+    m = max(1, int(0.12 * w))
+    left_lvl = float(np.median(col[:m]))
+    right_lvl = float(np.median(col[-m:]))
+    if abs(left_lvl - right_lvl) < 110:
+        return None
+    lo, hi = int(0.2 * w), int(0.8 * w)
+    if hi - lo < 2:
+        return None
+    c = lo + int(np.argmax(np.abs(np.diff(col))[lo:hi])) + 1
+    # each side must be internally uniform — a gradient or photo fails this
+    if float(col[:c].std()) > 32 or float(col[c:].std()) > 32:
+        return None
+    left_bg = tuple(int(v) for v in np.median(
+        np.concatenate([inner[:k, :c], inner[-k:, :c]], axis=0).reshape(-1, 3),
+        axis=0))
+    right_bg = tuple(int(v) for v in np.median(
+        np.concatenate([inner[:k, c:], inner[-k:, c:]], axis=0).reshape(-1, 3),
+        axis=0))
+    return c, left_bg, right_bg
+
+
+def _split_color_runs_segmented(img: np.ndarray, line: Line, segments):
+    """Per-char color runs when the line spans two background fills: each
+    char is measured against the background of the segment it sits in (by
+    char-box center), so dark-on-light text on the light segment reads dark
+    instead of sampling the bright fill as ink. `segments` is
+    [(x0_px, x1_px, bg_rgb), ...]. Returns runs or None (one color)."""
+    if not line.char_boxes or len(line.char_boxes) < 2:
+        return None
+
+    def seg_bg(cx: float) -> np.ndarray:
+        for sx0, sx1, bg in segments:
+            if sx0 <= cx < sx1:
+                return np.asarray(bg)
+        return np.asarray(segments[-1][2])
+
+    colors = []
+    for _, l, t, r, b in line.char_boxes:
+        l, t, r, b = int(l), int(t), int(r), int(b)
+        if r - l < 3 or b - t < 3:
+            colors.append(None)
+            continue
+        bg = seg_bg((l + r) / 2.0)
+        crop = img[t:b, l:r]
+        ink = np.abs(crop.astype(int) - bg.astype(int)).max(axis=2) > INK_DIST
+        if ink.sum() < 8:
+            colors.append(None)
+            continue
+        colors.append(np.asarray(_core_color(crop, ink, bg)))
+    return _group_color_runs(colors)
 
 
 ROOM_MAX_FACTOR = 1.5   # scan at most this many line-heights of side room
@@ -954,6 +1028,36 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
         if bold_r is not None and font_pt >= TPL_MIN_PT:
             bold = bold_r >= BOLD_R_THRESH
 
+    # two-tone banner: when the box runs across a sharp background step,
+    # split it into per-fill cover segments and re-measure each char's
+    # color against its own segment's background (so dark-on-light text
+    # reads dark, not the bright fill sampled as ink). Only horizontal
+    # boxes with usable per-char boxes and genuinely different text colors
+    # across the step take this path; everything else keeps one fill.
+    bg_segments = None
+    runs = _split_color_runs(img, line, bg_ref)
+    if (bg_rgb is not None and not line.angle and not line.arc_sagitta):
+        split = _detect_bg_split(inner)
+        if split is not None:
+            c, left_bg, right_bg = split
+            sx = float(max(0, x0) + c)
+            # snap the split to the widest inter-char gap near it so a
+            # boundary glyph isn't sliced across the two fills (the bg
+            # gradient peak lands a few px inside the last dark glyph)
+            cb = line.char_boxes
+            if cb and len(cb) >= 2:
+                gaps = [((a[3] + b[1]) / 2.0) for a, b in zip(cb, cb[1:])]
+                near = min(gaps, key=lambda g: abs(g - sx))
+                if abs(near - sx) <= 1.5 * max(ink_h_px, 20.0):
+                    sx = near
+            segs = [(float(max(0, x0)), sx, left_bg),
+                    (sx, float(x1), right_bg)]
+            seg_runs = _split_color_runs_segmented(img, line, segs)
+            if seg_runs is not None:
+                bg_segments = segs
+                runs = seg_runs
+                bg_rgb = left_bg
+
     return Style(
         font_pt=font_pt,
         bold=bold,
@@ -966,5 +1070,6 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
         bg_rgb=bg_rgb,
         ink_top_px=ink_top_px,
         ink_bottom_px=ink_bottom_px,
-        runs=_split_color_runs(img, line, bg_ref),
+        runs=runs,
+        bg_segments=bg_segments,
     )

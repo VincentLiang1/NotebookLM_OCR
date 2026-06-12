@@ -137,7 +137,31 @@ class DeckBuilder:
                 margin_top = max(0, text_top - top)
 
             fill = self.cover and block.style.bg_rgb is not None
-            if not tilted and fill and text_top < ey(cov_y0):
+            bg_segs = block.style.bg_segments
+            if not tilted and self.cover and bg_segs and len(bg_segs) >= 2:
+                # two-tone banner: one solid cover per background fill, then
+                # a transparent text box whose per-segment color runs land
+                # white on the dark fill and dark on the light fill
+                n_seg = len(bg_segs)
+                for si, (sx0, sx1, sbg) in enumerate(bg_segs):
+                    cl = ex(sx0 - COVER_PAD_PX) if si == 0 else ex(sx0)
+                    cr = (ex(sx1 + COVER_PAD_PX) if si == n_seg - 1
+                          else ex(sx1))
+                    cov = slide.shapes.add_shape(
+                        MSO_SHAPE.RECTANGLE, Emu(max(0, cl)),
+                        Emu(max(0, ey(cov_y0))),
+                        Emu(cr - cl), Emu(ey(cov_y1) - ey(cov_y0)),
+                    )
+                    cov.name = f"Text {i} bg{si}"
+                    cov.shadow.inherit = False
+                    cov.line.fill.background()
+                    cov.fill.solid()
+                    cov.fill.fore_color.rgb = RGBColor(*sbg)
+                fill = False
+                top = text_top
+                height = ey(cov_y1) - top
+                margin_top = 0
+            elif not tilted and fill and text_top < ey(cov_y0):
                 # the leading-compensation zone above the ink would carry
                 # the fill onto the previous line's descenders in tight
                 # rows; split into a cover rect plus a transparent text box
