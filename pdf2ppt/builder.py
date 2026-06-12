@@ -139,18 +139,24 @@ class DeckBuilder:
             fill = self.cover and block.style.bg_rgb is not None
             bg_segs = block.style.bg_segments
             if not tilted and self.cover and bg_segs and len(bg_segs) >= 2:
-                # two-tone banner: one solid cover per background fill, then
-                # a transparent text box whose per-segment color runs land
-                # white on the dark fill and dark on the light fill
-                n_seg = len(bg_segs)
-                for si, (sx0, sx1, sbg) in enumerate(bg_segs):
+                # two-tone banner: a FULL-WIDTH base cover in the rightmost
+                # fill color (so the seam can never expose the raster even
+                # if a cover is nudged), then each earlier segment painted
+                # on top up to its boundary. The transparent text box on top
+                # carries per-segment color runs (white on the dark fill,
+                # dark on the light fill).
+                cv_top, cv_h = Emu(max(0, ey(cov_y0))), Emu(ey(cov_y1) - ey(cov_y0))
+                full_l = ex(block.bbox[0] - COVER_PAD_PX)
+                full_r = ex(block.bbox[2] + COVER_PAD_PX)
+                covers = [(full_l, full_r, bg_segs[-1][2])]
+                for si in range(len(bg_segs) - 1):
+                    sx0, sx1, sbg = bg_segs[si]
                     cl = ex(sx0 - COVER_PAD_PX) if si == 0 else ex(sx0)
-                    cr = (ex(sx1 + COVER_PAD_PX) if si == n_seg - 1
-                          else ex(sx1))
+                    covers.append((cl, ex(sx1), sbg))
+                for si, (cl, cr, sbg) in enumerate(covers):
                     cov = slide.shapes.add_shape(
-                        MSO_SHAPE.RECTANGLE, Emu(max(0, cl)),
-                        Emu(max(0, ey(cov_y0))),
-                        Emu(cr - cl), Emu(ey(cov_y1) - ey(cov_y0)),
+                        MSO_SHAPE.RECTANGLE, Emu(max(0, cl)), cv_top,
+                        Emu(cr - cl), cv_h,
                     )
                     cov.name = f"Text {i} bg{si}"
                     cov.shadow.inherit = False
