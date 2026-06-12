@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pymupdf
 
-from .blocks import harmonize_bold, harmonize_font_sizes, lines_to_blocks
+from .blocks import clamp_row_neighbors, harmonize_bold, harmonize_font_sizes, lines_to_blocks
 from .builder import DeckBuilder
 from .ocr import OcrEngine
 from .render import render_page
@@ -124,6 +124,7 @@ def main(argv: list[str] | None = None) -> int:
         harmonize_font_sizes(lines, styles)
         if bold_mode == "auto":
             harmonize_bold(lines, styles)
+        clamp_row_neighbors(lines, styles, px_to_slide_pt)
         blocks = lines_to_blocks(lines, styles, merge=args.merge_lines)
         builder.add_slide(png, blocks, img.shape[1], img.shape[0],
                           wipes=wipes, img=img)

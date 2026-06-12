@@ -8,7 +8,7 @@ from __future__ import annotations
 import numpy as np
 
 from .models import ALIGN_CENTER, ALIGN_LEFT, ALIGN_RIGHT, Line, Style, TextBlock
-from .style import FONT_SIZES, snap_font_size
+from .style import (FONT_SIZES, _measure_em, snap_font_size, text_width_em)
 
 
 def lines_to_blocks(lines: list[Line], styles: list[Style],
@@ -118,6 +118,55 @@ def harmonize_font_sizes(lines: list[Line], styles: list[Style],
             target = snap_font_size(med)
         for i in g:
             styles[i].font_pt = target
+
+
+def clamp_row_neighbors(lines: list[Line], styles: list[Style],
+                        px_to_slide_pt: float) -> None:
+    """A line's rendered text must not run into its same-row right
+    neighbor. estimate_style's width clamp only sees the line's own ink
+    width with a generous tolerance, so a detector-split title renders
+    wider than its raster and crowds the next box (p14: 'AI 協作的黃金
+    法則' at 40pt is ~336pt wide but only 323pt exist before
+    '(流程與資產篇)' starts). Bind the size to the neighbor's left edge,
+    and when the neighbor is a near-touching same-style twin (one split
+    headline), give it the same clamped size so the title stays uniform."""
+    n = len(lines)
+    order = sorted(range(n), key=lambda i: lines[i].bbox[0])
+    for ai, i in enumerate(order):
+        li, si = lines[i], styles[i]
+        if li.angle or li.arc_sagitta:
+            continue
+        nb = None
+        for j in order[ai + 1:]:
+            lj = lines[j]
+            if lj.angle or lj.arc_sagitta or lj.bbox[0] <= li.bbox[2]:
+                continue
+            ov = (min(li.bbox[3], lj.bbox[3])
+                  - max(li.bbox[1], lj.bbox[1]))
+            if ov < 0.5 * min(li.height, lj.height):
+                continue
+            if nb is None or lj.bbox[0] < lines[nb].bbox[0]:
+                nb = j
+        if nb is None:
+            continue
+        em = _measure_em(li.text) or text_width_em(li.text)
+        if em <= 0:
+            continue
+        avail_pt = (lines[nb].bbox[0] - li.bbox[0]) * px_to_slide_pt
+        if si.font_pt * em <= avail_pt * 1.02:
+            continue
+        old = si.font_pt
+        fit = [s for s in FONT_SIZES if s * em <= avail_pt * 1.02]
+        if not fit:
+            continue
+        si.font_pt = fit[-1]
+        sj = styles[nb]
+        gap_px = lines[nb].bbox[0] - li.bbox[2]
+        if (sj.font_pt == old and sj.bold == si.bold
+                and gap_px * px_to_slide_pt < 0.5 * old
+                and max(abs(a - b) for a, b in
+                        zip(sj.text_rgb, si.text_rgb)) <= 45):
+            sj.font_pt = si.font_pt
 
 
 def harmonize_bold(lines: list[Line], styles: list[Style]) -> None:

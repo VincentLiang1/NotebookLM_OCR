@@ -169,6 +169,51 @@ def _looks_like_warning_icon(img: np.ndarray, box) -> bool:
     return best / max(1, r - l) >= 0.6
 
 
+def _looks_like_filled_icon(img: np.ndarray, bbox) -> bool:
+    """A text glyph is strokes of ONE color; a filled icon (p15's green
+    refresh arrows -> 'S') splits its ink into two strong color clusters
+    (fill + outline). Background is the box's own dominant color — a ring
+    around the tight icon bbox lands ON the icon and lies about the bg."""
+    x0, y0, x1, y1 = (int(round(v)) for v in bbox)
+    h, w = img.shape[:2]
+    inner = img[max(0, y0):min(h, y1), max(0, x0):min(w, x1)]
+    if inner.size == 0:
+        return False
+    px = inner.reshape(-1, 3).astype(int)
+    q = (px >> 5) << 5
+    bins, bcounts = np.unique(q, axis=0, return_counts=True)
+    bg = bins[bcounts.argmax()]
+    near_bg = np.abs(px - bg).max(axis=1) < 40
+    bg = px[near_bg].mean(axis=0) if near_bg.any() else bg
+    ink = px[np.abs(px - bg).max(axis=1) > 60]
+    if len(ink) < 100:
+        return False
+    q = (ink >> 5) << 5
+    colors, counts = np.unique(q, axis=0, return_counts=True)
+    order = counts.argsort()[::-1]
+    clusters = []
+    taken = np.zeros(len(ink), dtype=bool)
+    for idx in order[:6]:
+        near = (np.abs(ink - colors[idx]).max(axis=1) < 40) & ~taken
+        share = float(near.mean())
+        if share >= 0.25:
+            clusters.append(ink[near].mean(axis=0))
+            taken |= near
+        if len(clusters) >= 2:
+            break
+    if len(clusters) < 2 or np.abs(clusters[0] - clusters[1]).max() < 60:
+        return False
+    # anti-aliasing also forms a second cluster, but it lies ON the
+    # bg<->glyph color line; an icon's fill color is off that line
+    # (green is not a blend of cream and the dark outline)
+    a, b = np.asarray(bg, float), clusters[0]
+    p = clusters[1]
+    ab = b - a
+    t = np.clip(np.dot(p - a, ab) / max(1e-6, np.dot(ab, ab)), 0.0, 1.0)
+    residual = float(np.linalg.norm(p - (a + t * ab)))
+    return residual >= 45.0
+
+
 def _fix_warning_icon(text: str, char_boxes, img: np.ndarray):
     """Replace a line-leading 'A' that is actually a warning triangle."""
     if (char_boxes and text[:1] == "A"
@@ -416,6 +461,13 @@ class OcrEngine:
             quad = np.asarray(quad, dtype=float)
             x0, y0 = quad.min(axis=0)
             x1, y1 = quad.max(axis=0)
+
+            # filled icons read as single letters (p15: the green refresh
+            # arrows next to the caption box recognized as 'S' at score
+            # 0.86) — a glyph is one ink color, an icon is fill + outline
+            if (len(text) == 1 and text.isascii() and text.isalpha()
+                    and _looks_like_filled_icon(img_rgb, (x0, y0, x1, y1))):
+                continue
 
             # tilt from the quad's top+bottom edges (averaged for stability);
             # the detector returns rotated quads for slanted band text
