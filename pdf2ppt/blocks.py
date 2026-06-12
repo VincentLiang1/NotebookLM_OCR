@@ -44,14 +44,21 @@ def drop_illegible_lines(lines: list[Line], styles: list[Style],
                          ) -> tuple[list[Line], list[Style], int]:
     """Drop tiny/blurry junk lines so the raster stays visible.
 
-    Two passes: per-line thresholds first, then a junk-neighborhood flood
-    for the survivors the thresholds can't judge — isolated glyphs inside
-    an illustration (p11 zodiac symbols read as m/Ⅱ/10 at score 0.96+, or
-    'Python' 0.93 inside the garbled terminal block). A weak line (tiny,
-    or a ≤2-char non-CJK glyph ≤20pt) sitting next to dropped junk with no
-    strong kept line nearby belongs to the same illustration. Real small
-    text survives because its neighbors are clean (p9 timestamps) or it
-    hugs a strong line (p8 'IP' under 'Attacker')."""
+    Three passes: per-line thresholds first, then a junk-neighborhood
+    flood for the survivors the thresholds can't judge — isolated glyphs
+    inside an illustration (p11 zodiac symbols read as m/Ⅱ/10 at score
+    0.96+, or 'Python' 0.93 inside the garbled terminal block). A weak
+    line (tiny, or a ≤2-char non-CJK glyph ≤20pt) sitting next to dropped
+    junk with no strong kept line nearby belongs to the same illustration.
+    Real small text survives because its neighbors are clean (p9
+    timestamps) or it hugs a strong line (p8 'IP' under 'Attacker').
+
+    Last, twin consistency: dropping half a set of sibling chips looks
+    worse than either extreme (p9 BSP stack: 商業策略/資訊策略 scored
+    0.60–0.69 and dropped while 應用系統/技術基礎 scored 0.77+ and
+    survived — half covers, half raster on one illustration). A kept
+    small line that is a twin of a dropped one (same font size, stacked
+    in the same column, similar height, vertically adjacent) joins it."""
     n = len(lines)
     drop = [_is_illegible(ln, st) for ln, st in zip(lines, styles)]
 
@@ -69,16 +76,35 @@ def drop_illegible_lines(lines: list[Line], styles: list[Style],
         return (bx0 < x1 + pad and bx1 > x0 - pad
                 and by0 < y1 + pad and by1 > y0 - pad)
 
+    def twin(i: int, j: int) -> bool:
+        if styles[i].font_pt != styles[j].font_pt:
+            return False
+        xi0, yi0, xi1, yi1 = lines[i].bbox
+        xj0, yj0, xj1, yj1 = lines[j].bbox
+        hi, hj = yi1 - yi0, yj1 - yj0
+        if abs(hi - hj) > 0.3 * max(hi, hj):
+            return False
+        if (min(xi1, xj1) - max(xi0, xj0)
+                < 0.6 * min(xi1 - xi0, xj1 - xj0)):
+            return False
+        return max(yi0, yj0) - min(yi1, yj1) <= 0.8 * max(hi, hj)
+
     changed = True
     while changed:
         changed = False
         for i in range(n):
-            if drop[i] or not weak(i):
+            if drop[i]:
                 continue
-            has_junk = any(drop[j] and near(i, j) for j in range(n))
-            has_strong = any(not drop[j] and j != i and not weak(j)
-                             and near(i, j) for j in range(n))
-            if has_junk and not has_strong:
+            if weak(i):
+                has_junk = any(drop[j] and near(i, j) for j in range(n))
+                has_strong = any(not drop[j] and j != i and not weak(j)
+                                 and near(i, j) for j in range(n))
+                if has_junk and not has_strong:
+                    drop[i] = True
+                    changed = True
+                    continue
+            if (styles[i].font_pt <= SMALL_PT
+                    and any(drop[j] and twin(i, j) for j in range(n))):
                 drop[i] = True
                 changed = True
 
