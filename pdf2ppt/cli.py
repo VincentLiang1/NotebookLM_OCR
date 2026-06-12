@@ -9,7 +9,8 @@ from pathlib import Path
 
 import pymupdf
 
-from .blocks import clamp_row_neighbors, harmonize_bold, harmonize_font_sizes, lines_to_blocks
+from .blocks import (clamp_row_neighbors, drop_illegible_lines, harmonize_bold,
+                     harmonize_font_sizes, lines_to_blocks)
 from .builder import DeckBuilder
 from .ocr import OcrEngine
 from .render import render_page
@@ -72,6 +73,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--no-cover", action="store_true", help="no solid fills; text overlays the image")
     ap.add_argument("--keep-watermark", action="store_true",
                     help="keep the bottom-right NotebookLM watermark instead of wiping it")
+    ap.add_argument("--keep-tiny-text", action="store_true",
+                    help="convert tiny/blurry OCR lines (chart and diagram "
+                         "innards) to text instead of leaving them in the image")
     ap.add_argument("--merge-lines", action="store_true", help="merge adjacent lines into one shape")
     bold = ap.add_mutually_exclusive_group()
     bold.add_argument("--no-bold", action="store_true", help="never mark text bold")
@@ -122,6 +126,10 @@ def main(argv: list[str] | None = None) -> int:
                     kept_styles.append(st)
             lines, styles = kept_lines, kept_styles
 
+        n_tiny = 0
+        if not args.keep_tiny_text:
+            lines, styles, n_tiny = drop_illegible_lines(lines, styles)
+
         # size first: wrap-mates unified into their true size leave the
         # same-size bold cohorts cleaner (SKILL.md belongs to 自動產出's
         # 18pt chip, not to the 16pt 步驟 headers it was born sized as)
@@ -134,6 +142,7 @@ def main(argv: list[str] | None = None) -> int:
                           wipes=wipes, img=img)
         print(f"page {idx + 1} ({n}/{len(page_indices)}): {len(lines)} lines, "
               f"{len(blocks)} shapes"
+              + (f", {n_tiny} tiny/blurry left as image" if n_tiny else "")
               + (f", {len(wipes)} watermark wiped" if wipes else ""))
 
         if args.debug:

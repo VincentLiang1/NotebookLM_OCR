@@ -5,10 +5,86 @@ lines into multi-paragraph shapes is opt-in via --merge-lines.
 """
 from __future__ import annotations
 
+import re
+
 import numpy as np
 
 from .models import ALIGN_CENTER, ALIGN_LEFT, ALIGN_RIGHT, Line, Style, TextBlock
 from .style import (FONT_SIZES, _measure_em, snap_font_size, text_width_em)
+
+_CJK_RE = re.compile(r"[㐀-䶿一-鿿豈-﫿]")
+
+# Tiny raster text (charts, flowcharts, terminal mockups) is near the 72dpi
+# legibility floor: OCR output is mostly garbage and a cover + wrong text is
+# worse than leaving the raster untouched. Thresholds calibrated on the
+# sample deck (p11 zodiac wheel / terminal: 44 junk lines vs p9 timestamps,
+# p5 pyramid chips, p8 isometric labels that must survive).
+TINY_PT = 9              # at/below: drop unless provably clean
+TINY_CJK_KEEP = 0.85     # clean small CJK chips (p5 基礎/進階 0.89–0.93)
+TINY_LATIN_KEEP = 0.94   # clean small latin/digits (p9 timestamps 0.94+)
+SMALL_PT = 14
+SMALL_MIN_SCORE = 0.72   # small + this blurry is a misread (p3 <小> 0.57)
+GLYPH_MIN_SCORE = 0.75   # short non-CJK soup at any size (p14 di 0.53)
+
+
+def _is_illegible(line: Line, style: Style) -> bool:
+    text = line.text.replace(" ", "")
+    n_cjk = len(_CJK_RE.findall(text))
+    if style.font_pt <= TINY_PT:
+        if (n_cjk == len(text) and 2 <= len(text) <= 4
+                and line.score >= TINY_CJK_KEEP):
+            return False
+        return line.score < TINY_LATIN_KEEP
+    if style.font_pt <= SMALL_PT and line.score < SMALL_MIN_SCORE:
+        return True
+    return n_cjk == 0 and len(text) <= 3 and line.score < GLYPH_MIN_SCORE
+
+
+def drop_illegible_lines(lines: list[Line], styles: list[Style],
+                         ) -> tuple[list[Line], list[Style], int]:
+    """Drop tiny/blurry junk lines so the raster stays visible.
+
+    Two passes: per-line thresholds first, then a junk-neighborhood flood
+    for the survivors the thresholds can't judge — isolated glyphs inside
+    an illustration (p11 zodiac symbols read as m/Ⅱ/10 at score 0.96+, or
+    'Python' 0.93 inside the garbled terminal block). A weak line (tiny,
+    or a ≤2-char non-CJK glyph ≤20pt) sitting next to dropped junk with no
+    strong kept line nearby belongs to the same illustration. Real small
+    text survives because its neighbors are clean (p9 timestamps) or it
+    hugs a strong line (p8 'IP' under 'Attacker')."""
+    n = len(lines)
+    drop = [_is_illegible(ln, st) for ln, st in zip(lines, styles)]
+
+    def weak(i: int) -> bool:
+        text = lines[i].text.replace(" ", "")
+        if styles[i].font_pt <= TINY_PT:
+            return True
+        return (styles[i].font_pt <= 20 and len(text) <= 2
+                and not _CJK_RE.search(text))
+
+    def near(i: int, j: int) -> bool:
+        x0, y0, x1, y1 = lines[i].bbox
+        pad = 2.0 * (y1 - y0)
+        bx0, by0, bx1, by1 = lines[j].bbox
+        return (bx0 < x1 + pad and bx1 > x0 - pad
+                and by0 < y1 + pad and by1 > y0 - pad)
+
+    changed = True
+    while changed:
+        changed = False
+        for i in range(n):
+            if drop[i] or not weak(i):
+                continue
+            has_junk = any(drop[j] and near(i, j) for j in range(n))
+            has_strong = any(not drop[j] and j != i and not weak(j)
+                             and near(i, j) for j in range(n))
+            if has_junk and not has_strong:
+                drop[i] = True
+                changed = True
+
+    kept_lines = [ln for ln, d in zip(lines, drop) if not d]
+    kept_styles = [st for st, d in zip(styles, drop) if not d]
+    return kept_lines, kept_styles, sum(drop)
 
 
 def lines_to_blocks(lines: list[Line], styles: list[Style],
