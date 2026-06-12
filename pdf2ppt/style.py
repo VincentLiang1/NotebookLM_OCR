@@ -578,6 +578,7 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
     # text (ink-coverage and stroke-width discriminators both measured
     # fully overlapping distributions), so: large text is bold (titles in
     # these decks always are), small text only when strokes are extreme ---
+    stroke_rel = 0.0
     if bold_mode == "always":
         bold = True
     elif bold_mode == "never":
@@ -585,7 +586,6 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
     elif font_pt >= 24:
         bold = True
     else:
-        stroke_rel = 0.0
         if len(rows):
             band = ink[rows[0]:rows[-1] + 1]
             n = int(band.sum())
@@ -599,6 +599,7 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
         font_pt=font_pt,
         bold=bold,
         est_pt=est_pt,
+        stroke_rel=stroke_rel,
         text_rgb=text_rgb,
         bg_rgb=bg_rgb,
         ink_top_px=ink_top_px,

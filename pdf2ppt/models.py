@@ -41,6 +41,10 @@ class Style:
     # pre-snap size estimate (after the width clamp); lets the wrap-line
     # harmonizer judge whether two lines truly measured alike
     est_pt: float = 0.0
+    # relative stroke width from the bold discriminator (0 when the
+    # >=24pt rule decided); lets the bold harmonizer spot coin-flip
+    # values near the 0.13 threshold
+    stroke_rel: float = 0.0
     ink_top_px: float = 0.0     # top of the actual glyph ink, image px
     ink_bottom_px: float = 0.0  # bottom of the actual glyph ink, image px
     # multi-color lines: [(char_count, rgb), ...] over the space-stripped

@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pymupdf
 
-from .blocks import harmonize_font_sizes, lines_to_blocks
+from .blocks import harmonize_bold, harmonize_font_sizes, lines_to_blocks
 from .builder import DeckBuilder
 from .ocr import OcrEngine
 from .render import render_page
@@ -118,7 +118,12 @@ def main(argv: list[str] | None = None) -> int:
                     kept_styles.append(st)
             lines, styles = kept_lines, kept_styles
 
+        # size first: wrap-mates unified into their true size leave the
+        # same-size bold cohorts cleaner (SKILL.md belongs to 自動產出's
+        # 18pt chip, not to the 16pt 步驟 headers it was born sized as)
         harmonize_font_sizes(lines, styles)
+        if bold_mode == "auto":
+            harmonize_bold(lines, styles)
         blocks = lines_to_blocks(lines, styles, merge=args.merge_lines)
         builder.add_slide(png, blocks, img.shape[1], img.shape[0],
                           wipes=wipes, img=img)
@@ -131,6 +136,7 @@ def main(argv: list[str] | None = None) -> int:
                 "page": idx + 1,
                 "lines": [{"text": ln.text, "bbox": ln.bbox, "score": ln.score,
                            "font_pt": st.font_pt, "bold": st.bold,
+                           "stroke_rel": round(st.stroke_rel, 4),
                            "text_rgb": st.text_rgb, "bg_rgb": st.bg_rgb}
                           for ln, st in zip(lines, styles)],
             })

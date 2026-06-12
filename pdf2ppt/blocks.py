@@ -118,6 +118,40 @@ def harmonize_font_sizes(lines: list[Line], styles: list[Style],
             styles[i].font_pt = target
 
 
+def harmonize_bold(lines: list[Line], styles: list[Style]) -> None:
+    """Same-size stroke-decided lines on a page are one type family; the
+    stroke-width discriminator coin-flips near its 0.13 threshold (the
+    measured spread of p5's four identical pyramid headings is
+    0.123-0.140). Vote within each (page, font_pt) cohort — text color is
+    deliberately NOT part of the key, the p5 headings are four different
+    colors. Flip only measurements inside the ambiguity band: clearly
+    thick emphasis keeps bold (SKILL 0.185, 永遠不要覆蓋！ 0.175) and
+    clearly thin text keeps regular. Promoting needs a 2/3 bold majority;
+    demoting needs the bold share down at 1/6 — a same-size cohort often
+    mixes box headers with body text (p10: Input:/OutputA at 4/12 bold
+    are real headers; p11 步驟 2 at 1/3 matches the other 步驟 headers),
+    and stripping those would break真 emphasis, so only clearly isolated
+    false positives demote."""
+    groups: dict[float, list[int]] = {}
+    for i, st in enumerate(styles):
+        # stroke_rel == 0 -> decided by the >=24pt rule or --bold flag
+        if st.stroke_rel > 0 and st.font_pt < 24:
+            groups.setdefault(st.font_pt, []).append(i)
+    for idxs in groups.values():
+        if len(idxs) < 3:
+            continue
+        n = len(idxs)
+        bold_n = sum(1 for i in idxs if styles[i].bold)
+        if bold_n * 3 >= n * 2:
+            for i in idxs:
+                if not styles[i].bold and styles[i].stroke_rel >= 0.115:
+                    styles[i].bold = True
+        elif bold_n * 6 <= n:
+            for i in idxs:
+                if styles[i].bold and styles[i].stroke_rel <= 0.15:
+                    styles[i].bold = False
+
+
 def _belongs(a: Line, b: Line) -> bool:
     if a.angle or b.angle:  # tilted lines keep their own rotated shapes
         return False
