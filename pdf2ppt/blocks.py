@@ -173,6 +173,20 @@ def _is_markup_strikethrough(line: Line) -> bool:
     return "==" in t and "×" in t
 
 
+def _is_misread_single_glyph(img, line: Line) -> bool:
+    """A line-art icon misread as a single CJK character (p14's CPU/IC chip
+    read as 尚). General signal: a low-confidence single CJK glyph whose ink
+    does not structurally match the character the rec model claims (IoU vs
+    a YaHei rendering). Conservative AND of both conditions so a correctly
+    read single character — which scores high or matches its glyph — is
+    never dropped."""
+    t = line.text.strip()
+    if len(t) != 1 or not _CJK_RE.search(t) or line.score >= 0.92:
+        return False
+    v = style_mod.glyph_char_iou(img, line.bbox, t)
+    return v is not None and v < 0.30
+
+
 def _has_baseline_shift(img, line: Line) -> bool:
     """A short formula with sub/superscript digits (p12 H₂O X² flattened by
     the rec model to 'H2OX2'): rendering it on one baseline is wrong, keep
@@ -225,6 +239,7 @@ def drop_unreproducible(lines: list[Line], styles: list[Style], img,
     for ln, st in zip(lines, styles):
         if (_is_decorative_icon(ln, st, lines)
                 or _is_markup_strikethrough(ln)
+                or _is_misread_single_glyph(img, ln)
                 or _has_baseline_shift(img, ln)):
             n += 1
             continue

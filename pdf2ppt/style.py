@@ -463,6 +463,46 @@ BG_SEG_STD = 16       # a clean flat fill's per-column color std stays below thi
 BG_SEG_DIST = 32      # adjacent fills must differ by at least this to stay split
 
 
+def glyph_char_iou(img: np.ndarray, bbox, ch: str) -> float | None:
+    """IoU between a box's glyph ink and the character `ch` rendered in
+    YaHei, both tight-cropped and scaled to 64x64. A real glyph of `ch`
+    overlaps its own rendering; an icon misread as `ch` does not (p14's CPU
+    chip read as 尚: IoU 0.20 vs 0.35-0.65 for correctly read CJK chars).
+    None when no font or the crop is too small."""
+    import os
+
+    from PIL import Image, ImageDraw, ImageFont
+
+    if not os.path.exists(TPL_FONT_REGULAR):
+        return None
+    x0, y0, x1, y1 = (int(round(v)) for v in bbox)
+    crop = _crop(img, x0, y0, x1, y1)
+    if crop.shape[0] < 8 or crop.shape[1] < 8:
+        return None
+    edge = np.concatenate([crop[:4].reshape(-1, 3), crop[-4:].reshape(-1, 3),
+                           crop[:, :4].reshape(-1, 3), crop[:, -4:].reshape(-1, 3)])
+    bg = np.median(edge, axis=0)
+    gm = np.abs(crop.astype(int) - bg).max(axis=2) > INK_DIST
+    font = ImageFont.truetype(TPL_FONT_REGULAR, 200)
+    l, t, r, b = font.getbbox(ch)
+    if r <= l or b <= t:
+        return None
+    im = Image.new("L", (int(r - l) + 10, int(b - t) + 10), 0)
+    ImageDraw.Draw(im).text((10 - l, 10 - t), ch, font=font, fill=255)
+    cm = np.asarray(im) > 80
+
+    def tight(m):
+        rs, cs = np.where(m.any(1))[0], np.where(m.any(0))[0]
+        return m[rs[0]:rs[-1] + 1, cs[0]:cs[-1] + 1] if len(rs) and len(cs) else None
+
+    gm, cm = tight(gm), tight(cm)
+    if gm is None or cm is None:
+        return None
+    gi = np.asarray(Image.fromarray(gm).resize((64, 64))) > 0.5
+    ci = np.asarray(Image.fromarray(cm).resize((64, 64))) > 0.5
+    return float((gi & ci).sum() / max(1, (gi | ci).sum()))
+
+
 def _detect_bg_segments(inner: np.ndarray):
     """Run-length the box's per-column background color into flat fills.
 
