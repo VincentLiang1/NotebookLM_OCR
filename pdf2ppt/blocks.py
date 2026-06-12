@@ -28,6 +28,24 @@ SMALL_MIN_SCORE = 0.72   # small + this blurry is a misread (p3 <小> 0.57)
 GLYPH_MIN_SCORE = 0.75   # short non-CJK soup at any size (p14 di 0.53)
 
 
+def _rotated_decor_pair(a: Line, b: Line) -> bool:
+    """Two steeply rotated latin-only quads that interpenetrate."""
+    import math
+
+    if not (a.angle and b.angle and abs(a.angle) >= 15 and abs(b.angle) >= 15):
+        return False
+    if not (a.center and b.center and a.size and b.size):
+        return False
+    if _CJK_RE.search(a.text) or _CJK_RE.search(b.text):
+        return False
+    th = math.radians(a.angle)
+    dx, dy = b.center[0] - a.center[0], b.center[1] - a.center[1]
+    u = dx * math.cos(th) + dy * math.sin(th)
+    v = -dx * math.sin(th) + dy * math.cos(th)
+    return (abs(u) < (a.size[0] + b.size[0]) / 2
+            and abs(v) < (a.size[1] + b.size[1]) / 2)
+
+
 def _is_illegible(line: Line, style: Style) -> bool:
     text = line.text.replace(" ", "")
     n_cjk = len(_CJK_RE.findall(text))
@@ -62,6 +80,19 @@ def drop_illegible_lines(lines: list[Line], styles: list[Style],
     in the same column, similar height, vertically adjacent) joins it."""
     n = len(lines)
     drop = [_is_illegible(ln, st) for ln, st in zip(lines, styles)]
+
+    # steeply rotated latin pairs whose quads interpenetrate are book-spine
+    # / billboard decoration (p10 VENDOR PITCH DECK at -28°: the detector
+    # split it into two overlapping quads and one cover wipes the other
+    # line's raster glyphs; VENDO is a truncated misread anyway). Editable
+    # value is nil, raster fidelity wins — drop both. CJK chips are
+    # exempt: rotated pyramid-band chips are real content.
+    for i in range(n):
+        for j in range(i + 1, n):
+            if drop[i] and drop[j]:
+                continue
+            if _rotated_decor_pair(lines[i], lines[j]):
+                drop[i] = drop[j] = True
 
     def weak(i: int) -> bool:
         text = lines[i].text.replace(" ", "")
@@ -204,8 +235,12 @@ def harmonize_font_sizes(lines: list[Line], styles: list[Style],
                     continue
             if (sa.bg_rgb is None) != (sb.bg_rgb is None):
                 continue
+            # 25, not 16: photo-panel gradients drift the bg estimate
+            # between wrap-mates (p7 成果/零/研究 measured 180/160/153 and
+            # the trio snapped 18/20/20); cross-chip pairs are still
+            # blocked by the adjacency gates above
             if sa.bg_rgb is not None and max(
-                    abs(x - y) for x, y in zip(sa.bg_rgb, sb.bg_rgb)) > 16:
+                    abs(x - y) for x, y in zip(sa.bg_rgb, sb.bg_rgb)) > 25:
                 continue
             if max(abs(x - y) for x, y in zip(sa.text_rgb, sb.text_rgb)) > 45:
                 continue
@@ -242,6 +277,17 @@ def harmonize_font_sizes(lines: list[Line], styles: list[Style],
         else:
             med = float(np.median([styles[i].est_pt for i in g]))
             target = snap_font_size(med)
+        # a width-clamped member's ceiling is a physical constraint: the
+        # unified size must fit every wrap-mate or the clamped line
+        # overflows again (p15: 不再滿足於… capped at 31.3pt by the slide
+        # edge; the tie-break median re-snapped the pair to 32 and pushed
+        # it back off the slide — both lines belong at 28)
+        ceil = min((styles[i].max_fit_pt for i in g
+                    if styles[i].max_fit_pt is not None), default=None)
+        if ceil is not None and target > ceil:
+            smaller = [s for s in FONT_SIZES if s <= ceil]
+            if smaller:
+                target = smaller[-1]
         for i in g:
             styles[i].font_pt = target
 

@@ -157,6 +157,27 @@ def _measure_em(text: str) -> float | None:
             return _MEASURE_FONT_LATIN.getlength(text) / 100.0
     if not _MEASURE_FONT:
         return None
+    # mixed line: the builder emits latin characters in Arial, which runs
+    # narrower than YaHei's latin — measuring everything with YaHei
+    # overestimates the width and the clamp squeezes true sizes (p5
+    # "Git Hook 自動化": 7.57em YaHei vs 7.18em with Arial latin, clamped
+    # 24pt -> 20pt). Sum per-script runs with each output font.
+    if len(text) > 2 and any(ord(c) >= 0x2E80 for c in text) \
+            and any(ord(c) < 0x2E80 for c in text):
+        if _MEASURE_FONT_LATIN is None:
+            _MEASURE_FONT_LATIN = _load_measure_font(
+                (r"C:\Windows\Fonts\arial.ttf",))
+        if _MEASURE_FONT_LATIN:
+            total, i = 0.0, 0
+            while i < len(text):
+                latin = ord(text[i]) < 0x2E80
+                j = i
+                while j < len(text) and (ord(text[j]) < 0x2E80) == latin:
+                    j += 1
+                font = _MEASURE_FONT_LATIN if latin else _MEASURE_FONT
+                total += font.getlength(text[i:j])
+                i = j
+            return total / 100.0
     return _MEASURE_FONT.getlength(text) / 100.0
 
 
@@ -410,6 +431,12 @@ def _split_color_runs(img: np.ndarray, line: Line, bg_ref: np.ndarray):
 ROOM_MAX_FACTOR = 1.5   # scan at most this many line-heights of side room
 ROOM_BG_DIST = 40       # a column is "free" if its pixels match the cover bg
 ROOM_FREE_FRAC = 0.9
+ROOM_THIN_PX = 8        # obstructions at most this wide may be seen through
+ROOM_FAINT_DIST = 75    # ...but only when faint (decorative grid lines);
+#                         card borders / leader dots are darker and still stop
+#                         the scan (p5 Git Hook 自動化: a pale blueprint grid
+#                         line 6px past the box froze the room at 6px and the
+#                         width clamp squeezed a true 24pt header to 20pt)
 
 
 def _chip_room_right(img: np.ndarray, line: Line, bg_rgb, rows,
@@ -430,13 +457,24 @@ def _chip_room_right(img: np.ndarray, line: Line, bg_rgb, rows,
     strip = img[r0:r1, x1:limit].astype(int)
     if strip.size == 0:
         return 0.0
-    free = (np.abs(strip - np.asarray(bg_rgb)).max(axis=2)
-            < ROOM_BG_DIST).mean(axis=0) >= ROOM_FREE_FRAC
-    room = 0
-    for ok in free:
-        if not ok:
-            break
-        room += 1
+    dist = np.abs(strip - np.asarray(bg_rgb)).max(axis=2)
+    free = (dist < ROOM_BG_DIST).mean(axis=0) >= ROOM_FREE_FRAC
+    faint = dist.max(axis=0) < ROOM_FAINT_DIST
+    room, i = 0, 0
+    while i < len(free):
+        if free[i]:
+            room = i + 1
+            i += 1
+            continue
+        j = i
+        while j < len(free) and not free[j]:
+            j += 1
+        # see through a thin, faint obstruction (decorative grid line);
+        # anything wide or dark (chip border, leader dot) ends the room
+        if j - i <= ROOM_THIN_PX and j < len(free) and faint[i:j].all():
+            i = j
+            continue
+        break
     return float(room)
 
 
@@ -585,7 +623,12 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
             if surv[bg_i] - surv[1 - bg_i] > 0.2 and clusters[bg_i][1] >= 0.30:
                 bg_ref = clusters[bg_i][0]
                 bg_rgb = tuple(int(v) for v in bg_ref)
-                text_rgb_override = tuple(int(v) for v in clusters[1 - bg_i][0])
+                # refine through the stroke cores, never the raw cluster
+                # center: the text cluster mixes true strokes with the
+                # much larger anti-aliasing / chip-outline population and
+                # its center lands mid-grey (p8 Guardrail 1 painted
+                # [171,171,169] instead of black)
+                text_rgb_override = _core_color(mid, masks[1 - bg_i], bg_ref)
         if bg_rgb is None and clusters:
             # gradient/photo: no cover, but keep a reference color so the
             # ink mask below can still find the glyphs
@@ -593,6 +636,20 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
 
     # --- ink mask ---
     ink = np.abs(inner.astype(int) - bg_ref.astype(int)).max(axis=2) > INK_DIST
+
+    # the mixed-ring "text" cluster can be the anti-aliasing shell / chip
+    # outline rather than the strokes (p8 Guardrail 1: outline + AA
+    # clustered at grey ~[190] while the black strokes were too sparse to
+    # form a cluster, painting the text [150,150,149]). When the ink mask
+    # against the chosen bg holds a clearly farther core, trust the ink.
+    if text_rgb_override is not None and ink.sum() >= 10:
+        ink_core = _core_color(inner, ink, bg_ref)
+        d_over = np.abs(np.array(text_rgb_override, dtype=int)
+                        - bg_ref.astype(int)).max()
+        d_core = np.abs(np.array(ink_core, dtype=int)
+                        - bg_ref.astype(int)).max()
+        if d_core >= d_over + 60:
+            text_rgb_override = ink_core
 
     # --- pill/chip detection: when the box spills past a filled pill the
     # ring sees the outside color, so the whole pill registers as "ink"
@@ -745,8 +802,37 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
             ink_w_pt = float(cols[-1] - cols[0] + 1) * px_to_slide_pt
             max_pt = ink_w_pt / em_width
             tol = width_tolerance(em_width)
-    est_pt = min(font_pt, max_pt * tol) if max_pt else font_pt
-    font_pt = snap_font_size(est_pt, max_pt=max_pt, tol=tol)
+    chord_ceil = max_pt * tol if max_pt else None
+    # the slide edge is a hard wall: chip-room growth and generous short-
+    # line tolerances may not push the rendered text off the 960pt slide
+    # (p15 不再滿足於… grew to 32pt × 29em from x=49pt → right edge 977pt)
+    slide_ceil = None
+    if em_width > 0 and not line.angle and not line.arc_sagitta:
+        slide_ceil = (960.0 - x0 * px_to_slide_pt - 3.0) / em_width
+    ceils = [c for c in (chord_ceil, slide_ceil) if c is not None]
+    eff_ceil = min(ceils) if ceils else None
+    est_pt = min(font_pt, eff_ceil) if eff_ceil else font_pt
+    font_pt = snap_font_size(est_pt, max_pt=eff_ceil, tol=1.0)
+    # cliff guard: the snap table jumps 17% between 20 and 24pt, so a
+    # marginal width-ceiling violation can drop a line two visual steps
+    # (p5 Git Hook 自動化: source latin runs 14% narrower than Arial, the
+    # leader dot sits 6px past the box, ceiling 23.62 → snapped to 20
+    # beside its true-24pt row twins). When the nearest size overshoots
+    # the SOFT chord ceiling by ≤3% and the fallback loses >10%, keep the
+    # nearest size — a few px of overshoot beats a wrong-size header. The
+    # slide-edge ceiling stays hard (p15 must not re-overflow).
+    if chord_ceil is not None:
+        best = min(FONT_SIZES, key=lambda s: abs(s - est_pt))
+        if (best > font_pt and font_pt < 0.9 * best
+                and best <= chord_ceil * 1.03
+                and (slide_ceil is None or best <= slide_ceil)):
+            font_pt = float(best)
+    # only the slide-edge ceiling propagates to wrap-groups (max_fit_pt):
+    # the chord/ink ceiling is soft — a few percent of in-card overshoot
+    # is survivable and the group majority legitimately overrides it
+    # (p12 嚴格的格式約束… clamps a hair under 14pt; exporting that pulled
+    # its three true-14pt wrap-mates down to 12)
+    max_fit_pt = slide_ceil
 
     # --- text color: blur drags edge pixels toward the background, so
     # average only the stroke cores (the ink pixels farthest from bg) ---
@@ -804,6 +890,7 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
         est_pt=est_pt,
         stroke_rel=stroke_rel,
         bold_r=bold_r,
+        max_fit_pt=max_fit_pt,
         text_rgb=text_rgb,
         bg_rgb=bg_rgb,
         ink_top_px=ink_top_px,

@@ -260,6 +260,37 @@ def _pangu_spacing(text: str) -> str:
     return re.sub(r" {2,}", " ", text)
 
 
+# Stable rec misreads, verified against the rendered page at 5x zoom (the
+# raster is unambiguously the replacement). Every principled fix failed:
+# rec-only re-reads of tight char windows repeat the error, and YaHei
+# glyph-template correlation cannot separate radical-only confusions at
+# 72dpi (椎/推 IoU margin -0.02 even with per-template sliding alignment).
+# Keyed on bigrams that are not real words, so blanket replacement is safe.
+_CONFUSION_BIGRAMS = {
+    "反椎": "反推",   # p12 從修正反推規則 (扌 read as 木)
+    "雨份": "兩份",   # p13 第一兩份資料 (兩 read as 雨)
+}
+
+_BULLET_RE = re.compile(r"^[·‧・∙]\s?")
+
+
+def _fix_confusions(text: str) -> str:
+    for wrong, right in _CONFUSION_BIGRAMS.items():
+        text = text.replace(wrong, right)
+    return text
+
+
+def _normalize_bullet(text: str) -> str:
+    """NotebookLM bullets are •; the rec model sometimes returns a small
+    middle dot instead (p14 mixed ·/• across one list) and drops the space
+    after it. Normalize line-leading bullets to '• '."""
+    if _BULLET_RE.match(text):
+        return "• " + _BULLET_RE.sub("", text, count=1)
+    if text.startswith("•") and len(text) > 1 and text[1] != " ":
+        return "• " + text[1:]
+    return text
+
+
 def resolve_device(device: str = "auto") -> str:
     """'auto' picks the best available onnxruntime provider: DirectML
     (any DX12 GPU on Windows, e.g. Intel Arc) > CUDA > CPU. An explicit
@@ -455,6 +486,7 @@ class OcrEngine:
                     and all(c in TRAIL_PUNCT for c in appended)):
                 return None
             cand = line.text.rstrip()[:-1] + appended
+            appended_str = appended
         else:
             crop = img_rgb[y0:y1, x0:min(iw, x1 + round(1.2 * h))]
             res = self.engine(crop[:, :, ::-1], use_det=False, use_cls=False,
@@ -469,6 +501,15 @@ class OcrEngine:
                     and all(c in TRAIL_PUNCT
                             for c in plain_new[len(plain_old):])):
                 return None
+            appended_str = plain_new[len(plain_old):]
+
+        # a line already closed by a terminal mark gains no mid-sentence
+        # punctuation: the ink past the box is decoration, not a glyph
+        # (p12 嚴格的格式約束與免疫防護。 grew a phantom ：from the card's
+        # dashed border)
+        if (plain_old and plain_old[-1] in "。！？"
+                and any(c in "：；，、．." for c in appended_str)):
+            return None
         # widen the box to the recovered punctuation's actual ink, so the
         # cover hides the raster glyph too; stop at the first big gap so a
         # neighboring column's ink can't drag the box across
@@ -481,6 +522,35 @@ class OcrEngine:
             if end is not None and c - end > 0.4 * h:
                 break
             end = c
+        if end is not None:
+            # a real trailing punct floats in clear space; a vertical card
+            # border / dashed rule continues above and below the line band
+            # (p12 單次寫：/ 高價值文件：were the cards' dashed borders).
+            # Check the line-gap zones at the recovered ink's columns; a
+            # control window just to the right separates a vertical border
+            # (inky only at the punct columns) from a banner edge or
+            # background art that is inky everywhere (p2 …的書。 sits in a
+            # ribbon whose top/bottom edges cross the zones).
+            cols = [c for c in ink_cols if c <= end]
+            ca, cb = x1 + min(cols), x1 + max(cols) + 1
+            cw = max(6, cb - ca)
+            vertical = 0
+            for z0, z1 in ((y0 - round(0.5 * h), y0 - round(0.08 * h)),
+                           (y1 + round(0.08 * h), y1 + round(0.5 * h))):
+                z0, z1 = max(0, z0), min(ih, z1)
+                if z1 <= z0:
+                    continue
+                zone = img_rgb[z0:z1, ca:cb].astype(int)
+                ctrl = img_rgb[z0:z1, min(cb + 6, iw):min(cb + 6 + cw, iw)
+                               ].astype(int)
+                zone_ink = (zone.size and (np.abs(zone - med).max(axis=2)
+                                           > 60).mean() >= 0.12)
+                ctrl_ink = (ctrl.size and (np.abs(ctrl - med).max(axis=2)
+                                           > 60).mean() >= 0.12)
+                if zone_ink and not ctrl_ink:
+                    vertical += 1
+            if vertical == 2:
+                return None
         new_x1 = float(x1 + end + 4) if end is not None else line.bbox[2]
         return cand, new_x1
 
@@ -556,6 +626,11 @@ class OcrEngine:
             ln.text = _pangu_spacing(ln.text).strip()
             ln.text = _fix_trailing_degree(ln.text)
             ln.text = self._fix_simplified_strays(ln.text)
+            ln.text = _fix_confusions(ln.text)
+            new_text = _normalize_bullet(ln.text)
+            if new_text != ln.text:
+                ln.text = new_text
+                ln.char_boxes = None  # 1:1 char mapping broken
 
         # banner ribbons hold parallel arc lines, but only the low-score one
         # goes through the rescue that measures the arc; propagate the

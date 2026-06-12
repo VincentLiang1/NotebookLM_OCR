@@ -50,6 +50,10 @@ class Style:
     # contrast cut. None when no template verdict (small text, unknown
     # bg, low contrast, unrenderable text). Primary bold signal >= 16pt.
     bold_r: float | None = None
+    # hard width ceiling in pt (chord / chip-room / slide-edge fit, with
+    # tolerance applied); None when nothing binds. Wrap-group unification
+    # must not exceed any member's ceiling.
+    max_fit_pt: float | None = None
     ink_top_px: float = 0.0     # top of the actual glyph ink, image px
     ink_bottom_px: float = 0.0  # bottom of the actual glyph ink, image px
     # multi-color lines: [(char_count, rgb), ...] over the space-stripped
