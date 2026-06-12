@@ -45,6 +45,11 @@ class Style:
     # >=24pt rule decided); lets the bold harmonizer spot coin-flip
     # values near the 0.13 threshold
     stroke_rel: float = 0.0
+    # template-matched weight score: 0 = the line's own text rendered in
+    # YaHei Regular, 1 = YaHei Bold, at matched ink height / blur /
+    # contrast cut. None when no template verdict (small text, unknown
+    # bg, low contrast, unrenderable text). Primary bold signal >= 16pt.
+    bold_r: float | None = None
     ink_top_px: float = 0.0     # top of the actual glyph ink, image px
     ink_bottom_px: float = 0.0  # bottom of the actual glyph ink, image px
     # multi-color lines: [(char_count, rgb), ...] over the space-stripped

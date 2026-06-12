@@ -151,6 +151,9 @@ def main(argv: list[str] | None = None) -> int:
                 "lines": [{"text": ln.text, "bbox": ln.bbox, "score": ln.score,
                            "font_pt": st.font_pt, "bold": st.bold,
                            "stroke_rel": round(st.stroke_rel, 4),
+                           "est_pt": round(st.est_pt, 2),
+                           "bold_r": (round(st.bold_r, 4)
+                                      if st.bold_r is not None else None),
                            "text_rgb": st.text_rgb, "bg_rgb": st.bg_rgb}
                           for ln, st in zip(lines, styles)],
             })

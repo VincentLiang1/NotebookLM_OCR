@@ -9,6 +9,7 @@ import re
 
 import numpy as np
 
+from . import style as style_mod
 from .models import ALIGN_CENTER, ALIGN_LEFT, ALIGN_RIGHT, Line, Style, TextBlock
 from .style import (FONT_SIZES, _measure_em, snap_font_size, text_width_em)
 
@@ -142,6 +143,13 @@ def lines_to_blocks(lines: list[Line], styles: list[Style],
     return blocks
 
 
+def _tpl_marginal_bold(st: Style) -> bool:
+    """Template-decided bold whose r sits in the overturnable band."""
+    return (st.bold and st.bold_r is not None
+            and st.font_pt >= style_mod.TPL_MIN_PT
+            and st.bold_r < style_mod.TPL_MARGINAL_R)
+
+
 def harmonize_font_sizes(lines: list[Line], styles: list[Style],
                          ) -> None:
     """Wrapped lines of one paragraph must share a font size.
@@ -185,7 +193,15 @@ def harmonize_font_sizes(lines: list[Line], styles: list[Style],
             if ox < 0.4 * min(la.width, lb.width):
                 continue
             if sa.bold != sb.bold:
-                continue
+                # a marginal template-bold verdict must not break a wrap
+                # group: 為體系化的高價值資產。 (14pt wrap tail, born
+                # snapped 16 / r=0.146 barely over threshold) was locked
+                # out of its 14pt regular wrap-mates, stranding it at
+                # 16pt bold. Adjacency + matched style outweighs a
+                # marginal r; the group majority then settles both size
+                # and weight below.
+                if not _tpl_marginal_bold(sa if sa.bold else sb):
+                    continue
             if (sa.bg_rgb is None) != (sb.bg_rgb is None):
                 continue
             if sa.bg_rgb is not None and max(
@@ -203,6 +219,14 @@ def harmonize_font_sizes(lines: list[Line], styles: list[Style],
     for i in range(n):
         groups.setdefault(find(i), []).append(i)
     for g in groups.values():
+        # marginal template-bold members follow a strict regular majority
+        # of their wrap group (1v1 pairs stay untouched: 人類專屬：精選
+        # at r=0.219 keeps its bold lead-in over its regular wrap tail)
+        bold_n = sum(1 for i in g if styles[i].bold)
+        if 0 < bold_n * 2 < len(g):
+            for i in g:
+                if _tpl_marginal_bold(styles[i]):
+                    styles[i].bold = False
         sizes = sorted({styles[i].font_pt for i in g})
         if len(sizes) < 2:
             continue
@@ -271,20 +295,45 @@ def clamp_row_neighbors(lines: list[Line], styles: list[Style],
             sj.font_pt = si.font_pt
 
 
+def _bold_promote_ok(st: Style) -> bool:
+    """May a cohort vote flip this regular line to bold? Template-decided
+    lines promote from r >= -0.05 (Karpathy Wiki 模式 measured -0.01 amid
+    seven bold siblings; regular text in bold-majority cohorts hasn't
+    measured above -0.05); stroke-decided lines keep the 0.115 band."""
+    if st.bold_r is not None and st.font_pt >= style_mod.TPL_MIN_PT:
+        return st.bold_r >= -0.05
+    return st.stroke_rel >= 0.115
+
+
+def _bold_demote_ok(st: Style) -> bool:
+    """May a cohort vote strip this bold line? Template-decided lines
+    demote only up to r = 0.22 (人類輸入 at 0.25 is real emphasis sitting
+    alone among eight body lines). Stroke-decided lines keep the 0.15
+    band, but a template second opinion of r >= 0.28 vetoes the strip —
+    the 14pt card titles 1.先寫規則 (rel 0.144, r 0.43) and 3.人類給骨架
+    (rel 0.133, r 0.31) are real bold drowned in a 17-line body cohort."""
+    if st.bold_r is not None and st.font_pt >= style_mod.TPL_MIN_PT:
+        return st.bold_r < style_mod.TPL_MARGINAL_R
+    if st.bold_r is not None and st.bold_r >= 0.28:
+        return False
+    return st.stroke_rel <= 0.15
+
+
 def harmonize_bold(lines: list[Line], styles: list[Style]) -> None:
     """Same-size stroke-decided lines on a page are one type family; the
-    stroke-width discriminator coin-flips near its 0.13 threshold (the
-    measured spread of p5's four identical pyramid headings is
+    weight discriminators wobble near their thresholds (the measured
+    stroke_rel spread of p5's four identical pyramid headings is
     0.123-0.140). Vote within each (page, font_pt) cohort — text color is
     deliberately NOT part of the key, the p5 headings are four different
-    colors. Flip only measurements inside the ambiguity band: clearly
-    thick emphasis keeps bold (SKILL 0.185, 永遠不要覆蓋！ 0.175) and
-    clearly thin text keeps regular. Promoting needs a 2/3 bold majority;
-    demoting needs the bold share down at 1/6 — a same-size cohort often
-    mixes box headers with body text (p10: Input:/OutputA at 4/12 bold
-    are real headers; p11 步驟 2 at 1/3 matches the other 步驟 headers),
-    and stripping those would break真 emphasis, so only clearly isolated
-    false positives demote."""
+    colors. Flip only measurements inside the per-metric ambiguity bands
+    (_bold_promote_ok/_bold_demote_ok): clearly thick emphasis keeps bold
+    (SKILL 0.185, 永遠不要覆蓋！ 0.175) and clearly thin text keeps
+    regular. Promoting needs a 2/3 bold majority; demoting needs the bold
+    share down at 1/5 — a same-size cohort often mixes box headers with
+    body text (p10: Input:/OutputA at 4/12 bold are real headers; p11
+    步驟 2 at 1/3 matches the other 步驟 headers), and stripping those
+    would break真 emphasis, so only clearly isolated false positives
+    demote."""
     groups: dict[float, list[int]] = {}
     for i, st in enumerate(styles):
         # stroke_rel == 0 -> decided by the >=24pt rule or --bold flag
@@ -297,14 +346,14 @@ def harmonize_bold(lines: list[Line], styles: list[Style]) -> None:
         bold_n = sum(1 for i in idxs if styles[i].bold)
         if bold_n * 3 >= n * 2:
             for i in idxs:
-                if not styles[i].bold and styles[i].stroke_rel >= 0.115:
+                if not styles[i].bold and _bold_promote_ok(styles[i]):
                     styles[i].bold = True
         elif bold_n * 5 <= n:  # 1/5: p7's Before sat at 2/11 after the
             # size pass moved a member out of the cohort; the protected
             # header cases (p10 Input:/OutputA 4/12, p11 步驟 2 at 1/3)
             # stay well above this
             for i in idxs:
-                if styles[i].bold and styles[i].stroke_rel <= 0.15:
+                if styles[i].bold and _bold_demote_ok(styles[i]):
                     styles[i].bold = False
 
 

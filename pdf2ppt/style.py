@@ -44,6 +44,31 @@ INK_DIST = 60        # Chebyshev distance from bg to count a pixel as ink
 MIN_INK_ROW_PX = 3   # a row needs this many ink pixels to count toward height
 MAX_INK_ROW_FRAC = 0.85  # rows nearly all "ink" are background outside a ribbon
 
+# --- template-matched bold (>=16pt) ---
+# Render the line's own text in YaHei Regular and Bold at the same ink
+# height, blur like the upscaled source raster, cut the ink mask at the
+# line's own contrast-relative threshold, and measure the same erosion
+# stroke estimator. r = 0 means the observed stroke equals the Regular
+# template, 1 the Bold template. Whole-document calibration 2026-06-12:
+# at >=16pt regular tops out at r=0.09 and bold starts at 0.17 (the two
+# stragglers Karpathy Wiki 模式 -0.01 and 4.批次整理 0.03 are rescued by
+# the same-page cohort vote); below 16pt the blur noise dominates and
+# all-caps Latin merges into blobs (PITCH DECK r=-2.4), keep stroke_rel.
+# SIGMA shifts the whole r scale (1.0 -> +0.07, 1.5 -> -0.15) but keeps
+# the ordering: the thresholds below are calibrated for SIGMA = 1.2.
+TPL_SIGMA = 1.2          # gaussian blur on templates, px at 200 dpi
+TPL_MIN_PT = 16          # template verdict is primary at/above this size
+TPL_COMPUTE_PT = 14      # compute r down to this size (demote tiebreak)
+TPL_MIN_CONTRAST = 75    # below this text/bg distance the cut is degenerate
+BOLD_R_THRESH = 0.13     # midpoint of regular max 0.09 / bold min 0.17
+TPL_MARGINAL_R = 0.22    # below this a template bold verdict is marginal:
+#                          cohort votes and wrap groups may overturn it
+#                          (人類輸入 r=0.25 is the lowest confirmed real
+#                          emphasis; the noisiest false positive was
+#                          為體系化… at 0.146)
+TPL_FONT_REGULAR = r"C:\Windows\Fonts\msyh.ttc"
+TPL_FONT_BOLD = r"C:\Windows\Fonts\msyhbd.ttc"
+
 # Rough advance widths (em) per character class, for the overflow clamp
 _EM_CJK = 1.0
 _EM_LATIN = 0.52
@@ -199,6 +224,96 @@ def _survival(mask: np.ndarray) -> float:
     if n == 0:
         return 0.0
     return float(_erode(_erode(mask)).sum() / n)
+
+
+def _band_stroke_px(ink: np.ndarray) -> tuple[float, np.ndarray] | None:
+    """(stroke width px, band rows) from the heaviest glyph row-group of an
+    ink mask — the same estimator estimate_style uses on the page crop."""
+    row_counts = ink.sum(axis=1)
+    row_w = max(1, ink.shape[1])
+    rows = np.where((row_counts >= MIN_INK_ROW_PX)
+                    & (row_counts <= MAX_INK_ROW_FRAC * row_w))[0]
+    if not len(rows):
+        return None
+    splits = np.where(np.diff(rows) > 8)[0]
+    if len(splits):
+        groups = np.split(rows, splits + 1)
+        rows = max(groups, key=lambda g: int(row_counts[g].sum()))
+    band = ink[rows[0]:rows[-1] + 1]
+    n = int(band.sum())
+    if n < 30:
+        return None
+    survival1 = float(_erode(band).sum()) / n
+    return 2.0 / max(0.05, 1.0 - survival1), rows
+
+
+_TPL_RENDERABLE = None
+
+
+def _tpl_text(text: str) -> str:
+    """Strip characters we can't trust YaHei to render as real glyphs
+    (arrows, roman numerals, dingbats become .notdef boxes = solid blobs
+    that poison the stroke metric)."""
+    keep = []
+    for c in text:
+        o = ord(c)
+        if (0x20 <= o < 0x7F or 0x2E80 <= o <= 0x9FFF
+                or 0x3000 <= o <= 0x30FF or 0xFF00 <= o <= 0xFFEF):
+            keep.append(c)
+    return "".join(keep).strip()
+
+
+def _tpl_stroke_px(text: str, ink_h: float, bold: bool,
+                   rel_thresh: float) -> float | None:
+    """Stroke width of `text` rendered in YaHei (Regular/Bold), blurred
+    like the upscaled source raster and cut at the line's own
+    contrast-relative ink threshold, scaled so the glyph band matches
+    ink_h. Measured with the same estimator as the page crop."""
+    import os
+
+    from PIL import Image, ImageDraw, ImageFilter, ImageFont
+
+    path = TPL_FONT_BOLD if bold else TPL_FONT_REGULAR
+    if not os.path.exists(path):
+        return None
+    cut = 255.0 * (1.0 - min(0.95, rel_thresh))
+    em = max(12, int(round(ink_h / 0.91)))
+    result = None
+    for _ in range(3):  # converge the band height onto ink_h
+        font = ImageFont.truetype(path, em)
+        l, t, r, b = font.getbbox(text)
+        if r <= l or b <= t:
+            return None
+        im = Image.new("L", (int(r - l) + 20, int(b - t) + 20), 255)
+        ImageDraw.Draw(im).text((10 - l, 10 - t), text, font=font, fill=0)
+        im = im.filter(ImageFilter.GaussianBlur(TPL_SIGMA))
+        ink = np.asarray(im) < cut
+        got = _band_stroke_px(ink)
+        if got is None:
+            return None
+        result, rows = got
+        h = rows[-1] - rows[0] + 1
+        if abs(h - ink_h) <= max(2, 0.04 * ink_h):
+            break
+        em = max(12, int(round(em * ink_h / h)))
+    return result
+
+
+def _template_bold_r(text: str, ink_h: float, w_obs: float,
+                     contrast: float) -> float | None:
+    """Template-matched weight score (see module constants). None when no
+    trustworthy verdict exists."""
+    text = _tpl_text(text)
+    if sum(1 for c in text if c != " ") < 2:
+        return None
+    rel = INK_DIST / max(float(INK_DIST + 5), contrast)
+    w_reg = _tpl_stroke_px(text, ink_h, False, rel)
+    w_bold = _tpl_stroke_px(text, ink_h, True, rel)
+    if not w_reg or not w_bold or w_bold <= w_reg:
+        return None
+    if w_reg > 2.5 * w_obs:  # template imploded into blobs (caps + blur)
+        return None
+    return (w_obs - w_reg) / (w_bold - w_reg)
 
 
 def _crop(img: np.ndarray, x0: int, y0: int, x1: int, y1: int) -> np.ndarray:
@@ -649,8 +764,14 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
     # --- bold: the 72dpi source blur erases the weight signal for small
     # text (ink-coverage and stroke-width discriminators both measured
     # fully overlapping distributions), so: large text is bold (titles in
-    # these decks always are), small text only when strokes are extreme ---
+    # these decks always are). Small text: at >=16pt the template-matched
+    # score decides (the raw stroke_rel threshold cannot — its bold/thin
+    # distributions overlap there: Layer 3 標題 0.108 bold vs 多模態輸入
+    # 0.098 regular; the per-text template absorbs the content, size and
+    # contrast-cut systematics that cause the overlap). Below 16pt the
+    # templates are noise-dominated, keep the extreme-stroke rule. ---
     stroke_rel = 0.0
+    bold_r = None
     if bold_mode == "always":
         bold = True
     elif bold_mode == "never":
@@ -658,6 +779,7 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
     elif font_pt >= 24:
         bold = True
     else:
+        stroke_w = 0.0
         if len(rows):
             band = ink[rows[0]:rows[-1] + 1]
             n = int(band.sum())
@@ -666,12 +788,22 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
                 stroke_w = 2.0 / max(0.05, 1.0 - survival1)
                 stroke_rel = stroke_w / max(1.0, ink_h_px)
         bold = stroke_rel >= 0.13
+        if (stroke_w > 0 and font_pt >= TPL_COMPUTE_PT and bg_rgb is not None
+                and not line.arc_sagitta):
+            contrast = float(np.abs(np.array(text_rgb, dtype=int)
+                                    - bg_ref.astype(int)).max())
+            if contrast >= TPL_MIN_CONTRAST:
+                bold_r = _template_bold_r(line.text, ink_h_px, stroke_w,
+                                          contrast)
+        if bold_r is not None and font_pt >= TPL_MIN_PT:
+            bold = bold_r >= BOLD_R_THRESH
 
     return Style(
         font_pt=font_pt,
         bold=bold,
         est_pt=est_pt,
         stroke_rel=stroke_rel,
+        bold_r=bold_r,
         text_rgb=text_rgb,
         bg_rgb=bg_rgb,
         ink_top_px=ink_top_px,
