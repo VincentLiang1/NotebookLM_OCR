@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pymupdf
 
-from .blocks import (clamp_row_neighbors, drop_illegible_lines, harmonize_bold,
+from .blocks import (clamp_row_neighbors, drop_illegible_lines, harmonize_bold, sync_clamped_twins,
                      harmonize_font_sizes, lines_to_blocks)
 from .builder import DeckBuilder
 from .ocr import OcrEngine
@@ -134,6 +134,7 @@ def main(argv: list[str] | None = None) -> int:
         # same-size bold cohorts cleaner (SKILL.md belongs to 自動產出's
         # 18pt chip, not to the 16pt 步驟 headers it was born sized as)
         harmonize_font_sizes(lines, styles)
+        sync_clamped_twins(lines, styles)
         if bold_mode == "auto":
             harmonize_bold(lines, styles)
         clamp_row_neighbors(lines, styles, px_to_slide_pt)

@@ -292,6 +292,46 @@ def harmonize_font_sizes(lines: list[Line], styles: list[Style],
             styles[i].font_pt = target
 
 
+def sync_clamped_twins(lines: list[Line], styles: list[Style]) -> None:
+    """A width-clamped header drags its same-style page twins down one
+    snap step. p5: Git Hook 自動化 wants 24pt (est 23.6) but a leader dot
+    sits 6px past its box — rendering 24pt puts 化 onto the dot
+    (user-rejected), so it clamps to 20. Its design twins 規則演化 (免疫
+    力) / 跨頁連動修復 sit in open space at 24 — mixed 20/24 across one
+    header family looks broken, and the user prefers the family at the
+    clamped size. Gates are tight: bold headers only, est within 10%,
+    same text color / background surface, similar line length, exactly
+    one snap step apart."""
+    n = len(lines)
+    for i in range(n):
+        si = styles[i]
+        if not si.bold or si.est_pt <= 0:
+            continue
+        want = snap_font_size(si.est_pt)
+        if (want not in FONT_SIZES or si.font_pt not in FONT_SIZES
+                or FONT_SIZES.index(want) - FONT_SIZES.index(si.font_pt) != 1):
+            continue
+        emi = _measure_em(lines[i].text) or text_width_em(lines[i].text)
+        for j in range(n):
+            sj = styles[j]
+            if j == i or not sj.bold or sj.font_pt != want or sj.est_pt <= 0:
+                continue
+            if abs(si.est_pt - sj.est_pt) > 0.10 * max(si.est_pt, sj.est_pt):
+                continue
+            if max(abs(a - b)
+                   for a, b in zip(si.text_rgb, sj.text_rgb)) > 45:
+                continue
+            if (si.bg_rgb is None) != (sj.bg_rgb is None):
+                continue
+            if si.bg_rgb is not None and max(
+                    abs(a - b) for a, b in zip(si.bg_rgb, sj.bg_rgb)) > 25:
+                continue
+            emj = _measure_em(lines[j].text) or text_width_em(lines[j].text)
+            if emi and emj and not (0.6 <= emi / emj <= 1.6):
+                continue
+            sj.font_pt = si.font_pt
+
+
 def clamp_row_neighbors(lines: list[Line], styles: list[Style],
                         px_to_slide_pt: float) -> None:
     """A line's rendered text must not run into its same-row right

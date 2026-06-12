@@ -439,38 +439,13 @@ ROOM_FAINT_DIST = 75    # ...but only when faint (decorative grid lines);
 #                         width clamp squeezed a true 24pt header to 20pt)
 
 
-def _obstruction_is_wall(img: np.ndarray, bg_rgb, x_lo: int, x_hi: int,
-                         band_top: int, band_bot: int) -> bool:
-    """Does the obstruction that stopped the room scan continue above AND
-    below the text band? A container border (card / cell edge) does — the
-    rendered text must never cross it. A leader dot or icon is vertically
-    confined to the band and a small overshoot onto it is survivable."""
-    h, w = img.shape[:2]
-    band_h = max(1, band_bot - band_top)
-    x_lo, x_hi = max(0, x_lo), min(w, x_hi)
-    if x_hi <= x_lo:
-        return False
-    hits = 0
-    for z0, z1 in ((band_top - band_h, band_top - band_h // 5),
-                   (band_bot + band_h // 5, band_bot + band_h)):
-        z0, z1 = max(0, z0), min(h, z1)
-        if z1 <= z0:
-            continue
-        zone = img[z0:z1, x_lo:x_hi].astype(int)
-        if (np.abs(zone - np.asarray(bg_rgb)).max(axis=2)
-                >= ROOM_BG_DIST).mean() >= 0.15:
-            hits += 1
-    return hits == 2
-
-
 def _chip_room_right(img: np.ndarray, line: Line, bg_rgb, rows,
-                     y0: int) -> tuple[float, bool] | None:
+                     y0: int) -> float | None:
     """How many pixels of unobstructed background extend past the box's
-    right edge before a border/edge — the true space the rendered text may
-    grow into — plus whether the stopper is a container wall (see
-    _obstruction_is_wall). Returns (inf, False) when the whole scan range
-    is free (nothing measured, the line may grow; the slide edge still
-    caps), or None when there is no cover color or no measured rows."""
+    right edge before any obstruction — the true space the rendered text
+    may grow into. Returns inf when the whole scan range is free (nothing
+    measured, the line may grow; the slide edge still caps), or None when
+    there is no cover color or no measured rows."""
     if bg_rgb is None or not len(rows):
         return None
     h, w = img.shape[:2]
@@ -479,11 +454,11 @@ def _chip_room_right(img: np.ndarray, line: Line, bg_rgb, rows,
     r0 = y0 + rows[0] + band_h // 4
     r1 = y0 + rows[-1] - band_h // 4 + 1
     if r1 <= r0 or x1 >= w:
-        return 0.0, True
+        return 0.0
     limit = min(w, x1 + int(ROOM_MAX_FACTOR * max(band_h, 1)))
     strip = img[r0:r1, x1:limit].astype(int)
     if strip.size == 0:
-        return 0.0, True
+        return 0.0
     dist = np.abs(strip - np.asarray(bg_rgb)).max(axis=2)
     free = (dist < ROOM_BG_DIST).mean(axis=0) >= ROOM_FREE_FRAC
     faint = dist.max(axis=0) < ROOM_FAINT_DIST
@@ -501,14 +476,12 @@ def _chip_room_right(img: np.ndarray, line: Line, bg_rgb, rows,
         if j - i <= ROOM_THIN_PX and j < len(free) and faint[i:j].all():
             i = j
             continue
-        wall = _obstruction_is_wall(img, bg_rgb, x1 + i, x1 + min(j, i + 8),
-                                    y0 + rows[0], y0 + rows[-1] + 1)
-        return float(room), wall
+        return float(room)
     # the whole scanned strip is free: no border within 1.5 line-heights,
     # so nothing was measured — the line may grow freely (the slide edge
     # still caps it). Treating the scan limit as a ceiling squeezed p10
     # "AI 逆向掃描" (open page bg to its right) from 24pt to 20pt.
-    return float("inf"), False
+    return float("inf")
 
 
 # Full-width punctuation whose ink does not span the em square — a line
@@ -826,25 +799,21 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
         # overlap slightly at their joints, so err small
         max_pt, tol = chord_pt / em_width, 0.85
     elif em_width > 0 and len(cols):
-        got = _chip_room_right(img, line, bg_rgb, rows, y0)
-        if got is not None and got[0] != float("inf"):
-            room, wall_hit = got
-            # measured space before the chip/cell border binds directly.
-            # A container wall (border continuing above and below the
-            # band) is near-absolute: at most ~3.5pt of rendered width
-            # may cross it, and the snap cliff guard must not re-admit
-            # the oversize step (p13 卡片內文 16pt stabbed 80px through
-            # the card border that the relative 1.02 allowed). A confined
-            # object (p5's leader dot) keeps the soft 2% + cliff path.
+        room = _chip_room_right(img, line, bg_rgb, rows, y0)
+        ink_w_pt = float(cols[-1] - cols[0] + 1) * px_to_slide_pt
+        if room is not None and room != float("inf"):
+            # an obstruction bounds growth near-absolutely: the measured
+            # free space plus ~3.5pt of rendered width, and the snap
+            # cliff guard stays off. Relative tolerances + cliff let
+            # 21-em card bodies stab 80px through their card border
+            # (p13) and put Git Hook's 化 onto the leader dot
+            # (user-rejected) — a clamped header drags its design twins
+            # down via sync_clamped_twins instead of rounding up.
             avail_pt = ((x1 - x0) + room) * px_to_slide_pt
             max_pt = avail_pt / em_width
-            if wall_hit:
-                tol = 1.0 + min(0.02, 3.5 / max(avail_pt, 1.0))
-                cliff_ok = False
-            else:
-                tol = 1.02
-        elif got is None:
-            ink_w_pt = float(cols[-1] - cols[0] + 1) * px_to_slide_pt
+            tol = 1.0 + min(0.02, 3.5 / max(avail_pt, 1.0))
+            cliff_ok = False
+        elif room is None:
             max_pt = ink_w_pt / em_width
             tol = width_tolerance(em_width)
         # room == inf: open space, no width ceiling (slide edge still caps)
