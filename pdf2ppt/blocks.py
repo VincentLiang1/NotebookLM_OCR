@@ -362,6 +362,56 @@ def harmonize_code_block_latin(lines: list[Line], styles: list[Style],
             break
 
 
+def harmonize_across_dropped(lines: list[Line], styles: list[Style],
+                             dropped: list[Line]) -> None:
+    """A paragraph whose middle line was left as raster strands its tail
+    with a mismatched size/weight: the gap hides the wrap relationship from
+    harmonize_font_sizes (which only bridges directly-adjacent lines). p13:
+    'Alerts 退化成引用區塊，內容依舊可讀。但特' (16pt regular) and its tail
+    '會變成干擾閱讀的字面文字。' (mis-measured 14pt bold) are split by the
+    dropped ==螢光== strikethrough line. When a dropped line sits in the
+    column gap between two kept lines that share the column, color and
+    background, unify the lower line's size and weight to the upper one
+    (the paragraph body the user reads the style from)."""
+    n = len(lines)
+    for d in dropped:
+        dx0, dy0, dx1, dy1 = d.bbox
+        dw = max(1.0, dx1 - dx0)
+        dh = max(1.0, dy1 - dy0)
+        above = below = None
+        for i in range(n):
+            li = lines[i]
+            if li.angle or li.arc_sagitta:
+                continue
+            if min(li.bbox[2], dx1) - max(li.bbox[0], dx0) < 0.3 * dw:
+                continue  # not in the dropped line's column
+            if li.bbox[3] <= dy0 + 0.3 * dh:           # above the gap
+                if above is None or li.bbox[3] > lines[above].bbox[3]:
+                    above = i
+            elif li.bbox[1] >= dy1 - 0.3 * dh:         # below the gap
+                if below is None or li.bbox[1] < lines[below].bbox[1]:
+                    below = i
+        if above is None or below is None:
+            continue
+        sa, sb = styles[above], styles[below]
+        la, lb = lines[above], lines[below]
+        h = min(la.height, lb.height)
+        if abs(la.bbox[0] - lb.bbox[0]) > 0.6 * h:
+            continue  # not the same column (shared left edge)
+        if (sa.bg_rgb is None) != (sb.bg_rgb is None):
+            continue
+        if sa.bg_rgb is not None and max(
+                abs(x - y) for x, y in zip(sa.bg_rgb, sb.bg_rgb)) > 25:
+            continue
+        if max(abs(x - y) for x, y in zip(sa.text_rgb, sb.text_rgb)) > 45:
+            continue
+        if sa.est_pt > 0 and sb.est_pt > 0 and abs(sa.est_pt - sb.est_pt) \
+                > 0.20 * max(sa.est_pt, sb.est_pt):
+            continue  # too different to be the same paragraph
+        sb.font_pt = sa.font_pt
+        sb.bold = sa.bold
+
+
 def lines_to_blocks(lines: list[Line], styles: list[Style],
                     merge: bool = False) -> list[TextBlock]:
     if not merge:

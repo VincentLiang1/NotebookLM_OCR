@@ -10,9 +10,9 @@ from pathlib import Path
 import pymupdf
 
 from .blocks import (clamp_row_neighbors, drop_illegible_lines, drop_unreproducible,
-                     harmonize_bold, harmonize_code_block_latin, merge_row_title_fragments,
-                     propagate_column_clamp, sync_clamped_twins, harmonize_font_sizes,
-                     lines_to_blocks)
+                     harmonize_across_dropped, harmonize_bold, harmonize_code_block_latin,
+                     merge_row_title_fragments, propagate_column_clamp, sync_clamped_twins,
+                     harmonize_font_sizes, lines_to_blocks)
 from .builder import DeckBuilder
 from .ocr import OcrEngine
 from .render import render_page
@@ -130,12 +130,15 @@ def main(argv: list[str] | None = None) -> int:
 
         # icons-as-letters, markup strikethroughs and sub/superscript
         # formulas can't be rendered as faithful text — leave the raster
+        before_drop = lines
         lines, styles, n_unrepr = drop_unreproducible(lines, styles, img)
 
         n_tiny = 0
         if not args.keep_tiny_text:
             lines, styles, n_tiny = drop_illegible_lines(lines, styles)
         n_tiny += n_unrepr
+        kept_ids = {id(ln) for ln in lines}
+        dropped_lines = [ln for ln in before_drop if id(ln) not in kept_ids]
 
         # merge detector-shattered title fragments into one line before
         # harmonizing (p6 釐清「方言」：markdown 的規格體系)
@@ -150,6 +153,9 @@ def main(argv: list[str] | None = None) -> int:
         propagate_column_clamp(lines, styles)
         if bold_mode == "auto":
             harmonize_bold(lines, styles)
+        # match a paragraph tail stranded by a raster line in its middle to
+        # the body line's size/weight (p13 會變成… → Alerts… line)
+        harmonize_across_dropped(lines, styles, dropped_lines)
         clamp_row_neighbors(lines, styles, px_to_slide_pt)
         blocks = lines_to_blocks(lines, styles, merge=args.merge_lines)
         builder.add_slide(png, blocks, img.shape[1], img.shape[0],
