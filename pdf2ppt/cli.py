@@ -11,8 +11,9 @@ import pymupdf
 
 from .blocks import (clamp_row_neighbors, drop_illegible_lines, drop_unreproducible,
                      harmonize_across_dropped, harmonize_bold, harmonize_code_block_latin,
-                     merge_row_title_fragments, propagate_column_clamp, sync_clamped_twins,
-                     harmonize_font_sizes, lines_to_blocks)
+                     harmonize_chip_bg, merge_row_title_fragments, propagate_column_clamp,
+                     reeval_clamped_bold, sync_clamped_twins, harmonize_font_sizes,
+                     lines_to_blocks)
 from .builder import DeckBuilder
 from .ocr import OcrEngine
 from .render import render_page
@@ -152,11 +153,13 @@ def main(argv: list[str] | None = None) -> int:
         sync_clamped_twins(lines, styles)
         propagate_column_clamp(lines, styles)
         if bold_mode == "auto":
+            reeval_clamped_bold(lines, styles)
             harmonize_bold(lines, styles)
         # match a paragraph tail stranded by a raster line in its middle to
         # the body line's size/weight (p13 會變成… → Alerts… line)
         harmonize_across_dropped(lines, styles, dropped_lines)
         clamp_row_neighbors(lines, styles, px_to_slide_pt)
+        harmonize_chip_bg(lines, styles)
         blocks = lines_to_blocks(lines, styles, merge=args.merge_lines)
         builder.add_slide(png, blocks, img.shape[1], img.shape[0],
                           wipes=wipes, img=img)

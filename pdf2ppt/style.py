@@ -67,6 +67,15 @@ TPL_MIN_PT = 16          # template verdict is primary at/above this size
 TPL_COMPUTE_PT = 14      # compute r down to this size (demote tiebreak)
 TPL_MIN_CONTRAST = 75    # below this text/bg distance the cut is degenerate
 BOLD_R_THRESH = 0.13     # midpoint of regular max 0.09 / bold min 0.17
+# the template's contrast-relative cut is calibrated for ACHROMATIC text
+# (black-on-white ~235, white-on-dark ~160); chromatic text (a green/blue
+# label) breaks it — w_obs reads thick at the lower color contrast while the
+# relative cut thins the template, so r over-reads (p11 研究員 green cell
+# r=0.27 / p10 用得越久 r=0.23 are regular but read bold). Above this text
+# chroma (max-min channel) fall back to the stroke rule, which separates the
+# green cells (stroke_rel ~0.10) from the genuinely-bold green header
+# (~0.17). Achromatic body/cells sit at chroma <=6; chromatic labels at >=20.
+CHROMA_MAX = 15
 TPL_MARGINAL_R = 0.22    # below this a template bold verdict is marginal:
 #                          cohort votes and wrap groups may overturn it
 #                          (人類輸入 r=0.25 is the lowest confirmed real
@@ -938,6 +947,43 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
                 ink = (np.abs(inner.astype(int) - bg_ref.astype(int)).max(axis=2)
                        > INK_DIST)
 
+    # --- leading icon trim: a tall graphic the detection box swallows just
+    # left of the text inflates the ink band -> the font size. p6's file tree
+    # puts a document icon left of each name; index.md/log.md/CLAUDE.md/
+    # style_guide.md swallowed it and read 24/20/18/24pt while their siblings
+    # (meeting_notes.md etc., whose boxes excluded the icon) read 12. The
+    # char boxes bound the real glyphs: when ink in the leading gap is markedly
+    # TALLER than the text, it is an icon — drop it from the band (font size +
+    # cover height) and keep it uncovered (icon survives, editable text aligns
+    # to the raster instead of shifting left into the icon's slot). Self-
+    # limiting: a normal line's first char box hugs the box edge, so the
+    # trimmed region is empty. ---
+    icon_text_l = None
+    if (line.char_boxes and not line.angle and not line.arc_sagitta
+            and len(line.char_boxes) >= 2):
+        cl = max(0, int(round(min(c[1] for c in line.char_boxes))) - x0)
+        cr = min(ink.shape[1], int(round(max(c[3] for c in line.char_boxes)))
+                 - x0)
+
+        def _band_h(a):
+            r = np.where(a.sum(axis=1) >= MIN_INK_ROW_PX)[0]
+            return int(r[-1] - r[0] + 1) if len(r) else 0
+
+        if cr - cl > 4 and cl > 3:
+            h_text = _band_h(ink[:, cl:cr])
+            h_lead = _band_h(ink[:, :cl])
+            if h_text > 0 and h_lead > h_text * 1.25:
+                # CTC char boxes inset a few px; walk left to the true glyph
+                # edge, stopping at the blank gap before the icon (else the
+                # cover starts inside the first glyph and leaks a raster
+                # sliver — p6 CLAUDE.md's C raster began 9px left of its box)
+                col_has = ink.any(axis=0)
+                tl = cl
+                while tl > 0 and col_has[tl - 1]:
+                    tl -= 1
+                ink[:, :max(0, tl - 1)] = False
+                icon_text_l = float(x0 + max(0, tl - 2))
+
     # --- tight ink bounds ---
     row_counts = ink.sum(axis=1)
     row_w = max(1, ink.shape[1])
@@ -1160,9 +1206,11 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
         bold = True
     elif bold_mode == "never":
         bold = False
-    elif font_pt >= 24:
-        bold = True
     else:
+        # measure for EVERY line (including >=24pt): the score is recorded so
+        # blocks.py can re-derive the weight if a later clamp pulls the line
+        # below 24pt (p10 table cells 手動/靜態, 搜尋破碎 born 24pt auto-bold,
+        # dragged to 20pt — without a recorded measurement the bold is stuck).
         stroke_w = 0.0
         if len(rows):
             band = ink[rows[0]:rows[-1] + 1]
@@ -1171,7 +1219,6 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
                 survival1 = float(_erode(band).sum()) / n
                 stroke_w = 2.0 / max(0.05, 1.0 - survival1)
                 stroke_rel = stroke_w / max(1.0, ink_h_px)
-        bold = stroke_rel >= 0.13
         if (stroke_w > 0 and font_pt >= TPL_COMPUTE_PT and bg_rgb is not None
                 and not line.arc_sagitta):
             contrast = float(np.abs(np.array(text_rgb, dtype=int)
@@ -1179,8 +1226,22 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
             if contrast >= TPL_MIN_CONTRAST:
                 bold_r = _template_bold_r(line.text, ink_h_px, stroke_w,
                                           contrast)
-        if bold_r is not None and font_pt >= TPL_MIN_PT:
+        # large text is bold by default (titles in these decks always are);
+        # below 24pt the template (>=16pt, achromatic) or stroke rule decides.
+        # The chroma fallback fires only for DARK chromatic text on a lighter
+        # bg (p11 研究員 dark-green on light): white text on a colored chip
+        # (p7 pipeline labels) anti-aliases to a tinted color too, but that's
+        # the white-on-dark case the template IS calibrated for, so keep it.
+        chroma = max(text_rgb) - min(text_rgb)
+        dark_chromatic = (chroma > CHROMA_MAX and bg_rgb is not None
+                          and sum(text_rgb) < sum(bg_rgb))
+        if font_pt >= 24:
+            bold = True
+        elif (bold_r is not None and font_pt >= TPL_MIN_PT
+              and not dark_chromatic):
             bold = bold_r >= BOLD_R_THRESH
+        else:
+            bold = stroke_rel >= 0.13
 
     # two-tone banner: when the box runs across a sharp background step,
     # split it into per-fill cover segments and re-measure each char's
@@ -1237,6 +1298,10 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
             if (all_c[-1] - x > 10 and x - all_c[0] > 20
                     and not col_ink[x + 1]):
                 cover_x1_px = float(x0 + int(x) + 1)
+    # a leading icon (see the band trim above) is kept uncovered so the
+    # raster survives and the editable text aligns to it, not the icon slot
+    if icon_text_l is not None and cover_x0_px is None:
+        cover_x0_px = icon_text_l
 
     # --- strikethrough: a thin horizontal line through the glyph midline
     # covers a much larger width fraction than any character-stroke row

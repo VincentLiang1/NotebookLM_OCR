@@ -589,15 +589,11 @@ def harmonize_font_sizes(lines: list[Line], styles: list[Style],
             smaller = [s for s in FONT_SIZES if s <= ceil]
             if smaller:
                 target = smaller[-1]
-        # a size-only auto-bold member pulled below 24pt loses the premise
-        # for its bold (style.py bolds >=24pt unconditionally); follow the
-        # regular wrap parent that forced the smaller size
-        if target < 24:
-            for i in g:
-                if _autobold_only(styles[i]):
-                    styles[i].bold = False
         for i in g:
             styles[i].font_pt = target
+        # members pulled below 24pt lose any >=24 auto-bold premise;
+        # reeval_clamped_bold (run after the clamps) re-derives their weight
+        # from the recorded template/stroke score
 
 
 def sync_clamped_twins(lines: list[Line], styles: list[Style]) -> None:
@@ -731,6 +727,62 @@ def clamp_row_neighbors(lines: list[Line], styles: list[Style],
             sj.font_pt = si.font_pt
 
 
+def harmonize_chip_bg(lines: list[Line], styles: list[Style]) -> None:
+    """Lines stacked on one solid-color chip should share its fill. A per-
+    line bg estimate occasionally drifts (p7 'Synthesize' measured
+    [59,95,162] vs its chip-mates' [55,99,184], so its cover painted a darker
+    box — a visible seam on what is one flat blue chip). Group vertically
+    stacked, x-overlapping, same-text-color lines whose bg estimates are
+    close, and snap each to the group's per-channel median bg."""
+    n = len(lines)
+    parent = list(range(n))
+
+    def find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    def ok(i: int) -> bool:
+        s, ln = styles[i], lines[i]
+        return (s.bg_rgb is not None and not s.bg_segments and not ln.angle
+                and not ln.arc_sagitta)
+
+    for i in range(n):
+        if not ok(i):
+            continue
+        for j in range(i + 1, n):
+            if not ok(j):
+                continue
+            li, lj, si, sj = lines[i], lines[j], styles[i], styles[j]
+            h = min(li.height, lj.height)
+            top = max(li.bbox[1], lj.bbox[1])
+            bot = min(li.bbox[3], lj.bbox[3])
+            gap = max(li.bbox[1], lj.bbox[1]) - min(li.bbox[3], lj.bbox[3])
+            if gap > 0.6 * h:                      # vertically stacked
+                continue
+            ox = min(li.bbox[2], lj.bbox[2]) - max(li.bbox[0], lj.bbox[0])
+            if ox < 0.5 * min(li.width, lj.width):  # same column (chip)
+                continue
+            if max(abs(a - b) for a, b in zip(si.text_rgb, sj.text_rgb)) > 25:
+                continue
+            if max(abs(a - b) for a, b in zip(si.bg_rgb, sj.bg_rgb)) > 40:
+                continue                            # different fills, not one chip
+            parent[find(i)] = find(j)
+
+    groups: dict[int, list[int]] = {}
+    for i in range(n):
+        if ok(i):
+            groups.setdefault(find(i), []).append(i)
+    for g in groups.values():
+        if len(g) < 2:
+            continue
+        med = tuple(int(np.median([styles[i].bg_rgb[c] for i in g]))
+                    for c in range(3))
+        for i in g:
+            styles[i].bg_rgb = med
+
+
 def _bold_promote_ok(st: Style) -> bool:
     """May a cohort vote flip this regular line to bold? Template-decided
     lines promote from r >= -0.05 (Karpathy Wiki 模式 measured -0.01 amid
@@ -753,6 +805,32 @@ def _bold_demote_ok(st: Style) -> bool:
     if st.bold_r is not None and st.bold_r >= 0.28:
         return False
     return st.stroke_rel <= 0.15
+
+
+def reeval_clamped_bold(lines: list[Line], styles: list[Style]) -> None:
+    """Re-derive the weight of a line a clamp pulled below 24pt. style.py
+    bolds >=24pt unconditionally (titles in these decks are bold) but records
+    the template/stroke measurement anyway; once a clamp (wrap harmonize,
+    sync_clamped_twins, column clamp) drops the size below 24, the size-only
+    premise is gone, so trust the measurement instead. Genuine headers
+    measure bold and stay bold (p5 Git Hook family); regular cells the round-
+    up bolded fall back to regular (p10 手動/靜態 r=-0.13, 搜尋破碎 r=-0.10;
+    p15 物「準確…」 r=0.11, 連結與維護 r=0.08). Idempotent for lines that were
+    always below 24 (their bold already equals the measurement); stroke-
+    decided bolds (no template score) are left untouched."""
+    for st in styles:
+        if not st.bold or st.font_pt >= 24:
+            continue
+        chroma = max(st.text_rgb) - min(st.text_rgb)
+        dark_chromatic = (chroma > style_mod.CHROMA_MAX and st.bg_rgb is not None
+                          and sum(st.text_rgb) < sum(st.bg_rgb))
+        if (st.bold_r is not None and st.font_pt >= style_mod.TPL_MIN_PT
+                and not dark_chromatic):
+            st.bold = st.bold_r >= style_mod.BOLD_R_THRESH
+        elif st.stroke_rel > 0:
+            st.bold = st.stroke_rel >= 0.13  # chromatic / stroke-decided
+        else:
+            st.bold = False  # auto-bold with no usable measurement
 
 
 def harmonize_bold(lines: list[Line], styles: list[Style]) -> None:

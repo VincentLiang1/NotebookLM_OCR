@@ -595,11 +595,14 @@ class OcrEngine:
         return text, float(ang), (float(cx), float(cy)), \
             (float(ux1 - ux0), h_med), arc
 
-    def _extend_trailing(self, img_rgb: np.ndarray, line: Line) -> str | None:
+    def _extend_trailing(self, img_rgb: np.ndarray, line: Line,
+                         vocab=None) -> str | None:
         """The detector often crops a trailing 。/) off a line. If there is
         ink just right of the box, re-recognize the line strip extended
         rightward (rec-only — the detector shatters small crops) and accept
-        the result only when it adds 1-2 trailing punctuation marks."""
+        the result only when it adds 1-2 trailing punctuation marks, or when a
+        too-short box merged the trailing CJK token and the wider re-read
+        recovers a page-vocab token (p13 執行 --lint 掃描 read as …描)."""
         ih, iw = img_rgb.shape[:2]
         x0, y0, x1, y1 = (int(round(v)) for v in line.bbox)
         h = y1 - y0
@@ -644,12 +647,27 @@ class OcrEngine:
             cand = res.txts[0].strip()
             score = float(res.scores[0])
             plain_new = cand.replace(" ", "")
-            if not (score >= 0.8 and plain_new.startswith(plain_old)
+            if score < 0.8:
+                return None
+            if (plain_new.startswith(plain_old)
                     and 1 <= len(plain_new) - len(plain_old) <= 2
                     and all(c in TRAIL_PUNCT
                             for c in plain_new[len(plain_old):])):
+                appended_str = plain_new[len(plain_old):]
+            elif (vocab and len(plain_old) >= 2
+                  and len(plain_new) == len(plain_old) + 1
+                  and plain_new[:-2] == plain_old[:-1]
+                  and all("一" <= c <= "鿿" for c in plain_new[-2:])
+                  and vocab.get(plain_new[-2:], 0) >= 1):
+                # rec merged the trailing 2-char CJK token into one glyph
+                # (掃描 -> 描). The glyphs sit INSIDE the box (no ink past the
+                # edge — the wider crop just gave rec enough context to split
+                # them), so keep the box and only fix the text when the
+                # recovered tail is a token the page uses elsewhere (全域掃描).
+                # Skip the trailing-punct box-extension / border check below.
+                return line.text.rstrip()[:-1] + plain_new[-2:], line.bbox[2]
+            else:
                 return None
-            appended_str = plain_new[len(plain_old):]
 
         # a line already closed by a terminal mark gains no mid-sentence
         # punctuation: the ink past the box is decoration, not a glyph
@@ -752,6 +770,9 @@ class OcrEngine:
                               size=(float(w), float(h)),
                               char_boxes=char_boxes))
 
+        # preliminary page vocabulary (from the confidently-read raw lines)
+        # so the trailing-CJK recovery can validate a recovered token
+        vocab = self._page_vocab(lines)
         for ln in lines:
             # tilted lines were already rectified by the detector; the
             # rotation rescue only helps when the tilt was NOT detected
@@ -767,7 +788,7 @@ class OcrEngine:
                     elif ang:
                         ln.angle, ln.center, ln.size = ang, center, size
             if ln.angle == 0.0:
-                extended = self._extend_trailing(img_rgb, ln)
+                extended = self._extend_trailing(img_rgb, ln, vocab)
                 if extended:
                     ln.text, new_x1 = extended
                     ln.bbox = (ln.bbox[0], ln.bbox[1], new_x1, ln.bbox[3])
