@@ -242,16 +242,21 @@ class DeckBuilder:
                     pieces = _split_text_runs(line.text, block.style.runs)
                 if pieces is None:
                     pieces = [(line.text, block.style.text_rgb)]
-                for piece, rgb in pieces:
+                tail = block.style.superscript_tail if len(block.lines) == 1 else 0
+                pieces = _mark_superscript(pieces, tail)
+                for piece, rgb, sup in pieces:
                     run = para.add_run()
                     run.text = piece
                     font = run.font
-                    font.size = Pt(block.style.font_pt)
+                    font.size = Pt(block.style.font_pt * (0.65 if sup else 1.0))
                     font.bold = block.style.bold
                     font.name = _latin_font(block.style.font_pt)  # <a:latin>
                     font.color.rgb = RGBColor(*rgb)
+                    rPr = run._r.get_or_add_rPr()
                     if block.style.strikethrough:
-                        run._r.get_or_add_rPr().set("strike", "sngStrike")
+                        rPr.set("strike", "sngStrike")
+                    if sup:                       # raised footnote marker
+                        rPr.set("baseline", "30000")
                     _set_east_asian_font(run, self.font_name)
 
     @staticmethod
@@ -593,6 +598,25 @@ class DeckBuilder:
 
     def save(self, path: str) -> None:
         self.prs.save(path)
+
+
+def _mark_superscript(pieces, n_tail: int):
+    """Tag the last n_tail characters of the pieces as superscript, splitting
+    the piece they fall in. Returns [(text, rgb, is_super), ...]."""
+    if n_tail <= 0:
+        return [(t, c, False) for t, c in pieces]
+    out, rem = [], n_tail
+    for t, c in reversed(pieces):
+        if rem <= 0:
+            out.append((t, c, False))
+        elif len(t) <= rem:
+            out.append((t, c, True))
+            rem -= len(t)
+        else:
+            out.append((t[len(t) - rem:], c, True))
+            out.append((t[:len(t) - rem], c, False))
+            rem = 0
+    return [(t, c, s) for t, c, s in reversed(out) if t]
 
 
 def _split_text_runs(text: str, runs) -> list[tuple[str, tuple]] | None:

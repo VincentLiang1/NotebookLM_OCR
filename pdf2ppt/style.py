@@ -7,9 +7,15 @@ padding, so their raw height is a poor size signal.
 """
 from __future__ import annotations
 
+import re
+
 import numpy as np
 
 from .models import Line, Style
+
+# trailing footnote reference marker, e.g. 佐證[1] (the literal markdown
+# [^1] in a code block is not raised and is excluded by the ink check)
+_SUPERSCRIPT_MARK = re.compile(r"\[\^?\d+\]$")
 
 # Standard PowerPoint font sizes to snap to
 FONT_SIZES = [8, 9, 10, 10.5, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36, 40, 44, 48, 54, 60]
@@ -1238,6 +1244,31 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
                 strikethrough = True
                 break
 
+    # --- trailing footnote marker rendered as superscript (p10
+    # 需要出處佐證[1]: the [1] is smaller and raised). Verify against the ink
+    # (the literal markdown [^1] in a code block is full size / not raised):
+    # the marker's ink must sit clearly above the body baseline and be
+    # shorter than the body glyphs. ---
+    superscript_tail = 0
+    if (line.char_boxes and len(rows) and not line.angle
+            and not line.arc_sagitta):
+        t = line.text.strip()
+        m = _SUPERSCRIPT_MARK.search(t)
+        stripped = t.replace(" ", "")
+        if m and len(line.char_boxes) == len(stripped):
+            nmark = len(m.group().replace(" ", ""))
+            if 0 < nmark < len(stripped):
+                mxl = int(line.char_boxes[len(stripped) - nmark][1]) - x0
+                if 0 < mxl < ink.shape[1]:
+                    br = np.where(ink[:, :mxl].sum(axis=1) >= 3)[0]
+                    mr = np.where(ink[:, mxl:].sum(axis=1) >= 2)[0]
+                    if len(br) and len(mr):
+                        bh = br[-1] - br[0] + 1
+                        mh = mr[-1] - mr[0] + 1
+                        raised = (br[-1] - mr[-1]) / max(1, bh)
+                        if raised >= 0.2 and mh <= 0.92 * bh:
+                            superscript_tail = nmark
+
     bg_segments = None
     highlight_removed = False
     runs = _split_color_runs(img, line, bg_ref)
@@ -1290,4 +1321,5 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
         bg_segments=bg_segments,
         highlight_removed=highlight_removed,
         strikethrough=strikethrough,
+        superscript_tail=superscript_tail,
     )

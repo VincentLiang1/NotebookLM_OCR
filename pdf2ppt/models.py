@@ -85,6 +85,9 @@ class Style:
     # a strikethrough line runs through the glyph midline (p9 ~~作廢內容~~
     # rendered with a strike); apply it to the output runs
     strikethrough: bool = False
+    # trailing footnote marker rendered as superscript (p10 需要出處佐證[1]:
+    # the [1] is smaller and raised); number of trailing chars to lift
+    superscript_tail: int = 0
 
 
 # Paragraph alignment markers (mirrors PP_ALIGN without importing pptx here)
