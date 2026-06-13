@@ -117,6 +117,12 @@ class DeckBuilder:
                 height += nudge
             else:
                 x0, y0, x1, y1 = block.bbox
+                # start/end the cover at the text, not the box edge, when
+                # the box overhangs an adjacent graphic (p13 red ✗)
+                if len(block.lines) == 1 and block.style.cover_x0_px is not None:
+                    x0 = max(x0, block.style.cover_x0_px)
+                if len(block.lines) == 1 and block.style.cover_x1_px is not None:
+                    x1 = min(x1, block.style.cover_x1_px)
                 left = ex(x0 - COVER_PAD_PX)
                 width = ex(x1 + COVER_PAD_PX) - left
                 # cover height follows the glyph ink band, not the OCR box:

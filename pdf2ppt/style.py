@@ -1126,6 +1126,45 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
     # reads dark, not the bright fill sampled as ink). Only horizontal
     # boxes with usable per-char boxes and genuinely different text colors
     # across the step take this path; everything else keeps one fill.
+    # --- trim the cover horizontally past a leading/trailing vivid-color
+    # icon the box overhangs: p13's red ✗ sits just left of 'Not That' and
+    # bleeds into the box's left padding, so the chip-colored cover paints
+    # over the icon. The discriminator is color SATURATION (max-min channel
+    # > 60): a red ✗ / green ✓ status icon is vividly saturated, while
+    # tinted text (blue/purple links) is only mildly tinted (< 60), so the
+    # icon is separable from colored text. Only when the line's own first/
+    # last character is a real letter/CJK (the icon is NOT part of the OCR
+    # text — else trimming would double a leading '×' glyph). ---
+    cover_x0_px = cover_x1_px = None
+    if len(rows) and not line.angle and not line.arc_sagitta and line.text:
+        band = ink[rows[0]:rows[-1] + 1]
+        bpx = inner[rows[0]:rows[-1] + 1].astype(int)
+        sat = band & ((bpx.max(axis=2) - bpx.min(axis=2)) > 60)
+        col_ink = band.sum(axis=0) >= 1
+        col_sat = sat.sum(axis=0) >= 2
+        all_c = np.where(col_ink)[0]
+
+        def text_ok(ch):
+            return ch.isalnum() or ord(ch) >= 0x2E80
+
+        # an icon is separated from the text by a blank gap (the column just
+        # before the text resumes is ink-free); a colored first/last glyph
+        # of the text itself has no such gap
+        if len(all_c) and text_ok(line.text[0]):
+            x = all_c[0]
+            while x <= all_c[-1] and (col_sat[x] or not col_ink[x]):
+                x += 1
+            if (x - all_c[0] > 10 and all_c[-1] - x > 20
+                    and not col_ink[x - 1]):
+                cover_x0_px = float(x0 + int(x))
+        if len(all_c) and text_ok(line.text[-1]):
+            x = all_c[-1]
+            while x >= all_c[0] and (col_sat[x] or not col_ink[x]):
+                x -= 1
+            if (all_c[-1] - x > 10 and x - all_c[0] > 20
+                    and not col_ink[x + 1]):
+                cover_x1_px = float(x0 + int(x) + 1)
+
     bg_segments = None
     runs = _split_color_runs(img, line, bg_ref)
     if (bg_rgb is not None and not line.angle and not line.arc_sagitta):
@@ -1156,6 +1195,8 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
         bg_rgb=bg_rgb,
         ink_top_px=ink_top_px,
         ink_bottom_px=ink_bottom_px,
+        cover_x0_px=cover_x0_px,
+        cover_x1_px=cover_x1_px,
         runs=runs,
         bg_segments=bg_segments,
     )
