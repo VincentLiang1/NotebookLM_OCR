@@ -82,6 +82,9 @@ class Style:
     # box is tall & narrow with N square chars stacked; render with an
     # east-asian vertical text frame and size from the char (column) width
     vertical: bool = False
+    # a strikethrough line runs through the glyph midline (p9 ~~作廢內容~~
+    # rendered with a strike); apply it to the output runs
+    strikethrough: bool = False
 
 
 # Paragraph alignment markers (mirrors PP_ALIGN without importing pptx here)

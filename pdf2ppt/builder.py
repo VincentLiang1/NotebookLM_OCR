@@ -250,6 +250,8 @@ class DeckBuilder:
                     font.bold = block.style.bold
                     font.name = _latin_font(block.style.font_pt)  # <a:latin>
                     font.color.rgb = RGBColor(*rgb)
+                    if block.style.strikethrough:
+                        run._r.get_or_add_rPr().set("strike", "sngStrike")
                     _set_east_asian_font(run, self.font_name)
 
     @staticmethod

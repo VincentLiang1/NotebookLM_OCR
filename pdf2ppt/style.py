@@ -1221,6 +1221,23 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
                     and not col_ink[x + 1]):
                 cover_x1_px = float(x0 + int(x) + 1)
 
+    # --- strikethrough: a thin horizontal line through the glyph midline
+    # covers a much larger width fraction than any character-stroke row
+    # (p9 ~~作廢內容~~: the strike row covers 0.86 of the width vs <=0.51 for
+    # the glyph rows). Coverage, not a continuous run — the line breaks at
+    # the small inter-glyph gaps. Horizontal multi-char lines only. ---
+    strikethrough = False
+    if (len(rows) and not line.angle and not line.arc_sagitta
+            and len(line.text.strip().replace(" ", "")) >= 2):
+        rr0, rr1 = rows[0], rows[-1]
+        rh, rw = rr1 - rr0 + 1, max(1, ink.shape[1])
+        med = float(np.median(ink[rows].sum(axis=1) / rw))
+        for r in range(int(rr0 + 0.35 * rh), int(rr0 + 0.65 * rh)):
+            cov = float(ink[r].sum()) / rw
+            if cov >= 0.75 and cov >= 1.5 * med:
+                strikethrough = True
+                break
+
     bg_segments = None
     highlight_removed = False
     runs = _split_color_runs(img, line, bg_ref)
@@ -1272,4 +1289,5 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
         runs=runs,
         bg_segments=bg_segments,
         highlight_removed=highlight_removed,
+        strikethrough=strikethrough,
     )
