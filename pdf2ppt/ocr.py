@@ -281,6 +281,84 @@ def _fix_confusions(text: str) -> str:
     return text
 
 
+def _find_pipe_gaps(char_boxes, img: np.ndarray) -> set:
+    """Indices i such that a '|' table separator sits in the gap between
+    char i and i+1 but the rec model dropped it (thin vertical bars are
+    easily lost). Discriminators (a pipe vs a CJK character's own vertical
+    stroke, which look identical inside an inter-char gap): the bar spans
+    the FULL line height — taller than a CJK glyph (barh ~1.1x), where a
+    CJK edge stroke reaches ~0.65x — and it is a spaced-out token (gap >=
+    0.85 of a char width), thin, uniform width, and clear of both glyphs.
+    Calibrated on p9's markdown table demo (user insight 2026-06-13)."""
+    if not char_boxes or len(char_boxes) < 3:
+        return set()
+    cb = char_boxes
+    hs = [b - t for _, l, t, r, b in cb if b > t]
+    ws = [r - l for _, l, t, r, b in cb if r > l]
+    if not hs or not ws:
+        return set()
+    gh, mw = float(median(hs)), float(median(ws))
+    hits = set()
+    for i in range(len(cb) - 1):
+        _, l0, t0, r0, b0 = cb[i]
+        _, l1, t1, r1, b1 = cb[i + 1]
+        if (l1 - r0) < 0.85 * mw:          # a pipe is a spaced-out token
+            continue
+        gx0, gx1 = int(r0), int(l1)
+        ty, by = int(min(t0, t1) - 0.25 * gh), int(max(b0, b1) + 0.25 * gh)
+        region = img[max(0, ty):by, gx0:gx1].astype(int)
+        if region.size == 0 or region.shape[1] < 3:
+            continue
+        bg = np.median(np.concatenate([region[:2].reshape(-1, 3),
+                                       region[-2:].reshape(-1, 3)]), axis=0)
+        ink = np.abs(region - bg).max(axis=2) > 60
+        tall = ink.sum(axis=0) >= 0.4 * gh
+        runs, s = [], None
+        for j, v in enumerate(tall):
+            if v and s is None:
+                s = j
+            elif not v and s is not None:
+                runs.append((s, j))
+                s = None
+        if s is not None:
+            runs.append((s, len(tall)))
+        if len(runs) != 1:                  # exactly one bar in the gap
+            continue
+        a, b = runs[0]
+        if b - a > 0.22 * mw or a < 4 or (len(tall) - b) < 4:
+            continue                        # thin, clear of both glyphs
+        bar = ink[:, a:b]
+        rows = np.where(bar.any(axis=1))[0]
+        if not len(rows):
+            continue
+        barh = rows[-1] - rows[0] + 1
+        cjk_h = max(b0 - t0, b1 - t1)
+        if not (0.9 * cjk_h <= barh <= 1.3 * cjk_h):  # full line height
+            continue
+        rw = bar.sum(axis=1)[bar.any(axis=1)]
+        if float(rw.std() / max(1, rw.mean())) > 0.3:  # uniform width
+            continue
+        hits.add(i)
+    return hits
+
+
+def _restore_pipes(text: str, char_boxes, img: np.ndarray):
+    """Re-insert '|' table separators the rec model dropped. Returns
+    (text, char_boxes); char_boxes is invalidated (set None) when a pipe is
+    inserted because the 1:1 char mapping no longer holds."""
+    hits = _find_pipe_gaps(char_boxes, img)
+    if not hits:
+        return text, char_boxes
+    positions = [p for p, ch in enumerate(text) if ch != " "]
+    add_after = {positions[i] for i in hits if i < len(positions)}
+    out = []
+    for p, ch in enumerate(text):
+        out.append(ch)
+        if p in add_after:
+            out.append(" | ")
+    return re.sub(r" {2,}", " ", "".join(out)), None
+
+
 def _normalize_bullet(text: str) -> str:
     """NotebookLM bullets are •; the rec model sometimes returns a small
     middle dot instead (p14 mixed ·/• across one list) and drops the space
@@ -624,6 +702,9 @@ class OcrEngine:
                 if extended:
                     ln.text, new_x1 = extended
                     ln.bbox = (ln.bbox[0], ln.bbox[1], new_x1, ln.bbox[3])
+            if ln.angle == 0.0 and ln.char_boxes:
+                ln.text, ln.char_boxes = _restore_pipes(
+                    ln.text, ln.char_boxes, img_rgb)
             ln.text = _pangu_spacing(ln.text).strip()
             ln.text = _fix_trailing_degree(ln.text)
             ln.text = self._fix_simplified_strays(ln.text)
