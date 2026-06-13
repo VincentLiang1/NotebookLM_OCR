@@ -1196,9 +1196,20 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
     # tinted text (blue/purple links) is only mildly tinted (< 60), so the
     # icon is separable from colored text. Only when the line's own first/
     # last character is a real letter/CJK (the icon is NOT part of the OCR
-    # text — else trimming would double a leading '×' glyph). ---
+    # text — else trimming would double a leading '×' glyph).
+    #   The saturation discriminator only works when the TEXT itself is not
+    # vivid. A vividly colored heading/label (p2 orange 現狀痛點 sat 110, the
+    # brown chart caption 傳統 RAG sat 78) saturates every column, so the
+    # edge-walk stops on a sparse stroke column inside the text and trims a
+    # real edge glyph — 現狀痛點's trailing 點 was exposed, 傳統 RAG doubled
+    # its leading 傳. Deck-wide every trim fired only on such vivid-text
+    # lines (real icon cases like p13 内容矛盾 share the text's brown and
+    # never satisfied the walk), so skip the trim when the text is vivid: an
+    # icon cannot be separated from same-colored text by saturation. ---
     cover_x0_px = cover_x1_px = None
-    if len(rows) and not line.angle and not line.arc_sagitta and line.text:
+    text_vivid = max(text_rgb) - min(text_rgb) > 60
+    if (len(rows) and not line.angle and not line.arc_sagitta and line.text
+            and not text_vivid):
         band = ink[rows[0]:rows[-1] + 1]
         bpx = inner[rows[0]:rows[-1] + 1].astype(int)
         sat = band & ((bpx.max(axis=2) - bpx.min(axis=2)) > 60)

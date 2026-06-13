@@ -463,6 +463,19 @@ def _tpl_marginal_bold(st: Style) -> bool:
             and st.bold_r < style_mod.TPL_MARGINAL_R)
 
 
+def _autobold_only(st: Style) -> bool:
+    """Bold assigned solely from the >=24pt size rule, with no measured
+    stroke/template evidence (style.py bolds font_pt>=24 unconditionally and
+    leaves bold_r None / stroke_rel 0). A short wrap-continuation renders its
+    true unclamped size while its long parent is width-clamped below 24pt
+    (p15 物「準確且持續成長的表徵」。/ 連結與維護。 measured true-24 while their
+    full-width parents clamped to 20); the size split then mis-fires
+    auto-bold. Such a verdict must not block joining the parent's wrap group,
+    and is dropped when the group ceiling pulls the size back below 24."""
+    return (st.bold and st.bold_r is None and st.stroke_rel == 0.0
+            and st.font_pt >= 24)
+
+
 def harmonize_font_sizes(lines: list[Line], styles: list[Style],
                          ) -> None:
     """Wrapped lines of one paragraph must share a font size.
@@ -513,7 +526,8 @@ def harmonize_font_sizes(lines: list[Line], styles: list[Style],
                 # 16pt bold. Adjacency + matched style outweighs a
                 # marginal r; the group majority then settles both size
                 # and weight below.
-                if not _tpl_marginal_bold(sa if sa.bold else sb):
+                bs = sa if sa.bold else sb
+                if not (_tpl_marginal_bold(bs) or _autobold_only(bs)):
                     continue
             if (sa.bg_rgb is None) != (sb.bg_rgb is None):
                 continue
@@ -575,6 +589,13 @@ def harmonize_font_sizes(lines: list[Line], styles: list[Style],
             smaller = [s for s in FONT_SIZES if s <= ceil]
             if smaller:
                 target = smaller[-1]
+        # a size-only auto-bold member pulled below 24pt loses the premise
+        # for its bold (style.py bolds >=24pt unconditionally); follow the
+        # regular wrap parent that forced the smaller size
+        if target < 24:
+            for i in g:
+                if _autobold_only(styles[i]):
+                    styles[i].bold = False
         for i in g:
             styles[i].font_pt = target
 

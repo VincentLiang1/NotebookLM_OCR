@@ -55,7 +55,15 @@ def _gap_is_blank(img: np.ndarray, gx0: float, gx1: float,
     the r in p6's Transformer has a sparse lower-right, so 'r m' passed
     at < 0.15. A real space also shows a WIDE run of fully blank columns
     (Git Commit: 23px) while a blur-bridged letter gap shows none
-    (r->m: 0px, m->e: 3px) — require both."""
+    (r->m: 0px, m->e: 3px) — require both.
+
+    The blank run must be a space-like FRACTION of the char width, not a
+    fixed floor: a CTC box under-covers a wide slanted glyph (W's right arm
+    falls outside its word box), leaving a phantom inter-LETTER gap. p4's
+    'Wiki' split into 'W iki' on a 6px blank run while the real inter-WORD
+    space of 'LLM Wiki' / 'b C' ran 11-18px (med_w 28-34); min_run scales at
+    0.27*med_w (caller) so a narrow letter-jitter run no longer reads as a
+    space, while genuine word gaps clear it with ~1.7px margin."""
     gw = gx1 - gx0
     strip = img[int(gy0):int(gy1),
                 int(gx0 + 0.25 * gw):int(gx1 - 0.25 * gw) + 1]
@@ -130,7 +138,7 @@ def _restore_latin_gaps(text: str, words, img: np.ndarray):
                 and g[0] - p[1] > LATIN_GAP_FACTOR * med_w
                 and _gap_is_blank(img, p[1], g[0],
                                   min(p[2], g[2]), max(p[3], g[3]),
-                                  min_run=max(4.0, 0.2 * med_w))):
+                                  min_run=max(4.0, 0.27 * med_w))):
             out.append(" ")
         out.append(ch)
         ci += 1
@@ -357,6 +365,67 @@ def _restore_pipes(text: str, char_boxes, img: np.ndarray):
         if p in add_after:
             out.append(" | ")
     return re.sub(r" {2,}", " ", "".join(out)), None
+
+
+def _restore_leading_bullet(text: str, char_boxes, bbox, img: np.ndarray):
+    """Re-insert a leading '• ' the rec model dropped. NotebookLM draws each
+    label's leader line ending in a filled round dot; the rec model is
+    inconsistent about transcribing it (p4 read '• 原始資料層' / '• Wiki 層'
+    but dropped the identical dot before '約束架構層', so its cover hid the
+    raster dot and the editable text showed no bullet). Signal, no sibling
+    lookup needed: the detection box reaches left past the first real char
+    (the dot sits inside the box but was not transcribed), and that gap holds
+    a filled, roughly circular, isolated disc the size of a bullet. Returns
+    (text, char_boxes); char_boxes is invalidated when a bullet is inserted."""
+    if (not char_boxes or text[:1] == "•" or _BULLET_RE.match(text)
+            or img is None):
+        return text, char_boxes
+    x0, y0, _, y1 = (int(round(v)) for v in bbox)
+    fc_left = int(round(char_boxes[0][1]))
+    lh = y1 - y0
+    if lh <= 0 or fc_left <= x0 or (fc_left - x0) < 0.4 * lh:
+        return text, char_boxes
+    region = img[max(0, y0):y1, max(0, x0):fc_left].astype(int)
+    if region.size == 0:
+        return text, char_boxes
+    med = np.median(region.reshape(-1, 3), axis=0)
+    ink = np.abs(region - med).max(axis=2) > 60
+    col_h = ink.sum(axis=0)
+    # the thin connector line sits below 0.12*lh and is excluded; the dot
+    # rises above it. Find the contiguous run of dot-columns that is itself
+    # bullet-shaped/filled AND trailed by a blank gap before the text (the
+    # rightmost run is the next glyph's ink bleeding past its box-left, with
+    # no gap after it — so plain "rightmost" picks the wrong blob).
+    dot = col_h >= 0.12 * lh
+    runs, cur = [], 0
+    for i, v in enumerate(dot):
+        if v:
+            cur += 1
+        elif cur:
+            runs.append((i - cur, i))
+            cur = 0
+    if cur:
+        runs.append((len(dot) - cur, len(dot)))
+    for rs, re_ in runs:
+        w = re_ - rs
+        dh = int(col_h[rs:re_].max())
+        # blank columns between this run and the next ink (or the text)
+        blank = len(dot) - re_
+        for ns, _ in runs:
+            if ns >= re_:
+                blank = ns - re_
+                break
+        if not (0.12 * lh <= dh <= 0.55 * lh        # bullet-sized
+                and 0.55 <= w / max(1, dh) <= 1.7   # roughly circular
+                and blank >= 0.2 * lh):             # isolated from the text
+            continue
+        blob = ink[:, rs:re_]
+        rows = np.where(blob.any(axis=1))[0]
+        fill = float(blob[rows[0]:rows[-1] + 1].mean()) if len(rows) else 0.0
+        if fill < 0.55:                             # filled disc, not outline
+            continue
+        return "• " + text, None
+    return text, char_boxes
 
 
 def _normalize_bullet(text: str) -> str:
@@ -705,6 +774,9 @@ class OcrEngine:
             if ln.angle == 0.0 and ln.char_boxes:
                 ln.text, ln.char_boxes = _restore_pipes(
                     ln.text, ln.char_boxes, img_rgb)
+            if ln.angle == 0.0 and ln.char_boxes:
+                ln.text, ln.char_boxes = _restore_leading_bullet(
+                    ln.text, ln.char_boxes, ln.bbox, img_rgb)
             ln.text = _pangu_spacing(ln.text).strip()
             ln.text = _fix_trailing_degree(ln.text)
             ln.text = self._fix_simplified_strays(ln.text)
