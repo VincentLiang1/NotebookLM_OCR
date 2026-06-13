@@ -129,7 +129,14 @@ class DeckBuilder:
                 # detector boxes carry large vertical slack that would paint
                 # over diagram lines above/below the text. The text frame
                 # top is decoupled from the cover top via a margin inset.
-                if len(block.lines) == 1 and block.style.ink_bottom_px:
+                if len(block.lines) == 1 and block.style.highlight_removed:
+                    # a dropped inline highlight box spans (and slightly
+                    # overhangs) the OCR box; cover generously past it so no
+                    # source fill leaks past the glyph band (user: "remove
+                    # it cleanly, no leak")
+                    over = max(8.0, 0.12 * (y1 - y0))
+                    cov_y0, cov_y1 = y0 - over, y1 + over
+                elif len(block.lines) == 1 and block.style.ink_bottom_px:
                     cov_h = block.style.ink_bottom_px - block.style.ink_top_px
                     pad_v = max(4.0, 0.08 * cov_h)
                     cov_y0 = block.style.ink_top_px - pad_v

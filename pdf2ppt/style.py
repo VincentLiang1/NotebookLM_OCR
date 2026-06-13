@@ -1166,6 +1166,7 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
                 cover_x1_px = float(x0 + int(x) + 1)
 
     bg_segments = None
+    highlight_removed = False
     runs = _split_color_runs(img, line, bg_ref)
     if (bg_rgb is not None and not line.angle and not line.arc_sagitta):
         local = _detect_bg_segments(inner)
@@ -1173,15 +1174,30 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
             ox = float(max(0, x0))
             segs = [(ox + a, (ox + b if i < len(local) - 1 else float(x1)),
                      c) for i, (a, b, c) in enumerate(local)]
-            bg_segments = segs
-            # re-measure each char's color against its own segment's fill so
-            # dark-on-light text doesn't sample a bright fill as ink (two-tone
-            # banner); an inline highlight keeps one text color and just gets
-            # its background box back
             seg_runs = _split_color_runs_segmented(img, line, segs)
             if seg_runs is not None:
+                # the text color changes across the fills (two-tone banner
+                # white↔black, or a colored highlight word): the fills are
+                # required — removing them would hide white-on-dark text
+                # under the base, and the cover boundary tracks the text-
+                # color boundary so it stays aligned. Reproduce them.
+                bg_segments = segs
                 runs = seg_runs
-            bg_rgb = segs[-1][2]
+                bg_rgb = segs[-1][2]
+            else:
+                # one text color across all fills = an inline highlight box
+                # (Perl/Email/Markdown). Reproduced at the SOURCE column it
+                # drifts off the rendered text (the output font's advances
+                # differ, and a mid-line word accumulates the offset), which
+                # the user rejected. The dark text reads fine on the base
+                # fill alone, so drop the boxes and cover the whole line in
+                # the BASE (page) fill — the fill matching the ring
+                # background, NOT the widest fill (a highlight wider than the
+                # surrounding text, e.g. Markdown.pl 1.0.1, would otherwise
+                # paint the whole line lavender) — hiding the highlight.
+                bg_rgb = min(local, key=lambda s: float(
+                    np.abs(np.asarray(s[2]) - bg_ref).max()))[2]
+                highlight_removed = True
 
     return Style(
         font_pt=font_pt,
@@ -1199,4 +1215,5 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
         cover_x1_px=cover_x1_px,
         runs=runs,
         bg_segments=bg_segments,
+        highlight_removed=highlight_removed,
     )

@@ -74,6 +74,10 @@ class Style:
     # BSD caption: dark-bg/white-text left, light-bg/dark-text right).
     # [(x0_px, x1_px, bg_rgb), ...] in image px; None for a single fill.
     bg_segments: list[tuple[float, float, tuple[int, int, int]]] | None = None
+    # an inline highlight box was detected but dropped (it drifts off the
+    # rendered text); cover the FULL OCR box vertically so the source
+    # highlight is hidden cleanly rather than leaking past the glyph band
+    highlight_removed: bool = False
 
 
 # Paragraph alignment markers (mirrors PP_ALIGN without importing pptx here)
