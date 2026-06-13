@@ -78,6 +78,10 @@ class Style:
     # rendered text); cover the FULL OCR box vertically so the source
     # highlight is hidden cleanly rather than leaking past the glyph band
     highlight_removed: bool = False
+    # vertically-stacked CJK text (p7 axis labels 純寫作 / 技術開發): the
+    # box is tall & narrow with N square chars stacked; render with an
+    # east-asian vertical text frame and size from the char (column) width
+    vertical: bool = False
 
 
 # Paragraph alignment markers (mirrors PP_ALIGN without importing pptx here)

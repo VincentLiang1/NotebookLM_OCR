@@ -102,7 +102,9 @@ class DeckBuilder:
                 self._add_arc_segments(slide, block, i, ex, ey,
                                        px_per_pt=img_w / 960.0, img=img)
                 continue
-            nudge = round(LEADING_COMP * block.style.font_pt * EMU_PER_PT)
+            vertical = len(block.lines) == 1 and block.style.vertical
+            nudge = (0 if vertical
+                     else round(LEADING_COMP * block.style.font_pt * EMU_PER_PT))
             tilted = (len(block.lines) == 1 and block.lines[0].angle
                       and block.lines[0].center and block.lines[0].size)
             if tilted:
@@ -223,10 +225,18 @@ class DeckBuilder:
             tf.vertical_anchor = MSO_ANCHOR.TOP
             tf.margin_left = tf.margin_right = tf.margin_bottom = 0
             tf.margin_top = Emu(margin_top)
+            if vertical:
+                # east-asian vertical text: glyphs stacked top-to-bottom,
+                # centered in the column, no leading inset
+                tf.word_wrap = False
+                tf.vertical_anchor = MSO_ANCHOR.MIDDLE
+                tf.margin_top = 0
+                tf._txBody.bodyPr.set("vert", "eaVert")
 
             for j, line in enumerate(block.lines):
                 para = tf.paragraphs[0] if j == 0 else tf.add_paragraph()
-                para.alignment = PP_ALIGN_MAP.get(block.align, PP_ALIGN.LEFT)
+                para.alignment = (PP_ALIGN.CENTER if vertical
+                                  else PP_ALIGN_MAP.get(block.align, PP_ALIGN.LEFT))
                 pieces = None
                 if len(block.lines) == 1 and block.style.runs:
                     pieces = _split_text_runs(line.text, block.style.runs)

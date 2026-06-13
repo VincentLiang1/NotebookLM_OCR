@@ -759,11 +759,67 @@ def _cjk_band_height(ink: np.ndarray, text: str,
     return max(extents)
 
 
+def _is_vertical_cjk(line: Line) -> bool:
+    """Vertically-stacked CJK text: a tall, narrow box of N square CJK
+    glyphs stacked top-to-bottom (p7 axis labels 純寫作 / 技術開發). Pure
+    CJK only — a tall mixed/latin box is something else."""
+    if line.angle or line.arc_sagitta:
+        return False
+    t = line.text.strip().replace(" ", "")
+    if len(t) < 2 or any(ord(c) < 0x2E80 for c in t):
+        return False
+    w, h = line.bbox[2] - line.bbox[0], line.bbox[3] - line.bbox[1]
+    if w <= 0 or h < 1.5 * w:
+        return False
+    cell = h / len(t)               # height of one stacked char
+    return 0.55 <= cell / w <= 1.7  # roughly square glyphs
+
+
+def _estimate_vertical(img: np.ndarray, line: Line,
+                       px_to_slide_pt: float, bold_mode: str) -> Style:
+    """Style for vertically-stacked CJK text. The font size comes from the
+    char COLUMN width (each glyph is as wide as the column), not the
+    stacked height; the cover spans the whole box; the builder renders it
+    with an east-asian vertical text frame."""
+    x0, y0, x1, y1 = (int(round(v)) for v in line.bbox)
+    outer = _crop(img, x0 - RING_PX, y0 - RING_PX, x1 + RING_PX, y1 + RING_PX)
+    inner = _crop(img, x0, y0, x1, y1)
+    ring = np.concatenate([outer[:RING_PX].reshape(-1, 3),
+                           outer[-RING_PX:].reshape(-1, 3),
+                           outer[:, :RING_PX].reshape(-1, 3),
+                           outer[:, -RING_PX:].reshape(-1, 3)])
+    bg_ref, share = _dominant_color(ring)
+    bg_rgb = tuple(int(v) for v in bg_ref) if share >= BG_MIN_SHARE else None
+    ink = np.abs(inner.astype(int) - bg_ref.astype(int)).max(axis=2) > INK_DIST
+    cols = np.where(ink.sum(axis=0) >= MIN_INK_ROW_PX)[0]
+    ink_w = float(cols[-1] - cols[0] + 1) if len(cols) else float(x1 - x0)
+    ink_w_eff = max(ink_w - BLUR_PX, ink_w * 0.6)
+    font_pt = snap_font_size(ink_w_eff * px_to_slide_pt / CJK_INK_RATIO)
+    if ink.sum() >= 10:
+        text_rgb = _core_color(inner, ink, bg_ref)
+    else:
+        text_rgb = (0, 0, 0)
+    if bold_mode == "always":
+        bold = True
+    elif bold_mode == "never":
+        bold = False
+    else:
+        bold = font_pt >= 24
+    return Style(
+        font_pt=font_pt, bold=bold, est_pt=ink_w_eff * px_to_slide_pt / CJK_INK_RATIO,
+        text_rgb=text_rgb, bg_rgb=bg_rgb,
+        ink_top_px=float(y0), ink_bottom_px=float(y1), vertical=True,
+    )
+
+
 def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
                    bold_mode: str = "auto") -> Style:
     """px_to_slide_pt: slide points per image pixel (960 / image_width).
     bold_mode: 'auto' | 'never' | 'always'.
     """
+    if _is_vertical_cjk(line):
+        return _estimate_vertical(img, line, px_to_slide_pt, bold_mode)
+
     x0, y0, x1, y1 = (int(round(v)) for v in line.bbox)
     chord_pt = (x1 - x0) * px_to_slide_pt
 
