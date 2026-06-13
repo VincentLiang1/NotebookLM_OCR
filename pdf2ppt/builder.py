@@ -256,7 +256,7 @@ class DeckBuilder:
                     if block.style.strikethrough:
                         rPr.set("strike", "sngStrike")
                     if sup:                       # raised footnote marker
-                        rPr.set("baseline", "30000")
+                        rPr.set("baseline", "55000")
                     _set_east_asian_font(run, self.font_name)
 
     @staticmethod
