@@ -918,9 +918,27 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
                 np.abs(mid.astype(int) - c.astype(int)).max(axis=2) < 40
                 for c, _ in clusters
             ]
-            surv = [_survival(m) for m in masks]
-            bg_i = 0 if surv[0] >= surv[1] else 1
-            if surv[bg_i] - surv[1 - bg_i] > 0.2 and clusters[bg_i][1] >= 0.30:
+            mins = [int(c.min()) for c, _ in clusters]
+            nw = [i for i in (0, 1) if mins[i] >= 200]
+            bg_i = None
+            if (len(nw) == 1 and int(bg_ref.min()) >= 180
+                    and clusters[nw[0]][1] >= 0.30):
+                # {near-white, dark} clusters where the RING is near-white: the
+                # text sits on a light surface (a white glow band / halo), so
+                # the near-white is the background and the dark cluster is the
+                # text. The survival heuristic inverts this for BOLD dark text
+                # (thick strokes survive erosion and get picked as bg — p5
+                # 高耦合金流邏輯 black text + white glow on a light band came
+                # out white-on-black). White-text-on-dark stays correct: its
+                # ring is dark, so this branch is skipped.
+                bg_i = nw[0]
+            else:
+                surv = [_survival(m) for m in masks]
+                cand = 0 if surv[0] >= surv[1] else 1
+                if (surv[cand] - surv[1 - cand] > 0.2
+                        and clusters[cand][1] >= 0.30):
+                    bg_i = cand
+            if bg_i is not None:
                 bg_ref = clusters[bg_i][0]
                 bg_rgb = tuple(int(v) for v in bg_ref)
                 # refine through the stroke cores, never the raw cluster

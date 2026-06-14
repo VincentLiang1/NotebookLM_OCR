@@ -704,15 +704,23 @@ def harmonize_stacked_overlap_size(lines: list[Line],
             adjacent = (min(abs(a.bbox[3] - b.bbox[1]),
                             abs(b.bbox[3] - a.bbox[1])) <= 0.5 * minh)
             box_overlap = yov > 0.12 * minh                       # shape (A)
-            # shape (B): est within 15% and the smaller-font line is clamped
-            # below its natural snap
-            sm = a if sa.font_pt < sb.font_pt else b
+            # shape (B): same NATURAL size (raw ink-band height, which the
+            # width clamp does NOT shrink — est_pt does, so two wrap-mates of
+            # one title read est 33 vs 26 once the longer one is clamped, p13
+            # 第三階段：/擴展與制度重構) and the smaller-font line is clamped
+            # below its natural snap. Band comparison keeps a genuine title +
+            # smaller subtitle (different raw bands) from being merged.
             ssm = sa if sa.font_pt < sb.font_pt else sb
-            est_close = (sa.est_pt > 0 and sb.est_pt > 0
-                         and abs(sa.est_pt - sb.est_pt)
-                         <= 0.15 * max(sa.est_pt, sb.est_pt))
+
+            def _band(s, ln):
+                h = (s.ink_bottom_px or 0) - (s.ink_top_px or 0)
+                return h if h > 0 else ln.height
+
+            ba, bb = _band(sa, a), _band(sb, b)
+            nat_close = (ba > 0 and bb > 0
+                         and abs(ba - bb) <= 0.15 * max(ba, bb))
             clamped = ssm.font_pt < snap_font_size(ssm.est_pt)
-            if not (box_overlap or (adjacent and est_close and clamped)):
+            if not (box_overlap or (adjacent and nat_close and clamped)):
                 continue
             small = min(sa.font_pt, sb.font_pt)
             sa.font_pt = sb.font_pt = small
