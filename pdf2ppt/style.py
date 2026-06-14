@@ -1000,8 +1000,13 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
     # --- tight ink bounds ---
     row_counts = ink.sum(axis=1)
     row_w = max(1, ink.shape[1])
-    rows = np.where((row_counts >= MIN_INK_ROW_PX)
-                    & (row_counts <= MAX_INK_ROW_FRAC * row_w))[0]
+    present = row_counts >= MIN_INK_ROW_PX
+    # near-solid rows (> MAX_INK_ROW_FRAC) are usually ribbon background read
+    # as ink, but dense BOLD text also exceeds it at its packed middle rows
+    # (p14 white-bold 'Redmine 工單開立與完成時間戳' peaks at 0.90 coverage).
+    # Drop them from the band's row set yet still BRIDGE the gap they leave —
+    # only a truly blank gap (>8 rows with no glyph ink) separates two lines.
+    rows = np.where(present & (row_counts <= MAX_INK_ROW_FRAC * row_w))[0]
     if len(rows):
         # ink that crosses the box edge from the outside — a pill border
         # (page 9 "images/": rounded-corner rows at 0.67 width slip under
@@ -1010,12 +1015,18 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
         # above and the caps of the line below, 9 blank rows away) —
         # stretches the ink bounds, inflating the font and letting the
         # cover paint over the neighbor. The glyph band is one row-group;
-        # split on blank gaps and keep the heaviest group. Real intra-line
-        # gaps (i-dots) are <= ~4px at 200dpi, so 8 is safely above them.
-        splits = np.where(np.diff(rows) > 8)[0]
-        if len(splits):
-            groups = np.split(rows, splits + 1)
-            rows = max(groups, key=lambda g: int(row_counts[g].sum()))
+        # split ONLY on truly-blank gaps (>8 rows of no glyph ink), bridging
+        # near-solid rows the cap removed so dense bold text stays one band
+        # instead of collapsing to a 6pt fragment. Real intra-line gaps
+        # (i-dots) are <= ~4px at 200dpi, so 8 is safely above them.
+        groups, s = [], 0
+        for i in range(1, len(rows)):
+            if int((~present[rows[i - 1] + 1:rows[i]]).sum()) > 8:
+                groups.append(rows[s:i])
+                s = i
+        groups.append(rows[s:])
+        rows = max(groups,
+                   key=lambda g: int(row_counts[g[0]:g[-1] + 1].sum()))
         ink_h_px = float(rows[-1] - rows[0] + 1)
         ink_top_px = y0 + float(rows[0])
         ink_bottom_px = y0 + float(rows[-1] + 1)

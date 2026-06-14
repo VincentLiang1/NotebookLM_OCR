@@ -13,7 +13,7 @@ from .blocks import (clamp_row_neighbors, drop_illegible_lines, drop_unreproduci
                      harmonize_across_dropped, harmonize_bold, harmonize_code_block_latin,
                      harmonize_chip_bg, merge_row_title_fragments, propagate_column_clamp,
                      reeval_clamped_bold, sync_clamped_twins, harmonize_font_sizes,
-                     lines_to_blocks)
+                     harmonize_stacked_overlap_size, lines_to_blocks)
 from .builder import DeckBuilder
 from .ocr import OcrEngine
 from .render import render_page
@@ -153,6 +153,7 @@ def main(argv: list[str] | None = None) -> int:
         # 18pt chip, not to the 16pt 步驟 headers it was born sized as)
         harmonize_font_sizes(lines, styles)
         harmonize_code_block_latin(lines, styles)
+        harmonize_stacked_overlap_size(lines, styles)
         sync_clamped_twins(lines, styles)
         propagate_column_clamp(lines, styles)
         if bold_mode == "auto":

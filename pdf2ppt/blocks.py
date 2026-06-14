@@ -345,9 +345,19 @@ def merge_row_title_fragments(lines: list[Line], styles: list[Style],
             text += nt
             x1 = max(x1, lines[k].bbox[2])
         text = _pangu_spacing(text).strip()
-        big = max(group, key=lambda k: styles[k].est_pt)
+        # size from the most reliable fragment — the one with the most CJK
+        # glyphs, NOT the largest. A short fragment wrapped in tall full-width
+        # parens over-measures (p6 「（新專案）」read 32 beside its true-28
+        # sibling 原廠宣傳：Greenfield); max would inherit that inflated size.
+        # The CJK-heavy fragment is widest and least likely to be a clamped
+        # one (p6 釐清…的規格體系 still resolves to its 36). Tiebreak: width.
+        def _cjk_n(k):
+            return (len(_CJK_RE.findall(lines[k].text)),
+                    lines[k].bbox[2] - lines[k].bbox[0])
+
+        big = max(group, key=_cjk_n)
         st = styles[big]
-        st.font_pt = max(styles[k].font_pt for k in group)
+        st.font_pt = styles[big].font_pt
         out_l.append(Line(text=text, bbox=(x0, y0, x1, y1),
                           score=min(lines[k].score for k in group)))
         out_s.append(st)
@@ -650,6 +660,44 @@ def sync_clamped_twins(lines: list[Line], styles: list[Style]) -> None:
             if emi and emj and not (0.6 <= emi / emj <= 1.6):
                 continue
             sj.font_pt = si.font_pt
+
+
+def harmonize_stacked_overlap_size(lines: list[Line],
+                                   styles: list[Style]) -> None:
+    """Two vertically-stacked same-style labels whose DETECTOR BOXES overlap
+    in y: the upper box reaches down into the lower glyphs, so the upper
+    line's ink band captures the neighbor's tops and over-measures one snap
+    step (p8 單一 over 主專案 — both 24pt in source, 單一 read 28). The box
+    y-overlap is itself the abnormal signal (normal stacked lines leave a
+    gap); pull the larger twin down to the smaller (reliable) one. Tight
+    gates: same weight/colour/fill, substantial x- and y-overlap, exactly one
+    snap step apart."""
+    n = len(lines)
+    for i in range(n):
+        for j in range(i + 1, n):
+            a, sa = lines[i], styles[i]
+            b, sb = lines[j], styles[j]
+            yov = min(a.bbox[3], b.bbox[3]) - max(a.bbox[1], b.bbox[1])
+            if yov <= 0.12 * min(a.height, b.height):
+                continue
+            xov = min(a.bbox[2], b.bbox[2]) - max(a.bbox[0], b.bbox[0])
+            if xov < 0.4 * min(a.width, b.width):
+                continue
+            if (sa.bold != sb.bold or sa.font_pt == sb.font_pt
+                    or sa.font_pt not in FONT_SIZES
+                    or sb.font_pt not in FONT_SIZES
+                    or abs(FONT_SIZES.index(sa.font_pt)
+                           - FONT_SIZES.index(sb.font_pt)) != 1):
+                continue
+            if max(abs(x - y) for x, y in zip(sa.text_rgb, sb.text_rgb)) > 45:
+                continue
+            if (sa.bg_rgb is None) != (sb.bg_rgb is None):
+                continue
+            if sa.bg_rgb is not None and max(
+                    abs(x - y) for x, y in zip(sa.bg_rgb, sb.bg_rgb)) > 30:
+                continue
+            small = min(sa.font_pt, sb.font_pt)
+            sa.font_pt = sb.font_pt = small
 
 
 def propagate_column_clamp(lines: list[Line], styles: list[Style]) -> None:
