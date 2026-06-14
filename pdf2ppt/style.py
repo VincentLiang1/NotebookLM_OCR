@@ -890,10 +890,28 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
         # middle band into its two main colors and erode each mask — text
         # strokes are thin and die, a ribbon is solid and survives. A clear
         # survival gap identifies the ribbon (cover color) vs the text.
+        ring_ref = bg_ref  # the ring's own dominant surface, pre-override
         ih = inner.shape[0]
         mid = inner[ih // 4: max(ih // 4 + 1, 3 * ih // 4)]
         clusters = _top_clusters(mid.reshape(-1, 3))
-        if len(clusters) == 2:
+        outlined = False
+        if len(clusters) == 2 and share >= 0.40:
+            d = [int(np.abs(c.astype(int) - ring_ref.astype(int)).max())
+                 for c, _ in clusters]
+            if min(d) >= 60:
+                # both mid-band colors differ sharply from the coherent ring
+                # surface: the glyphs are OUTLINED — a thick light halo over a
+                # dark core (p14 資料授權請求清單: black text + white outline
+                # on a dark-blue panel). Both clusters are glyph, neither is
+                # background; the white outline would otherwise be read as a
+                # white cover. Keep the ring as bg and render the brighter
+                # cluster (the visible outline) as the text color.
+                outlined = True
+                bg_ref = ring_ref
+                bg_rgb = tuple(int(v) for v in ring_ref)
+                bright = max(clusters, key=lambda c: int(c[0].sum()))[0]
+                text_rgb_override = tuple(int(v) for v in bright)
+        if not outlined and len(clusters) == 2:
             masks = [
                 np.abs(mid.astype(int) - c.astype(int)).max(axis=2) < 40
                 for c, _ in clusters
