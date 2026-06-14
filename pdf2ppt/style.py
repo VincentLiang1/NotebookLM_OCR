@@ -890,34 +890,29 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
         # middle band into its two main colors and erode each mask — text
         # strokes are thin and die, a ribbon is solid and survives. A clear
         # survival gap identifies the ribbon (cover color) vs the text.
-        ring_ref = bg_ref  # the ring's own dominant surface, pre-override
         ih = inner.shape[0]
         mid = inner[ih // 4: max(ih // 4 + 1, 3 * ih // 4)]
         clusters = _top_clusters(mid.reshape(-1, 3))
         outlined = False
-        if len(clusters) == 2 and share >= 0.40:
-            d = [int(np.abs(c.astype(int) - ring_ref.astype(int)).max())
-                 for c, _ in clusters]
-            if min(d) >= 60:
-                # both mid-band colors differ sharply from the coherent ring
-                # surface: the glyphs are OUTLINED — a thick light halo over a
-                # dark core (p14 資料授權請求清單: black text + white outline
-                # on a dark-blue panel). Both clusters are glyph, neither is
-                # background; the white outline would otherwise be read as a
-                # white cover. Keep the ring as bg and render the brighter
-                # cluster (the visible outline) as the text color.
-                outlined = True
-                # the panel often has a lighter bevel along its top edge that
-                # dominates the ring (p14 資料授權 ring dominant [87,133,158]
-                # is the bevel, the body is darker [~65,95,120]); the glyphs
-                # sit on the darker body, so cover with the ring's darker half
-                # — matching the bevel paints too pale (user: 應該深一點).
-                rl = ring.sum(axis=1)
-                dark = ring[rl <= np.median(rl)]
-                bg_ref = (np.median(dark, axis=0) if len(dark) else ring_ref)
-                bg_rgb = tuple(int(v) for v in bg_ref)
-                bright = max(clusters, key=lambda c: int(c[0].sum()))[0]
-                text_rgb_override = tuple(int(v) for v in bright)
+        # LIGHT TEXT on a coloured/textured surface: the box holds a near-
+        # WHITE population (white text, or a thick white OUTLINE over a dark
+        # core) AND a saturated surface colour. The survival/pill heuristics
+        # below mistake the bright outline for the background and paint a
+        # white cover (p8 日曆與 white-outlined on red brick, p13 提速效果 on
+        # gold, p14 資料授權 black+white-outline on a dark-blue panel). Pin bg
+        # to the most common saturated surface cluster and text to the near-
+        # white. White-on-saturated-chip (no outline) resolves identically.
+        fullc = _top_clusters(inner.reshape(-1, 3), k=3)
+        nearwhite = [c for c, sh in fullc
+                     if int(c.min()) >= 200 and sh >= 0.15]
+        surfaces = [(c, sh) for c, sh in fullc
+                    if int(c.min()) < 200
+                    and int(c.max()) - int(c.min()) >= 45 and sh >= 0.18]
+        if nearwhite and surfaces:
+            outlined = True
+            bg_ref = max(surfaces, key=lambda cs: cs[1])[0]
+            bg_rgb = tuple(int(v) for v in bg_ref)
+            text_rgb_override = tuple(int(v) for v in nearwhite[0])
         if not outlined and len(clusters) == 2:
             masks = [
                 np.abs(mid.astype(int) - c.astype(int)).max(axis=2) < 40

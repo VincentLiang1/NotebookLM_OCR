@@ -362,6 +362,15 @@ class DeckBuilder:
                     if runs:
                         lo_r, hi_r = max(runs, key=lambda r: r[1] - r[0])
                         boundary = y_lo + (lo_r + hi_r) / 2
+                # the lower line's glyph top is the hard divider: the upper
+                # cover must end above it. The blank-row scan refines the
+                # boundary into the gap, but on a textured bg it fails and the
+                # midpoint falls BELOW the lower glyph top (p8 單一/主專案 over
+                # the cracked machine) — then the upper cover paints over
+                # 主專案's top and 主專案's own cover is pushed off its glyphs.
+                # Clamp so the boundary never drops below the lower glyph top;
+                # only the (over-measured) upper cover is trimmed.
+                boundary = min(boundary, itop(lo) - COVER_PAD_PX)
                 up.style.ink_bottom_px = min(ibot(up), boundary - COVER_PAD_PX)
                 lo.style.ink_top_px = max(itop(lo), boundary + COVER_PAD_PX)
 
