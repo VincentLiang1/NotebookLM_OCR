@@ -368,26 +368,41 @@ def _restore_pipes(text: str, char_boxes, img: np.ndarray):
 
 
 def _restore_leading_bullet(text: str, char_boxes, bbox, img: np.ndarray):
-    """Re-insert a leading '• ' the rec model dropped. NotebookLM draws each
-    label's leader line ending in a filled round dot; the rec model is
-    inconsistent about transcribing it (p4 read '• 原始資料層' / '• Wiki 層'
-    but dropped the identical dot before '約束架構層', so its cover hid the
-    raster dot and the editable text showed no bullet). Signal, no sibling
-    lookup needed: the detection box reaches left past the first real char
-    (the dot sits inside the box but was not transcribed), and that gap holds
-    a filled, roughly circular, isolated disc the size of a bullet. Returns
-    (text, char_boxes); char_boxes is invalidated when a bullet is inserted."""
-    if (not char_boxes or text[:1] == "•" or _BULLET_RE.match(text)
-            or img is None):
-        return text, char_boxes
+    """Re-insert a dropped leading '• ' AND extend the box left so the cover
+    masks the whole raster dot. NotebookLM draws each label's leader line
+    ending in a filled round dot; the rec model is inconsistent about it and
+    the detector crops it inconsistently:
+      - dot transcribed, box left of it -> fine (p2 技術面)
+      - dot NOT transcribed, dot inside box -> add '• ' (p4 約束架構層)
+      - dot NOT transcribed, dot LEFT of the box -> add '• ' + grow box left
+        (p2 制度面: box x0=1497, dot at ~1450)
+      - dot transcribed, box clips its left half -> grow box left so no raster
+        sliver leaks (p2 改變計量維度/投资工程地基: box x0 straddles the dot)
+    Signal: a filled, roughly circular, vertically-centred, isolated disc the
+    size of a bullet, just left of the first glyph. Returns
+    (text, char_boxes, new_x0); char_boxes is invalidated when a bullet is
+    inserted, new_x0 <= bbox[0] extends the cover over the raster dot."""
     x0, y0, _, y1 = (int(round(v)) for v in bbox)
-    fc_left = int(round(char_boxes[0][1]))
+    if img is None:
+        return text, char_boxes, float(x0)
+    # a raw middle-dot ('·' etc., normalized to '• ' later) already carries a
+    # bullet — still search so the cover can grow over the raster dot
+    # (p2 改變計量維度/投资工程地基), just don't insert a second one
+    has_bullet = text[:1] == "•" or bool(_BULLET_RE.match(text))
     lh = y1 - y0
-    if lh <= 0 or fc_left <= x0 or (fc_left - x0) < 0.4 * lh:
-        return text, char_boxes
-    region = img[max(0, y0):y1, max(0, x0):fc_left].astype(int)
+    if lh <= 0:
+        return text, char_boxes, float(x0)
+    # fixed search window around the box-left edge — NOT keyed off the first
+    # char box, which when the dot was transcribed coincides with the dot
+    # itself and would exclude it. The window reaches ~0.9*lh left (dot fully
+    # outside, p2 制度面) and ~1.0*lh right (dot straddling x0, p2 改變). The
+    # disc criteria below (small, round, filled, centred, isolated) reject the
+    # first real glyph even when the window overlaps it.
+    sx0 = max(0, x0 - int(0.9 * lh))
+    sx1 = min(img.shape[1], x0 + int(1.0 * lh))
+    region = img[max(0, y0):y1, sx0:sx1].astype(int)
     if region.size == 0:
-        return text, char_boxes
+        return text, char_boxes, float(x0)
     med = np.median(region.reshape(-1, 3), axis=0)
     ink = np.abs(region - med).max(axis=2) > 60
     col_h = ink.sum(axis=0)
@@ -406,26 +421,56 @@ def _restore_leading_bullet(text: str, char_boxes, bbox, img: np.ndarray):
             cur = 0
     if cur:
         runs.append((len(dot) - cur, len(dot)))
+    rh = max(1, region.shape[0])
     for rs, re_ in runs:
         w = re_ - rs
         dh = int(col_h[rs:re_].max())
+        # the dot sits at the START of the label — reject discs deep inside
+        # the text (its right edge must be within ~0.7*lh of the box left)
+        if sx0 + re_ > x0 + 0.7 * lh:
+            continue
         # blank columns between this run and the next ink (or the text)
         blank = len(dot) - re_
         for ns, _ in runs:
             if ns >= re_:
                 blank = ns - re_
                 break
-        if not (0.12 * lh <= dh <= 0.55 * lh        # bullet-sized
+        # blank columns immediately LEFT of the run: the leader bullet is
+        # isolated (only the thin <0.12*lh connector to its left), so the
+        # gap reads blank; a glyph bowl bleeding in from an adjacent fragment
+        # (p6 the 'g' of 'Legacy' left of the split '（歷史金流）') has tall
+        # ink right up to it and is rejected — without this the search-left
+        # window invents a bullet between two title fragments.
+        blank_l = 0
+        for ci in range(rs - 1, -1, -1):
+            if dot[ci]:
+                break
+            blank_l += 1
+        if not (0.12 * lh <= dh <= 0.40 * lh        # bullet-sized (real dots
+                                                    # run 0.28-0.35*lh; a big
+                                                    # digit '5' fills 0.46 and
+                                                    # must not pass — p4 5 週)
                 and 0.55 <= w / max(1, dh) <= 1.7   # roughly circular
-                and blank >= 0.2 * lh):             # isolated from the text
+                and blank >= 0.2 * lh               # isolated from the text
+                and blank_l >= 0.15 * lh):          # isolated on the left too
             continue
         blob = ink[:, rs:re_]
         rows = np.where(blob.any(axis=1))[0]
-        fill = float(blob[rows[0]:rows[-1] + 1].mean()) if len(rows) else 0.0
+        if not len(rows):
+            continue
+        # a bullet sits near the vertical middle — reject glyph fragments
+        # that drift to the top/bottom when searching left of the box
+        ctr = (rows[0] + rows[-1]) / 2.0 / rh
+        if not 0.30 <= ctr <= 0.72:
+            continue
+        fill = float(blob[rows[0]:rows[-1] + 1].mean())
         if fill < 0.55:                             # filled disc, not outline
             continue
-        return "• " + text, None
-    return text, char_boxes
+        new_x0 = float(min(x0, sx0 + rs - 2))
+        if not has_bullet:
+            return "• " + text, None, new_x0
+        return text, char_boxes, new_x0
+    return text, char_boxes, float(x0)
 
 
 def _normalize_bullet(text: str) -> str:
@@ -795,9 +840,11 @@ class OcrEngine:
             if ln.angle == 0.0 and ln.char_boxes:
                 ln.text, ln.char_boxes = _restore_pipes(
                     ln.text, ln.char_boxes, img_rgb)
-            if ln.angle == 0.0 and ln.char_boxes:
-                ln.text, ln.char_boxes = _restore_leading_bullet(
+            if ln.angle == 0.0:
+                ln.text, ln.char_boxes, blt_x0 = _restore_leading_bullet(
                     ln.text, ln.char_boxes, ln.bbox, img_rgb)
+                if blt_x0 < ln.bbox[0]:
+                    ln.bbox = (blt_x0, ln.bbox[1], ln.bbox[2], ln.bbox[3])
             ln.text = _pangu_spacing(ln.text).strip()
             ln.text = _fix_trailing_degree(ln.text)
             ln.text = self._fix_simplified_strays(ln.text)

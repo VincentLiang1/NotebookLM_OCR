@@ -22,9 +22,12 @@ from .style import estimate_style
 
 def is_watermark(line, style, img_w: int, img_h: int) -> bool:
     """The NotebookLM watermark: logo + 'NotebookLM' in the bottom-right
-    corner (OCR sometimes merges the logo into the text as a stray char)."""
+    corner (OCR sometimes merges the logo AND the faint page-id stamp into the
+    text — p1 read 'P92F2NotebookLM', 15 chars, slipping past the old 13 cap
+    and leaving the watermark unwiped). Allow a few leading stray chars; the
+    bottom-right position gate keeps this from matching real content."""
     text = line.text.replace(" ", "")
-    if not text.endswith("NotebookLM") or len(text) > 13:
+    if not text.endswith("NotebookLM") or len(text) > 16:
         return False
     x0, y0, x1, y1 = line.bbox
     return (y0 > 0.85 * img_h and x1 > 0.65 * img_w

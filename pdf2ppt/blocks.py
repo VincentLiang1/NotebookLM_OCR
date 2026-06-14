@@ -173,6 +173,21 @@ def _is_markup_strikethrough(line: Line) -> bool:
     return "==" in t and "×" in t
 
 
+def _is_rotated_axis_label(line: Line, style: Style) -> bool:
+    """A 90°-rotated chart axis label the detector returned axis-aligned with
+    no angle (p11 修復成本(指數型攀升) on the Y axis): the box is far taller
+    than wide, so it was mis-measured as tiny horizontal text that neither
+    masks nor matches the sideways raster. Rotation/sizing here is unreliable,
+    so leave the raster (user 2026-06-14: 'can skip converting this one').
+    Genuine stacked vertical-CJK labels carry style.vertical and are kept;
+    detected rotations (angle/arc) are rendered rotated and kept."""
+    w = line.bbox[2] - line.bbox[0]
+    h = line.bbox[3] - line.bbox[1]
+    return (h > 2.5 * w and not style.vertical
+            and not line.angle and not line.arc_sagitta
+            and bool(_CJK_RE.search(line.text)))
+
+
 def _is_misread_single_glyph(img, line: Line) -> bool:
     """A line-art icon misread as a single CJK character (p14's CPU/IC chip
     read as 尚). General signal: a low-confidence single CJK glyph whose ink
@@ -240,6 +255,7 @@ def drop_unreproducible(lines: list[Line], styles: list[Style], img,
         if (_is_decorative_icon(ln, st, lines)
                 or _is_markup_strikethrough(ln)
                 or _is_misread_single_glyph(img, ln)
+                or _is_rotated_axis_label(ln, st)
                 or _has_baseline_shift(img, ln)):
             n += 1
             continue

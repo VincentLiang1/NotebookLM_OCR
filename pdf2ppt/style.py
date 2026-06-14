@@ -271,9 +271,22 @@ def _core_color(inner: np.ndarray, mask: np.ndarray,
     """Mean of the masked pixels farthest from the background color —
     anti-aliasing drags stroke edges toward bg, the cores are the truth."""
     px = inner[mask].astype(int)
-    diff = np.abs(px - bg_ref.astype(int)).max(axis=1)
+    bgi = bg_ref.astype(int)
+    diff = np.abs(px - bgi).max(axis=1)
     keep = diff >= np.percentile(diff, 70)
     src = px[keep] if keep.sum() >= 10 else px
+    # when the farthest pixels straddle the bg — a dark decoration AND bright
+    # strokes both register as ink (p12 開發's 3D button has a dark border +
+    # white glyphs; p14 根本… dark card + white text) — averaging both yields
+    # a meaningless mid-grey [172,176,177]. Resolve to ONE side: a meaningful
+    # bright population means light text on a coloured/3D box (these decks put
+    # white/light text on every filled box), otherwise the bright pixels are
+    # specks and the text is the dark side. No-op when all ink sits on one
+    # side of bg (normal dark-on-light / white-on-colour) — calibrated stand.
+    bright = src.sum(axis=1) > int(bgi.sum())
+    nb = int(bright.sum())
+    if 0 < nb < len(bright):
+        src = src[bright] if nb >= 0.2 * len(bright) else src[~bright]
     return tuple(int(v) for v in src.mean(axis=0).round())
 
 
@@ -1164,10 +1177,20 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
     # tracking) and a document-wide rule strangles it; the p15 quote
     # blocks (em 4-6) scatter +-8% within one true size, so short lines
     # are exempt.
-    if (font_pt >= NARROW_MIN_PT and em_width >= 10 and len(cols)
+    # Bold body lines extend the same idea (user 2026-06-14): bold strokes
+    # thicken the ink band ~6%, nudging a true-S line's height estimate over
+    # the snap midpoint to S+1 step; it then renders one level too wide for
+    # its card (p3 阿姆達爾…的鐵律 ratio 1.26, p14 重啟計量 1.14, p5 歷史金流
+    # 牽一髮動全身 1.19 — all bold, all overflowing). A higher 1.13 bar (vs
+    # 1.07 for titles) spares legit body: every non-bold body line measures
+    # <=1.06 and bold-but-correctly-sized lines stay <1.13, so this only
+    # fires on the over-snapped bold lines. em>=10 only (p15 quote blocks
+    # em 4-6 scatter +-8%).
+    if (em_width >= 10 and len(cols)
             and not line.angle and not line.arc_sagitta):
         ink_w_pt = float(cols[-1] - cols[0] + 1) * px_to_slide_pt
-        if font_pt * em_width > 1.07 * ink_w_pt:
+        fp_thresh = 1.07 if font_pt >= NARROW_MIN_PT else 1.13
+        if font_pt * em_width > fp_thresh * ink_w_pt:
             smaller = [s for s in FONT_SIZES if s < font_pt]
             if smaller and smaller[-1] * em_width >= 0.90 * ink_w_pt:
                 font_pt = smaller[-1]
@@ -1304,21 +1327,48 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
         cover_x0_px = icon_text_l
 
     # --- strikethrough: a thin horizontal line through the glyph midline
-    # covers a much larger width fraction than any character-stroke row
-    # (p9 ~~作廢內容~~: the strike row covers 0.86 of the width vs <=0.51 for
-    # the glyph rows). Coverage, not a continuous run — the line breaks at
-    # the small inter-glyph gaps. Horizontal multi-char lines only. ---
+    # (p9 ~~作廢內容~~). Bare coverage cannot tell a drawn line from
+    # coincidentally aligned CJK horizontal strokes — the document the user
+    # checked has NO strikethroughs yet plain coverage fired on three lines:
+    # 牽一髮動全身 (the 一 IS a wide horizontal bar + aligned mid-strokes),
+    # 單一 (單 stacks several ~0.75 stroke bands), (Context Engineering)
+    # (dense Latin x-height). A genuine strikethrough is a SINGLE, THIN,
+    # near-full-width coverage band that sits over a SPARSE glyph body; the
+    # false positives each break one of those three properties. Horizontal
+    # multi-char lines only. (Trade-off per user 2026-06-14: a real strike on
+    # tightly-set 2-char text could be missed — acceptable vs false marks.) --
     strikethrough = False
     if (len(rows) and not line.angle and not line.arc_sagitta
             and len(line.text.strip().replace(" ", "")) >= 2):
         rr0, rr1 = rows[0], rows[-1]
         rh, rw = rr1 - rr0 + 1, max(1, ink.shape[1])
-        med = float(np.median(ink[rows].sum(axis=1) / rw))
-        for r in range(int(rr0 + 0.35 * rh), int(rr0 + 0.65 * rh)):
-            cov = float(ink[r].sum()) / rw
-            if cov >= 0.75 and cov >= 1.5 * med:
+        cov = ink[rr0:rr1 + 1].sum(axis=1) / rw
+        gmed = float(np.median(cov))
+        # contiguous bands of high coverage (>=0.70) within the glyph
+        hi = cov >= 0.70
+        bands, i = [], 0
+        while i < len(hi):
+            if hi[i]:
+                j = i
+                while j < len(hi) and hi[j]:
+                    j += 1
+                bands.append((i, j - 1))
+                i = j
+            else:
+                i += 1
+        # exactly one band (rejects 單一's 4 stacked stroke bands and the
+        # bandless Latin x-height), centred in the glyph, thin (a drawn line,
+        # not the 9px-thick 一 glyph bar), near-full-width, over a sparse body
+        if len(bands) == 1:
+            a, b = bands[0]
+            band_h = b - a + 1
+            peak = float(cov[a:b + 1].max())
+            ctr = (a + b) / 2.0 / rh
+            outside = np.concatenate([cov[:max(0, a - 2)], cov[b + 3:]])
+            body = float(np.median(outside)) if len(outside) else peak
+            if (peak >= 0.80 and band_h <= 0.07 * rh and 0.30 <= ctr <= 0.70
+                    and peak >= 1.5 * gmed and body <= 0.6 * peak):
                 strikethrough = True
-                break
 
     # --- trailing footnote marker rendered as superscript (p10
     # 需要出處佐證[1]: the [1] is smaller and raised). Verify against the ink

@@ -87,6 +87,7 @@ class DeckBuilder:
         # to the blank ink gap between them, measured on the render.
         if img is not None:
             self._trim_row_overlaps(blocks, img)
+            self._trim_stacked_overlaps(blocks, img)
 
         # arc covers go in first: two arc lines on the same ribbon
         # interpenetrate, and a later line's cover strips must not paint
@@ -306,6 +307,63 @@ class DeckBuilder:
                 a._bbox = (ax0, ay0,
                            min(ax1, boundary - COVER_PAD_PX), ay1)
                 b._bbox = (max(bx0, boundary + COVER_PAD_PX), by0, bx1, by1)
+
+    @staticmethod
+    def _trim_stacked_overlaps(blocks, img) -> None:
+        """Two vertically-stacked single-line boxes whose covers overlap: the
+        upper cover's bottom paints over the lower line's glyph tops (p8 單一
+        over 主專案, p10 Legacy over Codebase — the detector boxes overlap in
+        y though the glyphs don't). Trim each cover to the blank-row gap
+        between the two glyph bands so neither paints over the other. Cover y
+        comes from ink_top_px/ink_bottom_px, so trim those."""
+        import numpy as np
+
+        def itop(b):
+            return b.style.ink_top_px or b.bbox[1]
+
+        def ibot(b):
+            return b.style.ink_bottom_px or b.bbox[3]
+
+        plain = [b for b in blocks
+                 if len(b.lines) == 1
+                 and not (b.lines[0].arc_sagitta or b.lines[0].angle)
+                 and b.style.ink_bottom_px]
+        plain.sort(key=itop)
+        for ai, a in enumerate(plain):
+            for b in plain[ai + 1:]:
+                ax0, _, ax1, _ = a.bbox
+                bx0, _, bx1, _ = b.bbox
+                ox = min(ax1, bx1) - max(ax0, bx0)
+                if ox < 0.5 * min(ax1 - ax0, bx1 - bx0):
+                    continue
+                up, lo = (a, b) if itop(a) <= itop(b) else (b, a)
+                if ibot(up) <= itop(lo):
+                    continue  # covers already clear
+                x_lo = max(0, int(max(ax0, bx0)))
+                x_hi = min(img.shape[1], int(min(ax1, bx1)))
+                y_lo, y_hi = int(itop(lo)) - 6, int(ibot(up)) + 6
+                bg = up.style.bg_rgb or lo.style.bg_rgb
+                boundary = (itop(lo) + ibot(up)) / 2
+                if (bg is not None and x_hi - x_lo >= 8
+                        and 0 <= y_lo < y_hi <= img.shape[0]):
+                    win = img[y_lo:y_hi, x_lo:x_hi].astype(int)
+                    row_ink = (np.abs(win - np.asarray(bg, dtype=int))
+                               .max(axis=2) > 60).sum(axis=1)
+                    blank = row_ink <= 0.04 * (x_hi - x_lo)
+                    runs, s = [], None
+                    for j, v in enumerate(blank):
+                        if v and s is None:
+                            s = j
+                        elif not v and s is not None:
+                            runs.append((s, j))
+                            s = None
+                    if s is not None:
+                        runs.append((s, len(blank)))
+                    if runs:
+                        lo_r, hi_r = max(runs, key=lambda r: r[1] - r[0])
+                        boundary = y_lo + (lo_r + hi_r) / 2
+                up.style.ink_bottom_px = min(ibot(up), boundary - COVER_PAD_PX)
+                lo.style.ink_top_px = max(itop(lo), boundary + COVER_PAD_PX)
 
     @staticmethod
     def _arc_geometry(block, px_per_pt: float, img=None):
