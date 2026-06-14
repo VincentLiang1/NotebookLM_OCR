@@ -664,30 +664,33 @@ def sync_clamped_twins(lines: list[Line], styles: list[Style]) -> None:
 
 def harmonize_stacked_overlap_size(lines: list[Line],
                                    styles: list[Style]) -> None:
-    """Two vertically-stacked same-style labels whose DETECTOR BOXES overlap
-    in y: the upper box reaches down into the lower glyphs, so the upper
-    line's ink band captures the neighbor's tops and over-measures one snap
-    step (p8 單一 over 主專案 — both 24pt in source, 單一 read 28). The box
-    y-overlap is itself the abnormal signal (normal stacked lines leave a
-    gap); pull the larger twin down to the smaller (reliable) one. Tight
-    gates: same weight/colour/fill, substantial x- and y-overlap, exactly one
-    snap step apart."""
+    """Vertically-stacked same-card label lines that the source draws at ONE
+    size but the pipeline measures differently. Runs BEFORE harmonize_font_
+    sizes so a corrected size isn't re-grouped back up. Two failure shapes,
+    both pulled to the SMALLER (reliable) size:
+      (A) DETECTOR BOXES overlap in y — the upper box reaches into the lower
+          glyphs, so the upper ink band captures the neighbor's tops and
+          over-measures (p8 單一 over 主專案, both 24pt in source, 單一 read
+          28). The box y-overlap is itself the abnormal signal.
+      (B) the longer line is WIDTH-CLAMPED below its natural size while its
+          shorter card-mate (no width pressure) keeps the inflated size
+          (p14 啟動【技術解法】/制度解法 read 32/28 beside 全力建構/重啟計量
+          clamped to 24). Signal: similar pre-snap est, but the smaller-font
+          twin's font sits below snap(est) (something clamped it).
+    Same card = same weight, text colour (<=45) and fill (<=30); adjacent and
+    x-overlapping. Genuinely different-size stacks (p13 第三階段 title over
+    its subtitle, est 35% apart) fail the est-similarity / overlap gates."""
     n = len(lines)
     for i in range(n):
         for j in range(i + 1, n):
             a, sa = lines[i], styles[i]
             b, sb = lines[j], styles[j]
-            yov = min(a.bbox[3], b.bbox[3]) - max(a.bbox[1], b.bbox[1])
-            if yov <= 0.12 * min(a.height, b.height):
+            if sa.font_pt == sb.font_pt or sa.bold != sb.bold:
+                continue
+            if (sa.font_pt not in FONT_SIZES or sb.font_pt not in FONT_SIZES):
                 continue
             xov = min(a.bbox[2], b.bbox[2]) - max(a.bbox[0], b.bbox[0])
             if xov < 0.4 * min(a.width, b.width):
-                continue
-            if (sa.bold != sb.bold or sa.font_pt == sb.font_pt
-                    or sa.font_pt not in FONT_SIZES
-                    or sb.font_pt not in FONT_SIZES
-                    or abs(FONT_SIZES.index(sa.font_pt)
-                           - FONT_SIZES.index(sb.font_pt)) != 1):
                 continue
             if max(abs(x - y) for x, y in zip(sa.text_rgb, sb.text_rgb)) > 45:
                 continue
@@ -695,6 +698,21 @@ def harmonize_stacked_overlap_size(lines: list[Line],
                 continue
             if sa.bg_rgb is not None and max(
                     abs(x - y) for x, y in zip(sa.bg_rgb, sb.bg_rgb)) > 30:
+                continue
+            minh = min(a.height, b.height)
+            yov = min(a.bbox[3], b.bbox[3]) - max(a.bbox[1], b.bbox[1])
+            adjacent = (min(abs(a.bbox[3] - b.bbox[1]),
+                            abs(b.bbox[3] - a.bbox[1])) <= 0.5 * minh)
+            box_overlap = yov > 0.12 * minh                       # shape (A)
+            # shape (B): est within 15% and the smaller-font line is clamped
+            # below its natural snap
+            sm = a if sa.font_pt < sb.font_pt else b
+            ssm = sa if sa.font_pt < sb.font_pt else sb
+            est_close = (sa.est_pt > 0 and sb.est_pt > 0
+                         and abs(sa.est_pt - sb.est_pt)
+                         <= 0.15 * max(sa.est_pt, sb.est_pt))
+            clamped = ssm.font_pt < snap_font_size(ssm.est_pt)
+            if not (box_overlap or (adjacent and est_close and clamped)):
                 continue
             small = min(sa.font_pt, sb.font_pt)
             sa.font_pt = sb.font_pt = small

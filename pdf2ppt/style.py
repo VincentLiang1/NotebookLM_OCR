@@ -907,8 +907,15 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
                 # white cover. Keep the ring as bg and render the brighter
                 # cluster (the visible outline) as the text color.
                 outlined = True
-                bg_ref = ring_ref
-                bg_rgb = tuple(int(v) for v in ring_ref)
+                # the panel often has a lighter bevel along its top edge that
+                # dominates the ring (p14 資料授權 ring dominant [87,133,158]
+                # is the bevel, the body is darker [~65,95,120]); the glyphs
+                # sit on the darker body, so cover with the ring's darker half
+                # — matching the bevel paints too pale (user: 應該深一點).
+                rl = ring.sum(axis=1)
+                dark = ring[rl <= np.median(rl)]
+                bg_ref = (np.median(dark, axis=0) if len(dark) else ring_ref)
+                bg_rgb = tuple(int(v) for v in bg_ref)
                 bright = max(clusters, key=lambda c: int(c[0].sum()))[0]
                 text_rgb_override = tuple(int(v) for v in bright)
         if not outlined and len(clusters) == 2:
@@ -963,16 +970,26 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
             idx = range(len(clusters))
             bg_i = max(idx, key=lambda i: (clusters[i][1] >= 0.25, survs[i]))
             tx_i = min((i for i in idx if i != bg_i), key=lambda i: survs[i])
+            bg_cand = clusters[bg_i][0]
+            # a real spilled pill's re-derived bg is the SOLID CHIP, a
+            # saturated/dark fill. If instead the most-solid cluster is
+            # near-WHITE while the ring is a clearly darker coloured surface,
+            # that "bg" is the thick white OUTLINE of outlined text (p13
+            # 提速效果 on a gold chip, 擴展與制度重構 on green), NOT a pill —
+            # keep the chip (ring) as bg and render the white outline as the
+            # text, otherwise the cover becomes a white box over the chip.
+            if int(bg_cand.min()) >= 200 and int(bg_ref.min()) < 170:
+                text_rgb_override = tuple(int(v) for v in bg_cand)
             # a real spilled pill re-derives a bg that DIFFERS from the
             # ring (that mismatch is the whole failure mode); when the
             # re-derived bg matches the ring this is just dense bold text
             # that crossed the ink.mean threshold (p15 把精力保留… at
             # ink.mean 0.46), and the least-solid cluster would be the
             # anti-aliasing shell — overriding paints the text grey
-            if (survs[bg_i] - survs[tx_i] > 0.15
-                    and np.abs(clusters[bg_i][0].astype(int)
+            elif (survs[bg_i] - survs[tx_i] > 0.15
+                    and np.abs(bg_cand.astype(int)
                                - bg_ref.astype(int)).max() >= 40):
-                bg_ref = clusters[bg_i][0]
+                bg_ref = bg_cand
                 bg_rgb = tuple(int(v) for v in bg_ref)
                 text_rgb_override = _core_color(inner, masks[tx_i], bg_ref)
                 ink = (np.abs(inner.astype(int) - bg_ref.astype(int)).max(axis=2)

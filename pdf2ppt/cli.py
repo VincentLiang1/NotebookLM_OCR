@@ -148,12 +148,15 @@ def main(argv: list[str] | None = None) -> int:
         # harmonizing (p6 釐清「方言」：markdown 的規格體系)
         lines, styles = merge_row_title_fragments(lines, styles)
 
+        # stacked same-card labels measured at split sizes -> one size,
+        # BEFORE harmonize_font_sizes re-groups a corrected size back up
+        # (p8 單一/主專案, p14 啟動【…】/全力建構/重啟計量)
+        harmonize_stacked_overlap_size(lines, styles)
         # size first: wrap-mates unified into their true size leave the
         # same-size bold cohorts cleaner (SKILL.md belongs to 自動產出's
         # 18pt chip, not to the 16pt 步驟 headers it was born sized as)
         harmonize_font_sizes(lines, styles)
         harmonize_code_block_latin(lines, styles)
-        harmonize_stacked_overlap_size(lines, styles)
         sync_clamped_twins(lines, styles)
         propagate_column_clamp(lines, styles)
         if bold_mode == "auto":
