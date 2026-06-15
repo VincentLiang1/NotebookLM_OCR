@@ -159,7 +159,7 @@ class App(tk.Tk):
 
         self.fast = tk.BooleanVar(value=False)
         self.no_s2t = tk.BooleanVar(value=False)
-        self.no_cover = tk.BooleanVar(value=False)
+        self.cover = tk.BooleanVar(value=False)
         self.keep_watermark = tk.BooleanVar(value=False)
         self.keep_tiny_text = tk.BooleanVar(value=False)
         self.merge_lines = tk.BooleanVar(value=False)
@@ -249,7 +249,7 @@ class App(tk.Tk):
             ("保留 NotebookLM 浮水印", self.keep_watermark),
             ("保留圖表內小字（預設保留原圖不轉文字）", self.keep_tiny_text),
             ("相鄰同樣式行合併成一個文字方塊", self.merge_lines),
-            ("不加色塊，文字直接疊在背景圖上", self.no_cover),
+            ("啟用精修色塊（裁切／雙色橫幅／弧形；預設由文字方塊自帶底色）", self.cover),
             ("關閉簡體混入修正", self.no_s2t),
             ("輸出除錯資料（OCR 疊圖 PNG + JSON）", self.debug),
         ]
@@ -362,8 +362,8 @@ class App(tk.Tk):
             argv.append("--fast")
         if self.no_s2t.get():
             argv.append("--no-s2t")
-        if self.no_cover.get():
-            argv.append("--no-cover")
+        if self.cover.get():
+            argv.append("--cover")
         if self.keep_watermark.get():
             argv.append("--keep-watermark")
         if self.keep_tiny_text.get():
