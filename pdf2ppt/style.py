@@ -1416,8 +1416,13 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
             else:
                 i += 1
         # exactly one band (rejects 單一's 4 stacked stroke bands and the
-        # bandless Latin x-height), centred in the glyph, thin (a drawn line,
-        # not the 9px-thick 一 glyph bar), near-full-width, over a sparse body
+        # bandless Latin x-height), centred in the glyph, thin (a drawn line
+        # <= 0.10*rh, not the thicker 一 glyph bar at ~0.13*rh), near-full-
+        # width, over a sparse body. The real p9 strike measures 5px / rh 67
+        # = 0.0746; 0.07 was 1px too tight and missed it. Across the whole
+        # doc this is the ONLY line satisfying every other gate, so the loosen
+        # is safe — the old false positives never reach this near-candidate
+        # state (rejected by band-count / body / ctr first).
         if len(bands) == 1:
             a, b = bands[0]
             band_h = b - a + 1
@@ -1425,7 +1430,7 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
             ctr = (a + b) / 2.0 / rh
             outside = np.concatenate([cov[:max(0, a - 2)], cov[b + 3:]])
             body = float(np.median(outside)) if len(outside) else peak
-            if (peak >= 0.80 and band_h <= 0.07 * rh and 0.30 <= ctr <= 0.70
+            if (peak >= 0.80 and band_h <= 0.10 * rh and 0.30 <= ctr <= 0.70
                     and peak >= 1.5 * gmed and body <= 0.6 * peak):
                 strikethrough = True
 
