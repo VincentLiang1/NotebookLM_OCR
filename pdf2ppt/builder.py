@@ -152,7 +152,14 @@ class DeckBuilder:
                 height = ey(cov_y1) - top
                 margin_top = max(0, text_top - top)
 
-            fill = self.cover and block.style.bg_rgb is not None
+            # the text shape always carries the estimated cover color as its
+            # own fill when known. In cover mode the dedicated cover branches
+            # below (two-tone banner / split rect) take over and reset this to
+            # False; in --no-cover mode those branches are skipped (gated on
+            # self.cover), so the single text shape keeps the solid fill —
+            # i.e. the editable text sits on its original block color, not on
+            # a transparent box exposing the raster (user 2026-06-15).
+            fill = block.style.bg_rgb is not None
             bg_segs = block.style.bg_segments
             if not tilted and self.cover and bg_segs and len(bg_segs) >= 2:
                 # two-tone banner: a FULL-WIDTH base cover in the rightmost
