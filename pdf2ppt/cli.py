@@ -36,10 +36,14 @@ def is_watermark(line, style, img_w: int, img_h: int) -> bool:
 
 def watermark_wipe(line, style) -> tuple[tuple, tuple]:
     """Cover box for the watermark: extend left to also hide the logo icon
-    that sits before the text."""
+    that sits before the text. The OCR box already brackets the watermark
+    (its top sits ~0.16h above the pill, its bottom ~0.1h below the text),
+    so only a small vertical margin is needed — keep the box just tall
+    enough to cover the logo + 'NotebookLM' pill, not the slack above/below
+    (measured on the render: pill top y0+0.16h, faint pill bottom y1+0.1h)."""
     x0, y0, x1, y1 = line.bbox
     h = y1 - y0
-    return (x0 - 1.8 * h, y0 - 0.3 * h, x1 + 0.3 * h, y1 + 0.3 * h), style.bg_rgb
+    return (x0 - 1.8 * h, y0 - 0.05 * h, x1 + 0.3 * h, y1 + 0.12 * h), style.bg_rgb
 
 
 def parse_pages(spec: str, page_count: int) -> list[int]:
