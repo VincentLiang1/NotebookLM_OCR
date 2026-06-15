@@ -80,13 +80,14 @@ def main(argv: list[str] | None = None) -> int:
                     help="keep OCR output as-is instead of normalizing simplified strays to Traditional Chinese")
     ap.add_argument("--pages", default=None, help="page selection, e.g. 1-5,8")
     ap.add_argument("--min-score", type=float, default=0.5, help="drop OCR lines below this confidence")
-    ap.add_argument("--cover", action="store_true",
-                    help="enable the precise cover machinery (per-row/stacked "
-                         "trims, two-tone banners, arc covers). Default off: "
-                         "each text shape carries its own block color as fill")
-    # deprecated: no-cover is the default now; accepted so old commands/GUI
+    ap.add_argument("--no-cover", action="store_true",
+                    help="disable the precise cover machinery (per-row/stacked "
+                         "trims, two-tone banners, arc covers); each text shape "
+                         "just carries its own block color as fill. Default: "
+                         "cover blocks are ON")
+    # deprecated: cover is the default now; accepted so old commands/GUI
     # presets don't error, but it has no effect
-    ap.add_argument("--no-cover", action="store_true", help=argparse.SUPPRESS)
+    ap.add_argument("--cover", action="store_true", help=argparse.SUPPRESS)
     ap.add_argument("--keep-watermark", action="store_true",
                     help="keep the bottom-right NotebookLM watermark instead of wiping it")
     ap.add_argument("--keep-tiny-text", action="store_true",
@@ -119,7 +120,7 @@ def main(argv: list[str] | None = None) -> int:
 
     first = doc[page_indices[0]]
     builder = DeckBuilder(first.rect.width, first.rect.height,
-                          font_name=args.font, cover=args.cover)
+                          font_name=args.font, cover=not args.no_cover)
 
     debug_dump = []
     t0 = time.time()
