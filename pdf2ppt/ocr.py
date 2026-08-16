@@ -465,16 +465,18 @@ def _restore_leading_bullet(text: str, char_boxes, bbox, img: np.ndarray):
         ctr = (rows[0] + rows[-1]) / 2.0 / rh
         if not 0.30 <= ctr <= 0.72:
             continue
-        fill = float(blob[rows[0]:rows[-1] + 1].mean())
-        # A DISC, not merely "filled": a circle covers pi/4 = 0.785 of its
-        # bounding box, a triangle only ~0.5. The old 0.55 admitted wedges,
-        # so a '->' arrow head left of the box was read as a dropped bullet
-        # and a second marker was prepended ('-> * 買進 1 張'). Measured over
-        # 13 hits on the CB deck: real leader dots fill 0.806-0.881 with
-        # w/h 0.76-1.00; the false positives (three arrow heads, one comma,
-        # one digit stem) fill 0.587-0.701 with w/h 0.57-0.69 — the pair of
-        # thresholds below separates them with margin on both axes.
-        if fill < 0.72:
+        sub = blob[rows[0]:rows[-1] + 1]
+        fill = float(sub.mean())
+        # A DISC: not a wedge, and not a solid block either. A circle covers
+        # pi/4 = 0.785 of its bounding box, a triangle ~0.5, a square 1.0, so
+        # the band is two-sided. The old one-sided 0.55 admitted wedges (a '->'
+        # arrow head left of the box became a dropped bullet and got a second
+        # marker prepended, '-> * 買進 1 張'), and having no upper bound
+        # admitted square list markers, which would be covered up and redrawn
+        # as round dots. Measured: real leader dots 0.806-0.881; wedges/commas
+        # /digit stems 0.587-0.701; filled squares 1.0 (and >= 0.97 even when
+        # rendered small with anti-aliasing).
+        if not 0.72 <= fill <= 0.95:
             continue
         # ...and vertically SYMMETRIC. A disc has the same ink above and below
         # its own middle; every wedge-shaped marker that survives the fill gate
@@ -483,7 +485,6 @@ def _restore_leading_bullet(text: str, char_boxes, bbox, img: np.ndarray):
         # Without this the raster triangle is covered up and a round bullet is
         # drawn in its place, changing the glyph the source actually shows.
         # Measured: real leader dots 0.87-1.00, triangles 0.45-0.52.
-        sub = blob[rows[0]:rows[-1] + 1]
         half = max(1, len(sub) // 2)
         top_d, bot_d = float(sub[:half].mean()), float(sub[half:].mean())
         if min(top_d, bot_d) < 0.70 * max(top_d, bot_d):
