@@ -367,6 +367,24 @@ def _restore_pipes(text: str, char_boxes, img: np.ndarray):
     return re.sub(r" {2,}", " ", "".join(out)), None
 
 
+def _tilt_has_baseline(text: str) -> bool:
+    """Whether a tilt angle measured on this line is actually evidence of tilt.
+
+    Text orientation is defined by glyphs arranged along a baseline, so it
+    takes at least TWO of them: with one glyph there is no baseline, and the
+    detector's min-area quad locks onto the glyph's own stroke or an arbitrary
+    diagonal instead. p15's '1' step badge — a lone digit centred in a circle —
+    came back as a quad tilted 26.3 deg at score 0.956, and rendered as a
+    slanted stroke that reads as a '7'. Measured across both decks (29 pages):
+    every legitimately tilted line has >= 2 chars and a deskewed quad elongated
+    along the tilt (the three 'Step' labels, w/h 1.83-1.90), while every
+    single-glyph tilt was spurious ('1' 26.3 deg w/h 0.96, '<-' -6 deg,
+    'と' -26.9 deg). Dropping the angle keeps the text and covers the raster
+    with an axis-aligned box; keeping it visibly corrupts the glyph.
+    """
+    return len(text.strip()) >= 2
+
+
 def _restore_leading_bullet(text: str, char_boxes, bbox, img: np.ndarray):
     """Re-insert a dropped leading '• ' AND extend the box left so the cover
     masks the whole raster dot. NotebookLM draws each label's leader line
@@ -822,7 +840,8 @@ class OcrEngine:
             # the detector returns rotated quads for slanted band text
             edge = (quad[1] - quad[0]) + (quad[2] - quad[3])
             ang = math.degrees(math.atan2(edge[1], edge[0]))
-            if abs(ang) < QUAD_TILT_DEG or abs(ang) > 45:
+            if (abs(ang) < QUAD_TILT_DEG or abs(ang) > 45
+                    or not _tilt_has_baseline(text)):
                 ang = 0.0
             w = (np.linalg.norm(quad[1] - quad[0])
                  + np.linalg.norm(quad[2] - quad[3])) / 2
@@ -853,7 +872,10 @@ class OcrEngine:
                         # an arc explains the fragments better than the
                         # rescue's single compromise angle
                         ln.arc_sagitta = arc
-                    elif ang:
+                    elif ang and _tilt_has_baseline(ln.text):
+                        # keep the rescued text either way; a lone glyph's
+                        # rescue angle is a compromise fit with no baseline
+                        # behind it
                         ln.angle, ln.center, ln.size = ang, center, size
             if ln.angle == 0.0:
                 extended = self._extend_trailing(img_rgb, ln, vocab)
