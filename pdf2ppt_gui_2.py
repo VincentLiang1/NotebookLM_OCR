@@ -195,6 +195,14 @@ class App(tk.Tk):
         self.minsize(680, 640)
 
         self.log_queue: "queue.Queue" = queue.Queue()
+        # 整個行程共用同一個 writer。pdf2ppt 的相依套件會在 import 當下就把
+        # 當時的 sys.stdout/sys.stderr 綁進模組全域（pymupdf 的 _g_out_message /
+        # _g_out_log、rapidocr 的 logging.StreamHandler、tqdm 帶進來的
+        # colorama.orig_stdout），而那次 import 正好發生在重導向生效期間 ——
+        # finally 還原 sys.stdout 收不回這些參考。每輪都新建 writer 的話，
+        # 第二輪之後這些套件的訊息就會流進一個沒人管的舊物件；共用一個實例
+        # 讓那些逃逸的參考在定義上就是對的。
+        self.writer = QueueWriter(self.log_queue)
         self.worker: threading.Thread | None = None
         self.running = False
         self.project_dir: Path | None = find_project_dir()
@@ -537,8 +545,7 @@ class App(tk.Tk):
     def _run_conversion(self, argv: list[str]) -> None:
         old_out, old_err = sys.stdout, sys.stderr
         old_cwd = os.getcwd()
-        writer = QueueWriter(self.log_queue)
-        sys.stdout = sys.stderr = writer
+        sys.stdout = sys.stderr = self.writer
         rc = 1
         try:
             proj = Path(self.project_dir)
@@ -613,8 +620,11 @@ class App(tk.Tk):
         finally:
             # 無論如何都要重新排程：原本 self.after 寫在 except queue.Empty
             # 之後，任何非 Empty 的例外（Text 丟 TclError、modal 丟 TclError）
-            # 都會讓輪詢永久停擺，__DONE__ 再也不會被取出，UI 就卡在「轉檔中…」
-            self.after(80, self._drain_log)
+            # 都會讓輪詢永久停擺，__DONE__ 再也不會被取出，UI 就卡在「轉檔中…」。
+            # 閒置時放慢到 500ms：GUI 是長時間開著的行程，沒在轉檔時用 80ms
+            # 叫醒主執行緒只是白白讓行程進不了深度閒置。永遠不停止輪詢，才不會
+            # 有「該重啟時沒重啟」的死角。
+            self.after(80 if self.running else 500, self._drain_log)
 
     def _finish(self, rc: int) -> None:
         self.progress.stop()
