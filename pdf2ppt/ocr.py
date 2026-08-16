@@ -450,7 +450,9 @@ def _restore_leading_bullet(text: str, char_boxes, bbox, img: np.ndarray):
                                                     # run 0.28-0.35*lh; a big
                                                     # digit '5' fills 0.46 and
                                                     # must not pass — p4 5 週)
-                and 0.55 <= w / max(1, dh) <= 1.7   # roughly circular
+                and 0.72 <= w / max(1, dh) <= 1.7   # circular, not a wedge —
+                                                    # 0.55 let arrow heads and
+                                                    # commas in (see below)
                 and blank >= 0.2 * lh               # isolated from the text
                 and blank_l >= 0.15 * lh):          # isolated on the left too
             continue
@@ -464,7 +466,27 @@ def _restore_leading_bullet(text: str, char_boxes, bbox, img: np.ndarray):
         if not 0.30 <= ctr <= 0.72:
             continue
         fill = float(blob[rows[0]:rows[-1] + 1].mean())
-        if fill < 0.55:                             # filled disc, not outline
+        # A DISC, not merely "filled": a circle covers pi/4 = 0.785 of its
+        # bounding box, a triangle only ~0.5. The old 0.55 admitted wedges,
+        # so a '->' arrow head left of the box was read as a dropped bullet
+        # and a second marker was prepended ('-> * 買進 1 張'). Measured over
+        # 13 hits on the CB deck: real leader dots fill 0.806-0.881 with
+        # w/h 0.76-1.00; the false positives (three arrow heads, one comma,
+        # one digit stem) fill 0.587-0.701 with w/h 0.57-0.69 — the pair of
+        # thresholds below separates them with margin on both axes.
+        if fill < 0.72:
+            continue
+        # ...and vertically SYMMETRIC. A disc has the same ink above and below
+        # its own middle; every wedge-shaped marker that survives the fill gate
+        # does not — the '<details>' disclosure triangle in p12's markdown demo
+        # (top 0.99 / bottom 0.45) and the p11 warning triangle (0.51 / 0.97).
+        # Without this the raster triangle is covered up and a round bullet is
+        # drawn in its place, changing the glyph the source actually shows.
+        # Measured: real leader dots 0.87-1.00, triangles 0.45-0.52.
+        sub = blob[rows[0]:rows[-1] + 1]
+        half = max(1, len(sub) // 2)
+        top_d, bot_d = float(sub[:half].mean()), float(sub[half:].mean())
+        if min(top_d, bot_d) < 0.70 * max(top_d, bot_d):
             continue
         new_x0 = float(min(x0, sx0 + rs - 2))
         if not has_bullet:
