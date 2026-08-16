@@ -125,22 +125,21 @@ FONT_CHOICES = [
 # --------------------------------------------------------------------------- #
 #  把背景執行緒裡的 print() 導到 GUI 的工具
 # --------------------------------------------------------------------------- #
-class QueueWriter:
+class QueueWriter(io.TextIOBase):
     """一個假的 stdout：寫入的文字丟進 queue，由主執行緒撈出來顯示。
 
-    cli.py 會檢查 sys.stdout.encoding 並可能呼叫 reconfigure()，其他函式庫還會
-    探測 closed / errors / fileno 等屬性，因此這裡補齊真正文字串流的介面。
+    繼承 io.TextIOBase 取得 closed / newlines / writelines() / close() /
+    isatty() / readable() / seekable()，以及會丟 io.UnsupportedOperation 的
+    fileno()（同時是 OSError 也是 ValueError，正是呼叫端會攔的型別）；這裡只
+    留真正專案特有的部分：cli.py 會讀 sys.stdout.encoding 並可能呼叫
+    reconfigure()。
     """
 
     encoding = "utf-8"
     errors = "replace"
-    closed = False
-    newlines = None
-    line_buffering = False
-    name = "<gui-log>"
-    mode = "w"
 
     def __init__(self, q: "queue.Queue") -> None:
+        super().__init__()
         self.q = q
 
     def write(self, text: str) -> int:
@@ -148,15 +147,11 @@ class QueueWriter:
             self.q.put(_ANSI_RE.sub("", text))
         return len(text)
 
-    def writelines(self, lines) -> None:
-        for line in lines:
-            self.write(line)
-
-    def flush(self) -> None:  # print 需要這個方法存在
-        pass
+    def writable(self) -> bool:
+        return True
 
     def close(self) -> None:
-        pass
+        pass    # 這個串流活得比任何一次轉檔久，關掉它會讓後續輸出無處可去
 
     def reconfigure(self, *args, **kwargs) -> None:
         """cli.py 會呼叫 sys.stdout.reconfigure(encoding="utf-8")；
@@ -164,24 +159,6 @@ class QueueWriter:
         enc = kwargs.get("encoding")
         if enc:
             self.encoding = enc
-
-    def isatty(self) -> bool:
-        return False
-
-    def writable(self) -> bool:
-        return True
-
-    def readable(self) -> bool:
-        return False
-
-    def seekable(self) -> bool:
-        return False
-
-    def fileno(self) -> int:
-        # 真串流丟的是 io.UnsupportedOperation（同時是 OSError 也是 ValueError）；
-        # 只丟 OSError 會讓用 `except (AttributeError, ValueError)` 這個標準寫法
-        # 的呼叫端漏接，例外一路穿出去變成看不懂的轉檔失敗
-        raise io.UnsupportedOperation("QueueWriter has no fileno")
 
 
 # --------------------------------------------------------------------------- #
@@ -208,9 +185,8 @@ class App(tk.Tk):
         self.project_dir: Path | None = find_project_dir()
         # 目前 sys.modules 裡的 pdf2ppt 是從哪個目錄載入的
         self.loaded_from: Path | None = None
-        # 輸出路徑是我們自動帶出來的，還是使用者自己指定的
-        self._out_auto = True
-        self._setting_out = False
+        # 我們上次自動帶出來的輸出路徑；使用者改過就不再自動跟著換
+        self._auto_out = ""
 
         self._build_vars()
         self._build_ui()
@@ -222,7 +198,6 @@ class App(tk.Tk):
     def _build_vars(self) -> None:
         self.in_path = tk.StringVar()
         self.out_path = tk.StringVar()
-        self.out_path.trace_add("write", self._on_out_edited)
         self.pages = tk.StringVar()
         self.lang = tk.StringVar()
         self.font = tk.StringVar(value=FONT_CHOICES[0])
@@ -414,19 +389,6 @@ class App(tk.Tk):
                          "下次啟動需要重新選擇）\n")
 
     # ---- 檔案挑選 ----
-    def _on_out_edited(self, *_args) -> None:
-        # 使用者親手改過輸出欄之後就別再自動覆寫它
-        if not self._setting_out:
-            self._out_auto = False
-
-    def _set_out(self, value: str, auto: bool) -> None:
-        self._setting_out = True
-        try:
-            self.out_path.set(value)
-        finally:
-            self._setting_out = False
-        self._out_auto = auto
-
     def _pick_input(self) -> None:
         p = filedialog.askopenfilename(
             title="選擇輸入 PDF",
@@ -434,11 +396,13 @@ class App(tk.Tk):
         if not p:
             return
         self.in_path.set(p)
-        # 換了輸入檔就跟著換輸出檔：只在「輸出欄是空的」時才自動帶，會讓輸出
+        # 換了輸入檔就跟著換輸出檔。只在「輸出欄是空的」時才自動帶會讓輸出
         # 永遠釘在第一份 PDF 上，第二次轉檔就把第一份的成果直接蓋掉（而且沒走
-        # 另存對話框，覆寫確認永遠不會出現）
-        if self._out_auto or not self.out_path.get().strip():
-            self._set_out(str(Path(p).with_suffix(".pptx")), auto=True)
+        # 另存對話框，覆寫確認永遠不會出現）；只要欄位還是我們上次填的值就更新
+        cur = self.out_path.get().strip()
+        if not cur or cur == self._auto_out:
+            self._auto_out = str(Path(p).with_suffix(".pptx"))
+            self.out_path.set(self._auto_out)
 
     def _pick_output(self) -> None:
         init = self._effective_out() or Path("output.pptx")
@@ -449,16 +413,16 @@ class App(tk.Tk):
             initialdir=str(init.parent),
             filetypes=[("PowerPoint 簡報", "*.pptx")])
         if p:
-            self._set_out(p, auto=False)
+            self.out_path.set(p)
 
     def _effective_out(self) -> Path | None:
         """實際會產出的 .pptx 路徑（輸出欄留空時 cli 會用輸入檔同名）。"""
         out = self.out_path.get().strip()
         if out:
-            return Path(out).expanduser().absolute()
+            return Path(out).expanduser().resolve()
         src = self.in_path.get().strip()
         if src:
-            return Path(src).expanduser().absolute().with_suffix(".pptx")
+            return Path(src).expanduser().resolve().with_suffix(".pptx")
         return None
 
     # ---- 組 argv ----
@@ -473,10 +437,8 @@ class App(tk.Tk):
         # 一律傳絕對路徑：worker 會 os.chdir 到專案目錄，相對路徑會在「這裡驗證
         # 通過、那裡找不到」之間打架，輸出檔也會落到專案資料夾而不是使用者預期
         # 的位置
-        argv = [str(src.resolve())]
-        out = self._effective_out()
-        if out is not None:
-            argv += ["-o", str(out.resolve())]
+        # in_path is non-empty here, so _effective_out() always resolves
+        argv = [str(src.resolve()), "-o", str(self._effective_out())]
         if self.pages.get().strip():
             argv += ["--pages", self.pages.get().strip()]
         if self.lang.get().strip():
@@ -650,7 +612,7 @@ class App(tk.Tk):
         # 一定要收到真正的路徑：以前這裡吃的是顯示用字串，輸出欄留空時會拿
         # 「(輸入檔同名 .pptx)」去 resolve，開出使用者的工作目錄
         try:
-            folder = str(path.absolute().parent)
+            folder = str(path.parent)
             if sys.platform.startswith("win"):
                 os.startfile(folder)  # type: ignore[attr-defined]
             else:

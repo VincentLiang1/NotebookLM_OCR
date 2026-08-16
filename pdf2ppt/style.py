@@ -1418,20 +1418,11 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
         # exactly one band (rejects 單一's 4 stacked stroke bands and the
         # bandless Latin x-height), centred in the glyph, thin (a drawn line
         # <= 0.10*rh, not the thicker 一 glyph bar at ~0.13*rh), near-full-
-        # width, over a sparse body. The real p9 strike measures 5px / rh 67
-        # = 0.0746; 0.07 was 1px too tight and missed it.
-        #
-        # Be honest about what the 0.10 costs. 單一 is rejected on band count
-        # (4 stacked bands) and (Context Engineering) on having none, so
-        # neither depends on this number. 牽一髮動全身 does: its recorded
-        # peak 0.84 clears the 0.80 gate, its ctr ~0.5 clears the centring
-        # gate, and its body 0.48 <= 0.6*0.84 = 0.504 clears the sparse-body
-        # gate too — thickness is the ONLY thing rejecting it, and the margin
-        # to its 一 bar (~0.13*rh) shrank from 1.9x to 1.3x. Loosening again
-        # is not available; band_h/rh is also weight-dependent (a strike drawn
-        # over bold text is thicker) so the real fix is to normalize by the
-        # measured stroke width instead, which needs a visual pass against
-        # SOURCE.pdf to recalibrate. Do not touch this number without one.
+        # width, over a sparse body. 0.10*rh is a HARD ceiling: 牽一髮動全身
+        # clears every other gate (peak 0.84, ctr ~0.5, body 0.48 <= 0.504) and
+        # is rejected on thickness alone, with only 1.3x margin to its 一 bar
+        # at ~0.13*rh. Do not loosen without a visual pass — see CLAUDE.md
+        # 刪除線 for the full argument and the stroke_w-normalized fix.
         if len(bands) == 1:
             a, b = bands[0]
             band_h = b - a + 1

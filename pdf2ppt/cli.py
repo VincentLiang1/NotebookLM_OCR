@@ -34,26 +34,23 @@ def is_watermark(line, style, img_w: int, img_h: int) -> bool:
             and style.bg_rgb is not None)
 
 
-WIPE_PAD_PX = 2      # absolute pad for the anti-aliased fringe of the pill
+WIPE_PAD_PX = 2       # absolute pad for the anti-aliased fringe of the pill
+WIPE_INK_DIST = 40    # per-channel distance from bg that counts as ink (the
+                      # pill is faint, so this is looser than style.INK_DIST)
+WIPE_INK_FRAC = 0.01  # fraction of the strip's columns that must be inked
+                      # before a row counts — keeps stray AA from stretching
 
 
 def watermark_wipe(line, style, img=None) -> tuple[tuple, tuple]:
-    """Cover box for the watermark: extend left to also hide the logo icon
-    that sits before the text, and past the faint 'NotebookLM' pill.
+    """Cover box for the watermark: extend left to hide the logo icon before
+    the text, and down past the faint 'NotebookLM' pill.
 
-    The vertical extent is MEASURED on the render rather than taken as a fixed
-    multiple of the OCR box height. Two reasons the fixed version cannot
-    generalize: detector padding is inconsistent (CLAUDE.md's box-padding
-    invariant), and the logo icon is taller than the text band yet sits
-    entirely outside the OCR box, so nothing about the box predicts it. The
-    hand-fitted 0.12h bottom margin left only ~0.02h — under a pixel — over
-    the pill bottom the docstring itself measured at y1+0.10h.
-
-    Scan the wipe's own column strip for ink, pad it, then clamp into
-    [tight, generous]: never tighter than the tuned box (user 2026-06-15:
-    「剛好遮住即可」), never wider than the 0.3h box that shipped before it, so
-    a failed scan degrades to known-good behaviour instead of eating slide
-    content."""
+    The vertical extent is MEASURED on the render, not taken as a multiple of
+    the OCR box height: detector padding is inconsistent (CLAUDE.md's
+    box-padding invariant) and the logo sits entirely outside the box, so
+    nothing about the box predicts it. The result is clamped into
+    [tight, wide] so a failed scan degrades to known-good behaviour instead of
+    eating slide content — see CLAUDE.md 浮水印遮擋範圍 for the calibration."""
     import numpy as np
 
     x0, y0, x1, y1 = line.bbox
@@ -61,27 +58,23 @@ def watermark_wipe(line, style, img=None) -> tuple[tuple, tuple]:
     lft, rgt = x0 - 1.8 * h, x1 + 0.3 * h
     tight_t, tight_b = y0 - 0.05 * h, y1 + 0.12 * h
     wide_t, wide_b = y0 - 0.35 * h, y1 + 0.40 * h
-    if img is None or style.bg_rgb is None:
-        return (lft, tight_t, rgt, tight_b), style.bg_rgb
+    ink_t, ink_b = tight_t, tight_b
 
-    ih, iw = img.shape[:2]
-    xs0, xs1 = max(0, int(lft)), min(iw, int(rgt))
-    win_t, win_b = max(0, int(wide_t)), min(ih, int(wide_b))
-    if xs1 - xs0 < 4 or win_b - win_t < 4:
-        return (lft, tight_t, rgt, tight_b), style.bg_rgb
+    if img is not None and style.bg_rgb is not None:
+        ih, iw = img.shape[:2]
+        xs0, xs1 = max(0, int(lft)), min(iw, int(rgt))
+        win_t, win_b = max(0, int(wide_t)), min(ih, int(wide_b))
+        if xs1 - xs0 >= 4 and win_b - win_t >= 4:
+            strip = img[win_t:win_b, xs0:xs1].astype(int)
+            bg = np.asarray(style.bg_rgb, dtype=int)
+            inked = ((np.abs(strip - bg).max(axis=2) > WIPE_INK_DIST).sum(axis=1)
+                     > max(1, int(WIPE_INK_FRAC * (xs1 - xs0))))
+            rows = np.flatnonzero(inked)
+            if rows.size:
+                ink_t = win_t + int(rows[0]) - WIPE_PAD_PX
+                ink_b = win_t + int(rows[-1]) + WIPE_PAD_PX
 
-    strip = img[win_t:win_b, xs0:xs1].astype(int)
-    bg = np.asarray(style.bg_rgb, dtype=int)
-    # a row counts as inked once ~1% of the strip differs from the background;
-    # the threshold keeps stray anti-aliasing from stretching the box
-    inked = ((np.abs(strip - bg).max(axis=2) > 40).sum(axis=1)
-             > max(1, int(0.01 * (xs1 - xs0))))
-    rows = np.flatnonzero(inked)
-    if rows.size:
-        ink_t = win_t + int(rows[0]) - WIPE_PAD_PX
-        ink_b = win_t + int(rows[-1]) + WIPE_PAD_PX
-    else:
-        ink_t, ink_b = tight_t, tight_b
+    # the clamp is an identity on the tight fallback, so one exit covers both
     top = min(tight_t, max(wide_t, ink_t))
     bot = max(tight_b, min(wide_b, ink_b))
     return (lft, top, rgt, bot), style.bg_rgb
