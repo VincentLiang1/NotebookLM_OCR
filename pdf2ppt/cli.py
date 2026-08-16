@@ -34,16 +34,57 @@ def is_watermark(line, style, img_w: int, img_h: int) -> bool:
             and style.bg_rgb is not None)
 
 
-def watermark_wipe(line, style) -> tuple[tuple, tuple]:
+WIPE_PAD_PX = 2      # absolute pad for the anti-aliased fringe of the pill
+
+
+def watermark_wipe(line, style, img=None) -> tuple[tuple, tuple]:
     """Cover box for the watermark: extend left to also hide the logo icon
-    that sits before the text. The OCR box already brackets the watermark
-    (its top sits ~0.16h above the pill, its bottom ~0.1h below the text),
-    so only a small vertical margin is needed — keep the box just tall
-    enough to cover the logo + 'NotebookLM' pill, not the slack above/below
-    (measured on the render: pill top y0+0.16h, faint pill bottom y1+0.1h)."""
+    that sits before the text, and past the faint 'NotebookLM' pill.
+
+    The vertical extent is MEASURED on the render rather than taken as a fixed
+    multiple of the OCR box height. Two reasons the fixed version cannot
+    generalize: detector padding is inconsistent (CLAUDE.md's box-padding
+    invariant), and the logo icon is taller than the text band yet sits
+    entirely outside the OCR box, so nothing about the box predicts it. The
+    hand-fitted 0.12h bottom margin left only ~0.02h — under a pixel — over
+    the pill bottom the docstring itself measured at y1+0.10h.
+
+    Scan the wipe's own column strip for ink, pad it, then clamp into
+    [tight, generous]: never tighter than the tuned box (user 2026-06-15:
+    「剛好遮住即可」), never wider than the 0.3h box that shipped before it, so
+    a failed scan degrades to known-good behaviour instead of eating slide
+    content."""
+    import numpy as np
+
     x0, y0, x1, y1 = line.bbox
-    h = y1 - y0
-    return (x0 - 1.8 * h, y0 - 0.05 * h, x1 + 0.3 * h, y1 + 0.12 * h), style.bg_rgb
+    h = max(1.0, y1 - y0)
+    lft, rgt = x0 - 1.8 * h, x1 + 0.3 * h
+    tight_t, tight_b = y0 - 0.05 * h, y1 + 0.12 * h
+    wide_t, wide_b = y0 - 0.35 * h, y1 + 0.40 * h
+    if img is None or style.bg_rgb is None:
+        return (lft, tight_t, rgt, tight_b), style.bg_rgb
+
+    ih, iw = img.shape[:2]
+    xs0, xs1 = max(0, int(lft)), min(iw, int(rgt))
+    win_t, win_b = max(0, int(wide_t)), min(ih, int(wide_b))
+    if xs1 - xs0 < 4 or win_b - win_t < 4:
+        return (lft, tight_t, rgt, tight_b), style.bg_rgb
+
+    strip = img[win_t:win_b, xs0:xs1].astype(int)
+    bg = np.asarray(style.bg_rgb, dtype=int)
+    # a row counts as inked once ~1% of the strip differs from the background;
+    # the threshold keeps stray anti-aliasing from stretching the box
+    inked = ((np.abs(strip - bg).max(axis=2) > 40).sum(axis=1)
+             > max(1, int(0.01 * (xs1 - xs0))))
+    rows = np.flatnonzero(inked)
+    if rows.size:
+        ink_t = win_t + int(rows[0]) - WIPE_PAD_PX
+        ink_b = win_t + int(rows[-1]) + WIPE_PAD_PX
+    else:
+        ink_t, ink_b = tight_t, tight_b
+    top = min(tight_t, max(wide_t, ink_t))
+    bot = max(tight_b, min(wide_b, ink_b))
+    return (lft, top, rgt, bot), style.bg_rgb
 
 
 def parse_pages(spec: str, page_count: int) -> list[int]:
@@ -80,14 +121,22 @@ def main(argv: list[str] | None = None) -> int:
                     help="keep OCR output as-is instead of normalizing simplified strays to Traditional Chinese")
     ap.add_argument("--pages", default=None, help="page selection, e.g. 1-5,8")
     ap.add_argument("--min-score", type=float, default=0.5, help="drop OCR lines below this confidence")
-    ap.add_argument("--no-cover", action="store_true",
-                    help="disable the precise cover machinery (per-row/stacked "
-                         "trims, two-tone banners, arc covers); each text shape "
-                         "just carries its own block color as fill. Default: "
-                         "cover blocks are ON")
-    # deprecated: cover is the default now; accepted so old commands/GUI
-    # presets don't error, but it has no effect
-    ap.add_argument("--cover", action="store_true", help=argparse.SUPPRESS)
+    # A real pair, not a flag plus an inert twin: an accepted-but-unread
+    # --cover made `--no-cover --cover` silently mean no-cover, and it also
+    # stole the --c/--co abbreviations from the flag that does something.
+    cov = ap.add_mutually_exclusive_group()
+    cov.add_argument("--no-cover", dest="no_cover", action="store_true",
+                     help="carry each block's fill on its own text shape "
+                          "instead of a separate cover rectangle, so the "
+                          "background travels with the text when you move it "
+                          "in PowerPoint. Two-tone banner lines keep their "
+                          "own cover rects either way (one shape cannot hold "
+                          "two fills), and lines with no usable background "
+                          "estimate stay transparent")
+    cov.add_argument("--cover", dest="no_cover", action="store_false",
+                     help="separate cover rectangles under transparent text "
+                          "boxes (the default)")
+    ap.set_defaults(no_cover=False)
     ap.add_argument("--keep-watermark", action="store_true",
                     help="keep the bottom-right NotebookLM watermark instead of wiping it")
     ap.add_argument("--keep-tiny-text", action="store_true",
@@ -137,7 +186,7 @@ def main(argv: list[str] | None = None) -> int:
             kept_lines, kept_styles = [], []
             for ln, st in zip(lines, styles):
                 if is_watermark(ln, st, img.shape[1], img.shape[0]):
-                    wipes.append(watermark_wipe(ln, st))
+                    wipes.append(watermark_wipe(ln, st, img))
                 else:
                     kept_lines.append(ln)
                     kept_styles.append(st)
@@ -151,7 +200,11 @@ def main(argv: list[str] | None = None) -> int:
         n_tiny = 0
         if not args.keep_tiny_text:
             lines, styles, n_tiny = drop_illegible_lines(lines, styles)
-        n_tiny += n_unrepr
+        # n_unrepr is NOT folded into n_tiny: drop_unreproducible is not
+        # controlled by --keep-tiny-text, and its lines (icons read as
+        # letters, markup strikethroughs, sub/superscript formulas) are
+        # neither tiny nor blurry — reporting them as such told users the
+        # flag they had just passed had not taken effect
         kept_ids = {id(ln) for ln in lines}
         dropped_lines = [ln for ln in before_drop if id(ln) not in kept_ids]
 
@@ -184,6 +237,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"page {idx + 1} ({n}/{len(page_indices)}): {len(lines)} lines, "
               f"{len(blocks)} shapes"
               + (f", {n_tiny} tiny/blurry left as image" if n_tiny else "")
+              + (f", {n_unrepr} unreproducible left as image" if n_unrepr else "")
               + (f", {len(wipes)} watermark wiped" if wipes else ""))
 
         if args.debug:

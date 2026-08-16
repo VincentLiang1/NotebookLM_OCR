@@ -87,7 +87,7 @@ class DeckBuilder:
         # to the blank ink gap between them, measured on the render.
         if img is not None:
             self._trim_row_overlaps(blocks, img)
-            self._trim_stacked_overlaps(blocks, img)
+            self._trim_stacked_overlaps(blocks, img, px_per_pt=img_w / 960.0)
 
         # arc covers go in first: two arc lines on the same ribbon
         # interpenetrate, and a later line's cover strips must not paint
@@ -132,20 +132,7 @@ class DeckBuilder:
                 # detector boxes carry large vertical slack that would paint
                 # over diagram lines above/below the text. The text frame
                 # top is decoupled from the cover top via a margin inset.
-                if len(block.lines) == 1 and block.style.highlight_removed:
-                    # a dropped inline highlight box spans (and slightly
-                    # overhangs) the OCR box; cover generously past it so no
-                    # source fill leaks past the glyph band (user: "remove
-                    # it cleanly, no leak")
-                    over = max(8.0, 0.12 * (y1 - y0))
-                    cov_y0, cov_y1 = y0 - over, y1 + over
-                elif len(block.lines) == 1 and block.style.ink_bottom_px:
-                    cov_h = block.style.ink_bottom_px - block.style.ink_top_px
-                    pad_v = max(4.0, 0.08 * cov_h)
-                    cov_y0 = block.style.ink_top_px - pad_v
-                    cov_y1 = block.style.ink_bottom_px + pad_v
-                else:
-                    cov_y0, cov_y1 = y0 - COVER_PAD_PX, y1 + COVER_PAD_PX
+                cov_y0, cov_y1 = self._cover_band(block, img_w / 960.0)
                 ink_top = ey(block.style.ink_top_px)
                 text_top = ink_top - nudge
                 top = min(text_top, ey(cov_y0))
@@ -161,21 +148,33 @@ class DeckBuilder:
             # a transparent box exposing the raster (user 2026-06-15).
             fill = block.style.bg_rgb is not None
             bg_segs = block.style.bg_segments
-            if not tilted and self.cover and bg_segs and len(bg_segs) >= 2:
+            if not tilted and bg_segs and len(bg_segs) >= 2:
                 # two-tone banner: a FULL-WIDTH base cover in the rightmost
                 # fill color (so the seam can never expose the raster even
                 # if a cover is nudged), then each earlier segment painted
                 # on top up to its boundary. The transparent text box on top
                 # carries per-segment color runs (white on the dark fill,
                 # dark on the light fill).
+                # NOT gated on self.cover: one shape cannot carry two fills,
+                # and style.py records bg_rgb as the RIGHTMOST segment only.
+                # Skipping this in --no-cover would flood-fill the whole line
+                # with the right-hand color while the runs keep painting the
+                # left half's white text on it — p2's 採用 BSD 授權… would
+                # go white-on-white and lose the dark raster underneath too.
                 cv_top, cv_h = Emu(max(0, ey(cov_y0))), Emu(ey(cov_y1) - ey(cov_y0))
-                full_l = ex(block.bbox[0] - COVER_PAD_PX)
-                full_r = ex(block.bbox[2] + COVER_PAD_PX)
+                # honour the same cover_x0_px/cover_x1_px narrowing the
+                # single-cover path applies, so a banner whose box overhangs
+                # a leading status icon does not paint over it, and keep every
+                # segment inside the (possibly row-trimmed) block width
+                full_l, full_r = left, left + width
                 covers = [(full_l, full_r, bg_segs[-1][2])]
                 for si in range(len(bg_segs) - 1):
                     sx0, sx1, sbg = bg_segs[si]
                     cl = ex(sx0 - COVER_PAD_PX) if si == 0 else ex(sx0)
-                    covers.append((cl, ex(sx1), sbg))
+                    cl = max(full_l, min(cl, full_r))
+                    cr = max(cl, min(ex(sx1), full_r))
+                    if cr > cl:
+                        covers.append((cl, cr, sbg))
                 for si, (cl, cr, sbg) in enumerate(covers):
                     cov = slide.shapes.add_shape(
                         MSO_SHAPE.RECTANGLE, Emu(max(0, cl)), cv_top,
@@ -191,12 +190,18 @@ class DeckBuilder:
                 height = ey(cov_y1) - top
                 margin_top = 0
             elif not tilted and self.cover and fill and text_top < ey(cov_y0):
-                # the leading-compensation zone above the ink would carry
-                # the fill onto the previous line's descenders in tight
-                # rows; split into a cover rect plus a transparent text box.
-                # Only in cover mode: in --no-cover mode the color must stay
-                # on the text shape itself (move the text, the bg moves with
-                # it), so we never split off a standalone cover rect there.
+                # the leading-compensation zone above the ink would carry the
+                # fill onto the previous line's descenders; split into a cover
+                # rect plus a transparent text box so the fill stops at the
+                # cover band. NOTE the guard is true for EVERY non-tilted
+                # filled line, not just tight rows: nudge = 0.20em always
+                # exceeds the cover pad (max(4px, 0.08*ink_h) ~= 0.09em), so
+                # cover mode emits one cover rect + one transparent text box
+                # per line by design. --no-cover deliberately keeps the color
+                # on the text shape instead (move the text, the bg moves with
+                # it) and pays for it with a fill that starts 0.20em above the
+                # ink — _cover_band folds that overshoot into the painted band
+                # so the overlap trims see the real extent.
                 cover = slide.shapes.add_shape(
                     MSO_SHAPE.RECTANGLE, Emu(max(0, left)),
                     Emu(max(0, ey(cov_y0))),
@@ -254,6 +259,12 @@ class DeckBuilder:
                 if pieces is None:
                     pieces = [(line.text, block.style.text_rgb)]
                 tail = block.style.superscript_tail if len(block.lines) == 1 else 0
+                # strikethrough is measured per line, but a merged block keeps
+                # only its first line's style — without this gate --merge-lines
+                # strikes every line of the block (p9's ~~作廢內容~~ merged with
+                # the same-size lines under it). Same single-line condition the
+                # runs / superscript_tail above already apply.
+                strike = block.style.strikethrough and len(block.lines) == 1
                 pieces = _mark_superscript(pieces, tail)
                 for piece, rgb, sup in pieces:
                     run = para.add_run()
@@ -264,11 +275,47 @@ class DeckBuilder:
                     font.name = _latin_font(block.style.font_pt)  # <a:latin>
                     font.color.rgb = RGBColor(*rgb)
                     rPr = run._r.get_or_add_rPr()
-                    if block.style.strikethrough:
+                    if strike:
                         rPr.set("strike", "sngStrike")
                     if sup:                       # raised footnote marker
                         rPr.set("baseline", "55000")
                     _set_east_asian_font(run, self.font_name)
+
+    def _cover_band(self, block, px_per_pt: float) -> tuple[float, float]:
+        """The vertical band this block's solid fill actually paints, image px.
+
+        Cover height follows the glyph ink band, not the OCR box: detector
+        boxes carry large vertical slack that would paint over diagram lines
+        above/below the text. Returns the trim override when one was written.
+
+        In --no-cover the fill lives on the text shape itself, which starts a
+        LEADING_COMP em above the ink so the glyphs land on the raster — the
+        band therefore starts there too. Reporting the pad-only band in that
+        mode would make the overlap trims aim at a boundary the fill then
+        crosses anyway (0.2em is ~0.8*font_pt px at 200dpi, i.e. 19px at 24pt
+        against a 6px trim clearance)."""
+        style = block.style
+        if style.cover_y0_px is not None and style.cover_y1_px is not None:
+            return style.cover_y0_px, style.cover_y1_px
+        _, y0, _, y1 = block.bbox
+        single = len(block.lines) == 1
+        if single and style.highlight_removed:
+            # a dropped inline highlight box spans (and slightly overhangs)
+            # the OCR box; cover generously past it so no source fill leaks
+            # past the glyph band (user: "remove it cleanly, no leak")
+            over = max(8.0, 0.12 * (y1 - y0))
+            cov_y0, cov_y1 = y0 - over, y1 + over
+        elif single and style.ink_bottom_px:
+            cov_h = style.ink_bottom_px - style.ink_top_px
+            pad_v = max(4.0, 0.08 * cov_h)
+            cov_y0 = style.ink_top_px - pad_v
+            cov_y1 = style.ink_bottom_px + pad_v
+        else:
+            cov_y0, cov_y1 = y0 - COVER_PAD_PX, y1 + COVER_PAD_PX
+        if not self.cover and not style.vertical and style.ink_top_px:
+            cov_y0 = min(cov_y0, style.ink_top_px
+                         - LEADING_COMP * style.font_pt * px_per_pt)
+        return cov_y0, cov_y1
 
     @staticmethod
     def _trim_row_overlaps(blocks, img) -> None:
@@ -288,6 +335,13 @@ class DeckBuilder:
                 ax0, ay0, ax1, ay1 = a.bbox
                 bx0, by0, bx1, by1 = b.bbox
                 if bx0 >= ax1 - COVER_PAD_PX:
+                    continue
+                if bx1 <= ax1 + COVER_PAD_PX:
+                    # b sits INSIDE a's x-range rather than overlapping its
+                    # right edge — not the seam this trim is for. Splitting at
+                    # the midpoint would gut the wide box and invert the narrow
+                    # one into x0 > x1, i.e. a negative-width shape that makes
+                    # PowerPoint declare the file corrupt.
                     continue
                 oy = min(ay1, by1) - max(ay0, by0)
                 if oy < 0.6 * min(ay1 - ay0, by1 - by0):
@@ -314,18 +368,35 @@ class DeckBuilder:
                     if runs:
                         lo, hi = max(runs, key=lambda r: r[1] - r[0])
                         boundary = x_lo + (lo + hi) / 2
-                a._bbox = (ax0, ay0,
-                           min(ax1, boundary - COVER_PAD_PX), ay1)
-                b._bbox = (max(bx0, boundary + COVER_PAD_PX), by0, bx1, by1)
+                # the blank-gap scan window reaches past both boxes, so the
+                # winning run can put `boundary` outside the overlap; keep the
+                # split inside both boxes and never emit an inverted bbox
+                lo_b, hi_b = ax0 + 2 * COVER_PAD_PX, bx1 - 2 * COVER_PAD_PX
+                if hi_b <= lo_b:
+                    continue
+                boundary = min(max(boundary, lo_b), hi_b)
+                new_ax1 = min(ax1, boundary - COVER_PAD_PX)
+                new_bx0 = max(bx0, boundary + COVER_PAD_PX)
+                if new_ax1 <= ax0 or new_bx0 >= bx1:
+                    continue
+                a._bbox = (ax0, ay0, new_ax1, ay1)
+                b._bbox = (new_bx0, by0, bx1, by1)
 
-    @staticmethod
-    def _trim_stacked_overlaps(blocks, img) -> None:
+    def _trim_stacked_overlaps(self, blocks, img, px_per_pt: float) -> None:
         """Two vertically-stacked single-line boxes whose covers overlap: the
         upper cover's bottom paints over the lower line's glyph tops (p8 單一
         over 主專案, p10 Legacy over Codebase — the detector boxes overlap in
         y though the glyphs don't). Trim each cover to the blank-row gap
-        between the two glyph bands so neither paints over the other. Cover y
-        comes from ink_top_px/ink_bottom_px, so trim those."""
+        between the two glyph bands so neither paints over the other.
+
+        Trims the PAINTED band (Style.cover_y0_px/cover_y1_px), not the ink
+        bounds. Trimming the ink bounds could not actually separate the
+        covers: add_slide re-derives the band as ink +/- max(4px, 0.08*ink_h),
+        so it handed back up to 17px at 60pt of the clearance this pass had
+        just bought — the p8/p10 fix silently stopped working above ~20pt
+        (measured re-overlap: +0.96px at 24pt, +2.11px at 28pt, +5.6px at
+        40pt). Writing the band directly also lets the highlight_removed
+        branch (which ignores the ink bounds entirely) be trimmed at all."""
         import numpy as np
 
         def itop(b):
@@ -347,11 +418,17 @@ class DeckBuilder:
                 if ox < 0.5 * min(ax1 - ax0, bx1 - bx0):
                     continue
                 up, lo = (a, b) if itop(a) <= itop(b) else (b, a)
-                if ibot(up) <= itop(lo):
-                    continue  # covers already clear
+                up_y0, up_y1 = self._cover_band(up, px_per_pt)
+                lo_y0, lo_y1 = self._cover_band(lo, px_per_pt)
+                if up_y1 <= lo_y0:
+                    continue  # painted bands already clear
                 x_lo = max(0, int(max(ax0, bx0)))
                 x_hi = min(img.shape[1], int(min(ax1, bx1)))
-                y_lo, y_hi = int(itop(lo)) - 6, int(ibot(up)) + 6
+                # the gap runs between the two INK bands; when only the pads
+                # overlap that gap is ibot(up)..itop(lo), when the ink bands
+                # themselves overlap it is the other way round
+                y_lo = int(min(itop(lo), ibot(up))) - 6
+                y_hi = int(max(itop(lo), ibot(up))) + 6
                 bg = up.style.bg_rgb or lo.style.bg_rgb
                 boundary = (itop(lo) + ibot(up)) / 2
                 if (bg is not None and x_hi - x_lo >= 8
@@ -379,10 +456,18 @@ class DeckBuilder:
                 # the cracked machine) — then the upper cover paints over
                 # 主專案's top and 主專案's own cover is pushed off its glyphs.
                 # Clamp so the boundary never drops below the lower glyph top;
-                # only the (over-measured) upper cover is trimmed.
+                # only the (over-measured) upper cover is trimmed. Keep the
+                # upper's own ink covered when the two ink bands do clear.
                 boundary = min(boundary, itop(lo) - COVER_PAD_PX)
-                up.style.ink_bottom_px = min(ibot(up), boundary - COVER_PAD_PX)
-                lo.style.ink_top_px = max(itop(lo), boundary + COVER_PAD_PX)
+                boundary = max(boundary, min(ibot(up), itop(lo) - COVER_PAD_PX))
+                up.style.cover_y0_px = up_y0
+                up.style.cover_y1_px = min(up_y1, boundary)
+                lo.style.cover_y1_px = lo_y1
+                # in --no-cover the lower fill lives on the text shape, whose
+                # top is pinned to the glyph position — it cannot be pushed
+                # down, so record the band as it will actually be painted
+                lo.style.cover_y0_px = (max(lo_y0, boundary) if self.cover
+                                        else lo_y0)
 
     @staticmethod
     def _arc_geometry(block, px_per_pt: float, img=None):
@@ -515,12 +600,15 @@ class DeckBuilder:
         """Cover strips tracing the arc band (drawn before ALL arc text)."""
         import numpy as np
 
-        ln, x0, y0, x1, y1, glyph_h, y_mid, y_edge = \
-            self._arc_geometry(block, px_per_pt, img)
         style = block.style
-
+        # bail BEFORE the geometry probe: _arc_geometry re-scans ink runs at
+        # three probe points on the full-resolution render, and in --no-cover
+        # every bit of that is thrown away
         if not (self.cover and style.bg_rgb is not None):
             return
+
+        ln, x0, y0, x1, y1, glyph_h, y_mid, y_edge = \
+            self._arc_geometry(block, px_per_pt, img)
 
         bg = np.asarray(style.bg_rgb, dtype=int)
         import math
@@ -656,7 +744,16 @@ class DeckBuilder:
             seg.rotation = ang
             seg.shadow.inherit = False
             seg.line.fill.background()
-            seg.fill.background()
+            if self.cover or style.bg_rgb is None:
+                # cover mode already laid the 12 along-arc cover strips down
+                seg.fill.background()
+            else:
+                # --no-cover draws no arc strips, so the segment has to hide
+                # the raster arc text itself — otherwise p3's ribbon is the
+                # one place in the deck where the original glyphs still ghost
+                # through under the editable copy
+                seg.fill.solid()
+                seg.fill.fore_color.rgb = RGBColor(*style.bg_rgb)
             tf = seg.text_frame
             tf.word_wrap = False
             tf.auto_size = None

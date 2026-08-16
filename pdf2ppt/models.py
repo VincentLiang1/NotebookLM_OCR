@@ -62,6 +62,15 @@ class Style:
     clamp_pt: float | None = None
     ink_top_px: float = 0.0     # top of the actual glyph ink, image px
     ink_bottom_px: float = 0.0  # bottom of the actual glyph ink, image px
+    # the vertical band this block's solid fill actually paints, image px.
+    # Written by the builder's stacked-overlap trim; None means "derive it
+    # from the ink band". It exists because the derived band adds a pad on
+    # top of the ink bounds (max(4px, 0.08*ink_h), i.e. up to 17px at 60pt)
+    # while the trim only bought COVER_PAD_PX of clearance — trimming the
+    # ink bounds therefore could not stop the pad from crossing back over
+    # the neighbour's glyphs. Trimming the painted band directly can.
+    cover_y0_px: float | None = None
+    cover_y1_px: float | None = None
     # horizontal cover bounds trimmed past a leading/trailing adjacent
     # graphic of a different color the OCR box overhangs (p13: the red ✗
     # left of 'Not That'); None means use the box edge as usual
