@@ -20,6 +20,16 @@ python pdf2ppt_gui_2.py                # 圖形介面（在專案根目錄執行
 
 本專案沒有自動化測試；驗證方式是轉換範例 PDF 並與參考 PPTX 比對（見下方「驗證」）。
 
+## 協作方式
+
+以下**必須當場生效**，所以抄在這裡——完整理由、沿革與災情紀錄在 `docs/dev/collaboration.md`，只寫在那裡等於沒寫（要有人想到去讀才載得進來）。
+
+- ⚠️ **使用者說「記住 / 記憶下來」= 寫進 repo，不是寫進 Claude Code 的記憶功能**（2026-08-17 自 `meeting-scribe` 移植）：記憶目錄在 `%USERPROFILE%\.claude\projects\<由專案路徑編出來的名字>\`、**在 repo 之外且 git 不追蹤**，而使用者換電腦的方式是**複製專案資料夾**——寫在那裡的東西一份都帶不走，光是把專案搬到別的資料夾，那個依路徑編出來的目錄名就對不上了。聽到時：**必須當場生效**的規則寫進**這一份**（只有 `CLAUDE.md` 每次自動載入）、領域細節寫 `docs/dev/` 並在這裡留一句指路；然後**一併提交推送**，並**在回覆裡說清楚寫進哪個檔**，好讓他知道換機器之後還在。⚠️ 同理，全域的 `C:\Users\vli\.claude\CLAUDE.md` 也帶不走——跨專案規則若對本專案是關鍵的，就在這裡再寫一份。沿革見 `docs/dev/collaboration.md` §1。
+- **回覆使用者一律用繁體中文**（台灣用語），不必等他提醒；專有名詞、API 名稱、程式碼、路徑、log 原文照原樣保留。使用者的**內容領域也是繁中**——這正是 OCR 必須用 PP-OCRv5 **server** 辨識模型而非預設 v4 mobile 的理由。
+- **git commit 訊息一律繁體中文**（使用者 2026-06-11 指示）：技術名詞、函式名、常數、px 數值保留原文；訊息內**避免雙引號**（PowerShell 5.1 會截斷），結尾加 `Co-Authored-By`。
+- **修正完成並驗證後自動 commit + push，不要再問**（使用者 2026-06-11 指示）；**功能新增或修改時 `README.md` 要在同一輪同步更新後一起提交**（判準：使用者看得到的行為變了沒有）。⚠️ **`CLAUDE.md` 是被 git 追蹤的**——`.gitignore` 只擋 `*.pdf`／`*.pptx`／`verify/`／`*.debug.*` 那幾類，提交時不要漏掉它。
+- **中文輸出字型是 Microsoft YaHei，不要「好心」換成 Microsoft JhengHei**（使用者 2026-06-11 明確選定，先前為 Noto Sans TC）：他是繁中使用者，但看的是 PowerPoint 裡的渲染結果。⚠️ 這個選擇有下游後果——`style.py` 的 `_measure_em()` 固定載入 `msyh.ttc` 量寬度，整套寬度夾制、snap 與標題足跡門檻都是照 YaHei 字寬校準的，換字型不會跟著換度量衡。
+
 ## 架構
 
 每頁的處理管線（由 `pdf2ppt/cli.py` 調度）：
@@ -116,10 +126,17 @@ python pdf2ppt_gui_2.py                # 圖形介面（在專案根目錄執行
 ## 驗證
 
 1. `python pdf2ppt.py "SOURCE.pdf" -o generated.pptx`
-2. `python tools/compare_pptx.py generated.pptx "SOURCE.pptx"` — 真實內容行預期 100% 召回；被 `drop_illegible_lines` 刻意丟棄的插圖雜訊行（參考檔若未過濾會含有）列為 MISS 屬預期，逐條確認 MISS 都是雜訊/留圖行即可
+2. `python tools/compare_pptx.py generated.pptx "SOURCE.pptx"` — 真實內容行預期 100% 召回；被 `drop_illegible_lines` 刻意丟棄的插圖雜訊行（參考檔若未過濾會含有）列為 MISS 屬預期，逐條確認 MISS 都是雜訊/留圖行即可。⚠️ **`SOURCE.pptx` 只是「文字」基準，絕不可拿來校準樣式**：它的粗體／字級旗標是從我們自己更早的輸出繼承來的（使用者只修文字、不修樣式），2026-06-12 那批漏判的粗體**在參考檔裡同樣是錯的**；樣式的真值只有一個——PDF 渲染圖的目視比對。來歷見 `docs/dev/collaboration.md` §5
 3. 視覺驗證：用 PowerPoint COM 把投影片匯出成 PNG（`$pp = New-Object -ComObject PowerPoint.Application; ...Slides.Item($i).Export(path,"PNG",1376,768)`），與 `pymupdf` 的頁面渲染圖上下並排比對，比對圖放 `verify/`。
 4. **不要重新產生 `SOURCE.pptx`**（使用者指示 2026-06-12）：每輪修正只產生並保留 `generated.pptx` 給使用者自行驗證；`SOURCE.pptx` 由使用者管理、僅作為步驟 2 的比對基準。
-5. **刪除其餘驗證產物**（使用者指示）：`verify/` 內的比對圖、根目錄的 `*.debug.json`、`*.debug.p*.png`、基準檔等，全部清掉；`SOURCE.pdf`/`SOURCE.pptx`/`generated.pptx` 保留。
+5. **刪除其餘驗證產物**（使用者指示，⚠️ **這條失守過兩次**：2026-06-12、2026-06-14，兩次成因一模一樣）：**不要憑記憶手打片段的 `rm`**——兩次都是漏了 `--debug` 的疊圖 `*.debug.p*.png`，而且 `.gitignore` 已經涵蓋這些檔，所以 `git status` 看起來乾淨、**把殘留藏起來了**（**乾淨的 git status 不等於乾淨的工作目錄**）。每一輪的**最後一個動作**跑一次完整掃描：
+
+   ```bash
+   rm -rf verify/ *.debug.json *.debug.p*.png dbg*.pptx dbg.* _dbg_*.py nul.* *.tmp.png
+   ls -1   # 強制：目視確認只剩原始碼 + SOURCE.pdf/SOURCE.pptx + 要交付的 .pptx
+   ```
+
+   `ls -1` 那步不可省——它才是抓得到「漏掉一個 glob」的那一步。永遠不要刪 `SOURCE.pdf`、`SOURCE.pptx` 與要交給使用者驗收的產出 `.pptx`；臨時檔一律寫到 scratchpad 目錄，不要落在專案裡。見 `docs/dev/collaboration.md` §6。
 
 ## 環境注意事項
 
@@ -127,4 +144,4 @@ python pdf2ppt_gui_2.py                # 圖形介面（在專案根目錄執行
 - Windows 11、Python 3.14；主控台是 cp950 — 印中文的腳本需要 `python -X utf8`（cli.py 自己會重設 stdout）
 - PowerShell 會吃掉 `python -c` 單行指令中的雙引號；這類情況請改用 Bash 工具或腳本檔。git commit 訊息中的雙引號也會被截斷 — 訊息避免使用雙引號
 - 中文輸出字型預設 Microsoft YaHei（之前為 Noto Sans TC）；**所有拉丁字元一律輸出 Arial，但 ≥28pt 的大標題拉丁改用 Arial Narrow**（使用者指示 2026-06-12：來源字型拉丁較窄，p4「Layer 0: 三層架構分工與 Karpathy 模式知識庫」用 Arial 渲染明顯過長 — 改字型、不可降字級）：每個 run 設 `<a:latin>`=Arial/Arial Narrow（依 `NARROW_MIN_PT`） + `<a:ea>`=YaHei，PowerPoint 按字元類別自動選用，中英混排同行雙字型、不需拆 run；`--font` 只控制東亞字型。寬度量測用 `C:\Windows\Fonts\msyh.ttc`（純拉丁且 ≥3 字的行改用 arial.ttf、出生估字級 ≥28 的行拉丁段改用 ARIALN.TTF 與輸出一致 — 2 字短串的寬度夾制騎在 snap 平手點上，曾把 p8「98」籌片從 20pt 推成 24pt 粗體；`_cjk_band_height` 的單字映射一律維持 YaHei 度量、不可改）；本機另有 Noto Sans TC 在 `%LOCALAPPDATA%\Microsoft\Windows\Fonts\` 作為備援
-- 修正完成並驗證後要自動 commit + push（使用者指示）；若是功能新增或修改，README.md 也要在同一輪同步更新後一起提交
+- 提交與推送、回覆語言、字型選擇等協作規則見上方「協作方式」章節
