@@ -7,6 +7,7 @@ import sys
 import time
 from pathlib import Path
 
+import numpy as np
 import pymupdf
 
 from .blocks import (clamp_row_neighbors, drop_illegible_lines, drop_unreproducible,
@@ -20,14 +21,25 @@ from .render import render_page
 from .style import estimate_style
 
 
+# The product renames itself and old exports keep the old mark, so this is a
+# list rather than one literal: 'NotebookLM' up to mid-2026, 'Gemini Notebook'
+# after it (spelled without the space because the match runs on de-spaced
+# text). Compared case-folded: the mark is set small and light, where the rec
+# model's casing is the least trustworthy part of an otherwise easy read.
+WATERMARK_MARKS = ("notebooklm", "gemininotebook")
+WATERMARK_STRAY_MAX = 6  # chars OCR may glue on ahead of the mark
+
+
 def is_watermark(line, style, img_w: int, img_h: int) -> bool:
-    """The NotebookLM watermark: logo + 'NotebookLM' in the bottom-right
-    corner (OCR sometimes merges the logo AND the faint page-id stamp into the
-    text — p1 read 'P92F2NotebookLM', 15 chars, slipping past the old 13 cap
-    and leaving the watermark unwiped). Allow a few leading stray chars; the
-    bottom-right position gate keeps this from matching real content."""
-    text = line.text.replace(" ", "")
-    if not text.endswith("NotebookLM") or len(text) > 16:
+    """The export watermark: logo + brand name in the bottom-right corner.
+
+    Keyed on the brand name because the corner gate alone cannot carry it — a
+    full-width caption band reaches into the same corner. OCR sometimes merges
+    the logo AND the faint page-id stamp into the text ('P92F2NotebookLM'), so
+    a few leading stray chars are allowed before the mark."""
+    text = line.text.replace(" ", "").casefold()
+    mark = next((m for m in WATERMARK_MARKS if text.endswith(m)), None)
+    if mark is None or len(text) - len(mark) > WATERMARK_STRAY_MAX:
         return False
     x0, y0, x1, y1 = line.bbox
     return (y0 > 0.85 * img_h and x1 > 0.65 * img_w
@@ -37,46 +49,105 @@ def is_watermark(line, style, img_w: int, img_h: int) -> bool:
 WIPE_PAD_PX = 2       # absolute pad for the anti-aliased fringe of the pill
 WIPE_INK_DIST = 40    # per-channel distance from bg that counts as ink (the
                       # pill is faint, so this is looser than style.INK_DIST)
-WIPE_INK_FRAC = 0.01  # fraction of the strip's columns that must be inked
-                      # before a row counts — keeps stray AA from stretching
+WIPE_INK_FRAC = 0.05  # columns of the strip a row needs inked to count as part
+                      # of the mark: a page rule crossing the strip inks 1-2%
+                      # of them, the mark's thinnest row (logo tips) inks 10%
+WIPE_COL_FRAC = 0.10  # the same test the other way round, over the band the
+                      # row walk just measured
+# Blank rows/columns, relative to the box height, that separate the mark from
+# unrelated page content. Left is loosest: it must bridge the word space ahead
+# of the brand name should the logo fall outside the box. Right is tightest:
+# nothing of the mark follows the last glyph, and the page's right rule runs
+# 8px past it.
+WIPE_GAP_FRAC, WIPE_GAP_L_FRAC, WIPE_GAP_R_FRAC = 0.15, 0.35, 0.10
+WIPE_GAP_MIN_PX = 4
+WIPE_SHRINK_FRAC = 0.3  # how far inside the OCR box a measured edge may pull:
+                        # the box overshoots the glyphs, far enough on both
+                        # decks measured to land on the page rule beside them
+
+
+def _contiguous_ink(inked, seed: int, gap: int) -> tuple[int, int]:
+    """Extent of the mark along one axis: walk outward from a row/column known
+    to be on it and stop at the first run of `gap` blank ones.
+
+    Taking the outermost inked row of the window instead would swallow
+    whatever else happens to sit near the corner — a card edge 14 rows above
+    the mark, the page's bottom rule 16 rows below it — and the clamp would
+    then paint over it. The mark's own parts (logo, text, pill) have no blank
+    row between them, so a small gap separates the two cases."""
+    lo = hi = seed
+    while True:
+        above = np.flatnonzero(inked[max(0, lo - gap):lo])
+        if not above.size:
+            break
+        lo = max(0, lo - gap) + int(above[0])
+    while True:
+        below = np.flatnonzero(inked[hi + 1:hi + 1 + gap])
+        if not below.size:
+            break
+        hi = hi + 1 + int(below[-1])
+    return lo, hi
 
 
 def watermark_wipe(line, style, img=None) -> tuple[tuple, tuple]:
-    """Cover box for the watermark: extend left to hide the logo icon before
-    the text, and down past the faint 'NotebookLM' pill.
+    """Cover box for the watermark: the logo icon ahead of the brand name, the
+    name itself, and the faint pill behind them.
 
-    The vertical extent is MEASURED on the render, not taken as a multiple of
-    the OCR box height: detector padding is inconsistent (CLAUDE.md's
-    box-padding invariant) and the logo sits entirely outside the box, so
-    nothing about the box predicts it. The result is clamped into
-    [tight, wide] so a failed scan degrades to known-good behaviour instead of
-    eating slide content — see CLAUDE.md 浮水印遮擋範圍 for the calibration."""
-    import numpy as np
-
+    The extent is MEASURED on the render, not taken as a multiple of the OCR
+    box: detector padding is inconsistent (CLAUDE.md's box-padding invariant)
+    and the logo can overshoot the box, so nothing about the box predicts the
+    mark. Each edge is clamped into [tight, wide] so a failed scan degrades to
+    known-good behaviour instead of eating slide content — see CLAUDE.md
+    浮水印遮擋範圍 for the calibration."""
     x0, y0, x1, y1 = line.bbox
     h = max(1.0, y1 - y0)
-    lft, rgt = x0 - 1.8 * h, x1 + 0.3 * h
     tight_t, tight_b = y0 - 0.05 * h, y1 + 0.12 * h
     wide_t, wide_b = y0 - 0.35 * h, y1 + 0.40 * h
+    wide_l, wide_r = x0 - 1.8 * h, x1 + 0.3 * h
+    shrink_l, shrink_r = x0 + WIPE_SHRINK_FRAC * h, x1 - WIPE_SHRINK_FRAC * h
     ink_t, ink_b = tight_t, tight_b
+    ink_l, ink_r = wide_l, wide_r
 
     if img is not None and style.bg_rgb is not None:
         ih, iw = img.shape[:2]
-        xs0, xs1 = max(0, int(lft)), min(iw, int(rgt))
+        xs0, xs1 = max(0, int(wide_l)), min(iw, int(wide_r))
         win_t, win_b = max(0, int(wide_t)), min(ih, int(wide_b))
         if xs1 - xs0 >= 4 and win_b - win_t >= 4:
             strip = img[win_t:win_b, xs0:xs1].astype(int)
             bg = np.asarray(style.bg_rgb, dtype=int)
-            inked = ((np.abs(strip - bg).max(axis=2) > WIPE_INK_DIST).sum(axis=1)
-                     > max(1, int(WIPE_INK_FRAC * (xs1 - xs0))))
-            rows = np.flatnonzero(inked)
+            ink = np.abs(strip - bg).max(axis=2) > WIPE_INK_DIST
+            rows_inked = ink.sum(axis=1) > max(1, int(WIPE_INK_FRAC * (xs1 - xs0)))
+            # seed the walk in the middle 60% of the OCR box, which is the
+            # text band: the box edges are where foreign ink creeps in
+            b0 = min(max(0, int(y0 + 0.2 * h) - win_t), rows_inked.size)
+            b1 = min(max(b0, int(y1 - 0.2 * h) - win_t), rows_inked.size)
+            rows = np.flatnonzero(rows_inked[b0:b1])
             if rows.size:
-                ink_t = win_t + int(rows[0]) - WIPE_PAD_PX
-                ink_b = win_t + int(rows[-1]) + WIPE_PAD_PX
+                seed = b0 + int(rows[rows.size // 2])
+                lo, hi = _contiguous_ink(rows_inked, seed,
+                                         max(WIPE_GAP_MIN_PX, int(WIPE_GAP_FRAC * h)))
+                ink_t = win_t + lo - WIPE_PAD_PX
+                ink_b = win_t + hi + WIPE_PAD_PX
+
+                # ...then the same walk sideways, over the band just measured
+                band = ink[lo:hi + 1]
+                cols_inked = band.sum(axis=0) > max(1, int(WIPE_COL_FRAC * len(band)))
+                c0 = min(max(0, int(x0) - xs0), cols_inked.size)
+                c1 = min(max(c0, int(x1) - xs0), cols_inked.size)
+                cols = np.flatnonzero(cols_inked[c0:c1])
+                if cols.size:
+                    left = _contiguous_ink(cols_inked, c0 + int(cols[0]),
+                                           max(WIPE_GAP_MIN_PX, int(WIPE_GAP_L_FRAC * h)))[0]
+                    right = _contiguous_ink(cols_inked, c0 + int(cols[-1]),
+                                            max(WIPE_GAP_MIN_PX, int(WIPE_GAP_R_FRAC * h)))[1]
+                    ink_l = xs0 + left - WIPE_PAD_PX
+                    ink_r = xs0 + right + WIPE_PAD_PX
 
     # the clamp is an identity on the tight fallback, so one exit covers both
     top = min(tight_t, max(wide_t, ink_t))
     bot = max(tight_b, min(wide_b, ink_b))
+    lft = min(shrink_l, max(wide_l, ink_l))
+    rgt = max(shrink_r, min(wide_r, ink_r))
     return (lft, top, rgt, bot), style.bg_rgb
 
 
@@ -131,7 +202,8 @@ def main(argv: list[str] | None = None) -> int:
                           "boxes (the default)")
     ap.set_defaults(no_cover=False)
     ap.add_argument("--keep-watermark", action="store_true",
-                    help="keep the bottom-right NotebookLM watermark instead of wiping it")
+                    help="keep the bottom-right export watermark (NotebookLM "
+                         "/ Gemini Notebook) instead of wiping it")
     ap.add_argument("--keep-tiny-text", action="store_true",
                     help="convert tiny/blurry OCR lines (chart and diagram "
                          "innards) to text instead of leaving them in the image")

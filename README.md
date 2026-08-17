@@ -16,7 +16,7 @@
 - **樣式擬真**：字級以字墨高度實證校準、文字色取筆畫核心避免反鋸齒偏色、底色支援緞帶/膠囊/多層背景的判別
 - **傾斜與弧形文字**：偵測器給出旋轉框時直接輸出旋轉文字方塊；弧形緞帶（圓弧排列的橫幅文字）自動偵測曲率，以分段切線文字方塊沿弧線排列、色塊條帶沿弧線覆蓋
 - **文字品質**：自動還原英文單字間的空格（含物理墨水驗證防誤插）、中英交界補空格（盤古之白）、復原被裁掉的行尾標點、同一行多種顏色會拆成多個 run、行首 ⚠ 警告圖示不會誤認成字母 A
-- **浮水印清除**：右下角的 NotebookLM Logo 與字樣自動以同底色色塊遮蓋（`--keep-watermark` 可保留）
+- **浮水印清除**：右下角的匯出浮水印（Logo + 字樣）自動以同底色色塊遮蓋，新舊品名皆支援（**Gemini Notebook** 與舊版 **NotebookLM**）；遮蓋範圍在渲染圖上逐列／逐欄量測，緊貼浮水印本體，不會連旁邊的頁框線或卡片一起塗掉（`--keep-watermark` 可保留）
 - **圖表內文不亂轉**：插圖裡太小、太模糊的文字（流程圖小框、K線圖刻度、終端機截圖等，OCR 結果多為亂碼）自動偵測並**保留原圖不處理**，不會疊上錯字色塊；清晰可辨的小字（時間戳、圖例籌片）仍正常轉換（`--keep-tiny-text` 可關閉）
 - **無法忠實還原的視覺內容保留原圖**：線稿圖示被誤讀成單字母（交叉箭頭 → 大「X」）、markup 示範的刪除線疊字（`==螢光==` 上的紅 ✗）、上下標化學/數學式（H₂O、X²）等轉成可編輯文字必然失真者，自動偵測並保留原圖點陣
 - **雙色橫幅**：一句橫跨深/淺兩塊背景的橫幅（前半深底白字、後半白底黑字）會偵測背景的銳利分界、拆成兩塊蓋板加分色文字，忠實重現反白效果
@@ -69,7 +69,7 @@ python pdf2ppt_gui_2.py
 python pdf2ppt.py input.pdf                    # 輸出 input.pptx
 python pdf2ppt.py input.pdf -o output.pptx     # 指定輸出檔名
 python pdf2ppt.py input.pdf --pages 1-5,8      # 只轉指定頁
-python pdf2ppt.py input.pdf --keep-watermark   # 保留右下角 NotebookLM 浮水印
+python pdf2ppt.py input.pdf --keep-watermark   # 保留右下角的匯出浮水印
 ```
 
 ### 選項
@@ -81,7 +81,7 @@ python pdf2ppt.py input.pdf --keep-watermark   # 保留右下角 NotebookLM 浮�
 | `--pages 1-5,8` | 頁碼選擇 |
 | `--min-score 0.5` | 過濾低於此信心分數的 OCR 行 |
 | `--cover` / `--no-cover` | 色塊放哪裡。預設 `--cover`：每行畫一個獨立色塊矩形，上面疊透明文字方塊。`--no-cover` 改成讓文字方塊自己帶底色，**在 PowerPoint 裡移動文字時底色跟著走**。兩個例外：雙色橫幅行一律保留獨立色塊（一個形狀無法承載兩種填色），底色估不出來的行（漸層／照片／插畫區）兩種模式都維持透明 |
-| `--keep-watermark` | 保留右下角的 NotebookLM 浮水印 |
+| `--keep-watermark` | 保留右下角的匯出浮水印（Gemini Notebook／舊版 NotebookLM）|
 | `--keep-tiny-text` | 連太小/模糊的圖表內文也轉成文字（預設保留原圖不處理）|
 | `--merge-lines` | 相鄰同樣式行合併為一個文字方塊（多段落）|
 | `--no-bold` / `--force-bold` | 全域強制細體 / 粗體 |

@@ -312,7 +312,7 @@ class App(tk.Tk):
         adv.pack(fill="x", **pad)
         checks = [
             ("使用快速模型（mobile，較快但繁中較不準）", self.fast),
-            ("保留 NotebookLM 浮水印", self.keep_watermark),
+            ("保留浮水印（NotebookLM／Gemini Notebook）", self.keep_watermark),
             ("保留圖表內小字（預設保留原圖不轉文字）", self.keep_tiny_text),
             ("相鄰同樣式行合併成一個文字方塊", self.merge_lines),
             ("色塊改由文字方塊自帶（移動文字時底色跟著走）", self.no_cover),
