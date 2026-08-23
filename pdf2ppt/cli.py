@@ -276,7 +276,7 @@ def main(argv: list[str] | None = None) -> int:
 
         # merge detector-shattered title fragments into one line before
         # harmonizing (p6 釐清「方言」：markdown 的規格體系)
-        lines, styles = merge_row_title_fragments(lines, styles)
+        lines, styles = merge_row_title_fragments(lines, styles, img)
 
         # stacked same-card labels measured at split sizes -> one size,
         # BEFORE harmonize_font_sizes re-groups a corrected size back up

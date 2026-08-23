@@ -51,8 +51,14 @@ HALO_SKIP_PX = 3       # anti-aliasing next to the strokes, tinted by the text
 HALO_BAND_PX = 3       # width of one sampling band
 HALO_BANDS = 5         # ... so the walk reaches 3 + 5*3 = 18px from the ink
 HALO_SETTLED = 5       # two bands within this distance are the same surface
+GLOW_BG_DIST = 20      # a re-sampled ring segment beyond this is a
+#                        different surface, not a cleaner look at this one
 INK_DIST = 60        # Chebyshev distance from bg to count a pixel as ink
 MIN_INK_ROW_PX = 3   # a row needs this many ink pixels to count toward height
+CUT_MARGIN_PX = 12    # side margin checked for a drawn rule while
+#                       following a cut glyph out of its box
+MIN_CUT_BAND_PX = 60  # smallest glyph band whose box edge is worth
+#                       following outward (~17pt at 200dpi)
 MAX_INK_ROW_FRAC = 0.85  # rows nearly all "ink" are background outside a ribbon
 
 # --- template-matched bold (>=16pt) ---
@@ -298,10 +304,13 @@ def _surface_around_ink(inner: np.ndarray, ink: np.ndarray,
     first band (identical to sampling the annulus), a shadow keeps drifting
     until it has faded into the fill.
 
-    Returns ((colour, share) or None when nothing settled, glow radius in px).
-    The radius is how far the drift reached -- 0 when the first band already
-    settled, i.e. no shadow at all -- and the cover has to swallow it or the
-    source shadow survives as a dark fringe around every painted rectangle."""
+    Returns ((colour, share) or None when nothing settled, glow radius in px,
+    colour of the first band or None). The radius is how far the drift
+    reached -- 0 when the first band already settled, i.e. no shadow at all --
+    and the cover has to swallow it or the source shadow survives as a dark
+    fringe around every painted rectangle. The first band's colour is the
+    shadow at its darkest, which _glow_free_bg uses to tell a clean
+    background sample from a contaminated one."""
     prev = _grow(ink, HALO_SKIP_PX)
     bands = []
     for _ in range(HALO_BANDS):
@@ -311,12 +320,100 @@ def _surface_around_ink(inner: np.ndarray, ink: np.ndarray,
         if shell.sum() < min_px:
             break
         bands.append(_dominant_color(inner[shell]))
+    near = bands[0][0] if bands else None
     for i in range(len(bands) - 1):
         if np.abs(bands[i][0].astype(int)
                   - bands[i + 1][0].astype(int)).max() <= HALO_SETTLED:
-            return bands[i + 1], (0.0 if i == 0 else
-                                  float(HALO_SKIP_PX + (i + 1) * HALO_BAND_PX))
-    return None, float(HALO_SKIP_PX + HALO_BANDS * HALO_BAND_PX) if bands else 0.0
+            return (bands[i + 1],
+                    0.0 if i == 0 else float(HALO_SKIP_PX
+                                             + (i + 1) * HALO_BAND_PX),
+                    near)
+    return (None,
+            float(HALO_SKIP_PX + HALO_BANDS * HALO_BAND_PX) if bands else 0.0,
+            near)
+
+
+def _glow_free_bg(img: np.ndarray, line: Line, bg_rgb, near, glow_px: float):
+    """The fill colour re-sampled clear of the text's own drop shadow.
+
+    RING_PX sits 4px outside a box that already hugs the glyphs, so on a deck
+    with drop shadows the ring itself is inside the shadow and the cover comes
+    out a few units dark -- enough to draw a visible rectangle on a large flat
+    fill (p14's orange caption banner: cover [194,104,72] against [200,106,73]
+    beside it). Re-read the ring `glow_px` further out and take the segment
+    FARTHEST from the shadow colour: the shadow can only pull a sample toward
+    itself, so the farthest same-surface segment is the least contaminated one
+    (p14 line 1: top/left/right land on the banner at 200-201 while `bot` has
+    already left it for the page). Segments that changed surface are rejected
+    by the distance gate against the original ring, and by their own share."""
+    if near is None or bg_rgb is None or glow_px <= 0:
+        return None
+    if line.angle or line.arc_sagitta:
+        return None
+    g = int(round(glow_px))
+    x0, y0, x1, y1 = (int(round(v)) for v in line.bbox)
+    o = _crop(img, x0 - RING_PX - g, y0 - RING_PX - g,
+              x1 + RING_PX + g, y1 + RING_PX + g)
+    if o.shape[0] <= 2 * RING_PX or o.shape[1] <= 2 * RING_PX:
+        return None
+    bgi = np.asarray(bg_rgb, dtype=int)
+    neari = np.asarray(near, dtype=int)
+    best, best_d = None, -1.0
+    for seg in (o[:RING_PX], o[-RING_PX:], o[:, :RING_PX], o[:, -RING_PX:]):
+        col, share = _dominant_color(seg.reshape(-1, 3))
+        if share < BG_MIN_SHARE:
+            continue
+        if np.abs(col.astype(int) - bgi).max() > GLOW_BG_DIST:
+            continue  # a different surface, not a cleaner look at this one
+        d = float(np.abs(col.astype(int) - neari).max())
+        if d > best_d:
+            best, best_d = col, d
+    return None if best is None else tuple(int(v) for v in best)
+
+
+def _ink_run_out(img: np.ndarray, x0: int, x1: int, y_edge: int, step: int,
+                 cap: int, bg_ref: np.ndarray, blank: int = 4) -> float:
+    """How far glyph ink continues past a box edge the detector cut through.
+
+    Walks row by row away from the box over the box's own column range and
+    stops at `blank` consecutive rows with no ink, so a neighbouring line
+    (>= 9 blank rows away in every case CLAUDE.md records) cannot be picked
+    up. A row that also runs through BOTH side margins is a drawn rule, not
+    the glyph — a table's grid line or a formula's overline, which the box
+    edge lands on all the time (GPT_Blueprint p3's cell row, p6's sqrt bar
+    over dk) — and the walk stops in front of it. Returns 0 both when the ink
+    really did end at the box edge and when it never ends within `cap` -- that
+    is not a cut glyph but a ribbon edge or a filled surface, and following it
+    would swallow the page."""
+    bgi = bg_ref.astype(int)
+    xa, xb = max(0, x0), min(img.shape[1], x1)
+    if xb - xa <= 0:
+        return 0.0
+    m = CUT_MARGIN_PX
+    la, lb = max(0, xa - m), xa
+    ra, rb = xb, min(img.shape[1], xb + m)
+
+    def frac(row_px):
+        if row_px.size == 0:
+            return 0.0
+        return float((np.abs(row_px.astype(int) - bgi).max(axis=1)
+                      > INK_DIST).mean())
+
+    n = run = 0
+    for k in range(1, cap + 1):
+        y = y_edge + step * k
+        if y < 0 or y >= img.shape[0]:
+            return 0.0
+        row = img[y, xa:xb].astype(int)
+        if int((np.abs(row - bgi).max(axis=1) > INK_DIST).sum()) >= MIN_INK_ROW_PX:
+            if (frac(img[y, la:lb]) >= 0.5 and frac(img[y, ra:rb]) >= 0.5):
+                return float(n)  # a drawn rule crossing the whole area
+            n, run = k, 0
+        else:
+            run += 1
+            if run >= blank:
+                return float(n)
+    return 0.0
 
 
 def _core_color(inner: np.ndarray, mask: np.ndarray,
@@ -936,7 +1033,8 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
     text_rgb_override: tuple[int, int, int] | None = None
     glow_px = 0.0
     bg_ref, share = _dominant_color(ring)
-    if share >= BG_MIN_SHARE:
+    ring_flat = share >= BG_MIN_SHARE
+    if ring_flat:
         bg_rgb = tuple(int(v) for v in bg_ref)
     else:
         # Ring is mixed: the text sits on a ribbon/chip whose edges run under
@@ -1132,6 +1230,46 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
         ink_h_px = float(rows[-1] - rows[0] + 1)
         ink_top_px = y0 + float(rows[0])
         ink_bottom_px = y0 + float(rows[-1] + 1)
+        # the detector CUT the glyph: the heaviest row-group runs straight
+        # into the box edge, so the raster continues where neither the cover
+        # nor the size estimate can see it. p15's step badge '2' came back
+        # 209x240 against its siblings' 248x359 -- the uncovered arc of the
+        # raster 2 showed above the editable one, and the editable one sat
+        # 64px below its neighbours. Follow the ink out to its real end.
+        # Self-limiting: on a normal box the walk finds blank rows at once.
+        # Only for text big enough that a cut box is a real detector error:
+        # illustration innards (8-11pt diagram labels) sit inside dense
+        # graphics where the box edge touches something in every direction,
+        # and drop_illegible_lines leaves them as raster anyway. Letting the
+        # walk near them moved a 9pt 'Sparse' to 11pt on the Transformer
+        # deck's p1, which flipped drop_illegible_lines' weak-neighbour
+        # diffusion and un-dropped seven diagram labels.
+        # ...and only when the ring was a flat background: on a gradient
+        # chip (Transformer p8's teal-to-amber 'Mixtral 8x7B' pill, ring
+        # share 0.24) every row of the chip reads as ink against bg_ref, so
+        # "the glyph continues" is meaningless outside the box.
+        if (not line.angle and not line.arc_sagitta and ink.shape[1] >= 8
+                and ring_flat and ink_h_px >= MIN_CUT_BAND_PX):
+            # "cut" = the box's own edge row is inked, and no blank row
+            # separates it from the glyph band (a neighbour's clipped
+            # descender always has one -- 9+ rows in every recorded case).
+            # Test `present`, not `rows`: the base bar of p15's '2' covers
+            # 99% of the box width, so MAX_INK_ROW_FRAC drops it from `rows`
+            # exactly where the cut is.
+            cut = 0.15 * ink.shape[1]
+            cap = int(max(8, 0.6 * ink_h_px))
+            if (present[0] and row_counts[0] >= cut
+                    and bool(present[:rows[0] + 1].all())):
+                run = _ink_run_out(img, x0, x1, y0, -1, cap, bg_ref)
+                if run:
+                    ink_top_px = y0 - run
+            if (present[-1] and row_counts[-1] >= cut
+                    and bool(present[rows[-1]:].all())):
+                run = _ink_run_out(img, x0, x1, y0 + ink.shape[0], 1,
+                                   cap, bg_ref)
+                if run:
+                    ink_bottom_px = y0 + ink.shape[0] + run
+            ink_h_px = ink_bottom_px - ink_top_px
     else:  # OCR found text the ink threshold can't see; fall back to box
         ink_h_px = float(y1 - y0)
         ink_top_px = float(y0)
@@ -1147,7 +1285,7 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
     if bg_rgb is None and len(rows) and ink.sum() >= 30:
         band_ink = np.zeros_like(ink)
         band_ink[rows[0]:rows[-1] + 1] = ink[rows[0]:rows[-1] + 1]
-        found, glow = _surface_around_ink(inner, band_ink)
+        found, glow, _near = _surface_around_ink(inner, band_ink)
         glow_px = max(glow_px, glow)
         if found is not None and found[1] >= 0.65:
             bg_rgb = tuple(int(v) for v in found[0])
@@ -1194,7 +1332,7 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
     # the anti-aliasing zone AND any drop shadow, and reports nothing when the
     # colour never settles -- then the ring stands. ---
     if bg_rgb is not None and text_rgb_override is None:
-        found, glow = _surface_around_ink(inner, ink)
+        found, glow, near = _surface_around_ink(inner, ink)
         glow_px = max(glow_px, glow)
         if found is not None:
             halo_col, halo_share = found
@@ -1204,6 +1342,10 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
                     and np.abs(halo_col.astype(int)
                                - np.asarray(bg_rgb)).max() >= 20):
                 bg_rgb = tuple(int(v) for v in halo_col)
+        # the ring itself sits inside the shadow; re-read it clear of it
+        clean = _glow_free_bg(img, line, bg_rgb, near, glow_px)
+        if clean is not None:
+            bg_rgb = clean
 
     # --- font size: ink height -> em, clamped so the line can't outgrow
     # the measured ink width (detector box widths are unreliable) ---

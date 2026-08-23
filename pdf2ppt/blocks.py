@@ -271,15 +271,41 @@ def _norm_punct(c: str) -> str:
     return table.get(c, c)
 
 
+def _rule_between(img, a: Line, b: Line, bg) -> bool:
+    """A drawn separator stands in the horizontal gap between two boxes.
+
+    Two cells of a table row look exactly like two fragments of one shattered
+    title: p11's '/code-review' and '抓正確性 Bug' clear the vertical-overlap
+    (0.64 vs 0.60) and adjacency (119px vs 126px) gates by a hair, and merging
+    them produced one 32pt line running across the whole table with the second
+    cell's raster left showing. The column rule between them is the signal the
+    geometry cannot give: a column of ink spanning nearly the full row."""
+    if img is None or bg is None:
+        return False
+    gx0 = int(round(min(a.bbox[2], b.bbox[2])))
+    gx1 = int(round(max(a.bbox[0], b.bbox[0])))
+    y0 = int(round(min(a.bbox[1], b.bbox[1])))
+    y1 = int(round(max(a.bbox[3], b.bbox[3])))
+    gx0, gx1 = max(0, gx0), min(img.shape[1], gx1)
+    y0, y1 = max(0, y0), min(img.shape[0], y1)
+    if gx1 - gx0 < 2 or y1 - y0 < 8:
+        return False
+    win = img[y0:y1, gx0:gx1].astype(int)
+    ink = np.abs(win - np.asarray(bg, dtype=int)).max(axis=2) > 60
+    return bool((ink.mean(axis=0) >= 0.8).any())
+
+
 def merge_row_title_fragments(lines: list[Line], styles: list[Style],
-                              ) -> tuple[list[Line], list[Style]]:
+                              img=None) -> tuple[list[Line], list[Style]]:
     """The detector sometimes shatters one title into side-by-side
     fragments at mixed sizes (p6 釐清 / 「方言」： / markdown / 的規格體系
     snapped 36/28/28/36 because the overlapping boxes clamped each other).
     Merge same-row title fragments (large font, heavy vertical overlap,
     horizontally adjacent, matched weight/color) into one line at the
     largest fragment's size. Overlapping boxes that re-read the same
-    boundary punctuation (： then :) get the duplicate dropped."""
+    boundary punctuation (： then :) get the duplicate dropped. A drawn
+    separator standing in the gap (a table's column rule) blocks the merge —
+    see _rule_between."""
     from .ocr import _pangu_spacing
 
     n = len(lines)
@@ -305,7 +331,9 @@ def merge_row_title_fragments(lines: list[Line], styles: list[Style],
             return False
         if max(abs(p - q) for p, q in zip(sa.text_rgb, sb.text_rgb)) > 45:
             return False
-        return (sa.bg_rgb is None) == (sb.bg_rgb is None)
+        if (sa.bg_rgb is None) != (sb.bg_rgb is None):
+            return False
+        return not _rule_between(img, a, b, sa.bg_rgb or sb.bg_rgb)
 
     out_l, out_s = [], []
     for i in order:
@@ -791,7 +819,10 @@ def propagate_row_clamp(lines: list[Line], styles: list[Style]) -> None:
       mis-clamped to 20 while its five siblings measured 24 — a minority
       clamp dragging the majority down cost that page its lead/body contrast.
       Majority-only turns p13 (four of five at 20) on and p15 (one of four)
-      off.
+      off, and it is what lets a stack in the clamped column follow too --
+      p10's three note boxes end on a line the pipeline read one step large,
+      and those tails sit in the same column as the clamped stacks, not
+      beside them.
     """
     n = len(lines)
     parent = list(range(n))
@@ -874,16 +905,8 @@ def propagate_row_clamp(lines: list[Line], styles: list[Style]) -> None:
             continue  # the clamped size is a minority: it is the odd one out
         if snap_font_size(est_a) <= low:
             continue  # nothing is being held below its natural size
-        held = [info[k][2] for k in fam
-                if styles[stacks[k][0]].font_pt == low]
         for k in fam:
             if styles[stacks[k][0]].font_pt <= low:
-                continue
-            bx0, bx1 = info[k][2]
-            # only a stack standing BESIDE the clamped ones follows them; one
-            # sharing their column is a heading over its body, not a twin
-            if any(min(bx1, hx1) - max(bx0, hx0)
-                   > 0.2 * min(bx1 - bx0, hx1 - hx0) for hx0, hx1 in held):
                 continue
             for i in stacks[k]:
                 styles[i].font_pt = low
