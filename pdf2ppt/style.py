@@ -286,8 +286,8 @@ def _grow(mask: np.ndarray, times: int = 1) -> np.ndarray:
 
 
 def _surface_around_ink(inner: np.ndarray, ink: np.ndarray,
-                        min_px: int = 60) -> tuple[np.ndarray, float] | None:
-    """Colour of the surface the glyphs sit on, measured outward from the ink.
+                        min_px: int = 60):
+    """(surface colour, glow radius) measured outward from the glyph ink.
 
     Sampling one annulus beside the strokes assumes that annulus IS a surface.
     Decks that give their text a soft drop shadow break the assumption: the
@@ -296,8 +296,12 @@ def _surface_around_ink(inner: np.ndarray, ink: np.ndarray,
     a [81,144,201] chip). So walk outward one band at a time and accept a band
     only once the NEXT band out agrees with it: a real surface agrees at the
     first band (identical to sampling the annulus), a shadow keeps drifting
-    until it has faded into the fill. Never settling means no surface was
-    found near the glyphs -- the caller keeps whatever it had."""
+    until it has faded into the fill.
+
+    Returns ((colour, share) or None when nothing settled, glow radius in px).
+    The radius is how far the drift reached -- 0 when the first band already
+    settled, i.e. no shadow at all -- and the cover has to swallow it or the
+    source shadow survives as a dark fringe around every painted rectangle."""
     prev = _grow(ink, HALO_SKIP_PX)
     bands = []
     for _ in range(HALO_BANDS):
@@ -310,8 +314,9 @@ def _surface_around_ink(inner: np.ndarray, ink: np.ndarray,
     for i in range(len(bands) - 1):
         if np.abs(bands[i][0].astype(int)
                   - bands[i + 1][0].astype(int)).max() <= HALO_SETTLED:
-            return bands[i + 1]
-    return None
+            return bands[i + 1], (0.0 if i == 0 else
+                                  float(HALO_SKIP_PX + (i + 1) * HALO_BAND_PX))
+    return None, float(HALO_SKIP_PX + HALO_BANDS * HALO_BAND_PX) if bands else 0.0
 
 
 def _core_color(inner: np.ndarray, mask: np.ndarray,
@@ -929,6 +934,7 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
 
     bg_rgb: tuple[int, int, int] | None = None
     text_rgb_override: tuple[int, int, int] | None = None
+    glow_px = 0.0
     bg_ref, share = _dominant_color(ring)
     if share >= BG_MIN_SHARE:
         bg_rgb = tuple(int(v) for v in bg_ref)
@@ -1141,7 +1147,8 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
     if bg_rgb is None and len(rows) and ink.sum() >= 30:
         band_ink = np.zeros_like(ink)
         band_ink[rows[0]:rows[-1] + 1] = ink[rows[0]:rows[-1] + 1]
-        found = _surface_around_ink(inner, band_ink)
+        found, glow = _surface_around_ink(inner, band_ink)
+        glow_px = max(glow_px, glow)
         if found is not None and found[1] >= 0.65:
             bg_rgb = tuple(int(v) for v in found[0])
 
@@ -1187,7 +1194,8 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
     # the anti-aliasing zone AND any drop shadow, and reports nothing when the
     # colour never settles -- then the ring stands. ---
     if bg_rgb is not None and text_rgb_override is None:
-        found = _surface_around_ink(inner, ink)
+        found, glow = _surface_around_ink(inner, ink)
+        glow_px = max(glow_px, glow)
         if found is not None:
             halo_col, halo_share = found
             # only override when the ring clearly sat on a different
@@ -1550,6 +1558,7 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
         bg_rgb=bg_rgb,
         ink_top_px=ink_top_px,
         ink_bottom_px=ink_bottom_px,
+        glow_px=glow_px,
         cover_x0_px=cover_x0_px,
         cover_x1_px=cover_x1_px,
         runs=runs,

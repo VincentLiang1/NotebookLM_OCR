@@ -13,7 +13,8 @@ import pymupdf
 from .blocks import (clamp_row_neighbors, drop_illegible_lines, drop_unreproducible,
                      harmonize_across_dropped, harmonize_bold, harmonize_code_block_latin,
                      harmonize_chip_bg, merge_row_title_fragments, propagate_column_clamp,
-                     reeval_clamped_bold, sync_clamped_twins, harmonize_font_sizes,
+                     propagate_row_clamp, reeval_clamped_bold,
+                     sync_clamped_twins, harmonize_font_sizes,
                      harmonize_stacked_overlap_size, lines_to_blocks)
 from .builder import DeckBuilder
 from .ocr import OcrEngine
@@ -288,6 +289,9 @@ def main(argv: list[str] | None = None) -> int:
         harmonize_code_block_latin(lines, styles)
         sync_clamped_twins(lines, styles)
         propagate_column_clamp(lines, styles)
+        # parallel card stacks in one row share a size: the card whose lines
+        # are all short escapes the width clamp and snaps two steps up (p13)
+        propagate_row_clamp(lines, styles)
         if bold_mode == "auto":
             reeval_clamped_bold(lines, styles)
             harmonize_bold(lines, styles)
@@ -314,7 +318,8 @@ def main(argv: list[str] | None = None) -> int:
                            "est_pt": round(st.est_pt, 2),
                            "bold_r": (round(st.bold_r, 4)
                                       if st.bold_r is not None else None),
-                           "text_rgb": st.text_rgb, "bg_rgb": st.bg_rgb}
+                           "text_rgb": st.text_rgb, "bg_rgb": st.bg_rgb,
+                           "glow_px": st.glow_px}
                           for ln, st in zip(lines, styles)],
             })
             _write_debug_overlay(img, lines, out_path, idx + 1)

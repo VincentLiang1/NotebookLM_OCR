@@ -62,6 +62,12 @@ class Style:
     clamp_pt: float | None = None
     ink_top_px: float = 0.0     # top of the actual glyph ink, image px
     ink_bottom_px: float = 0.0  # bottom of the actual glyph ink, image px
+    # how far the text's own soft drop shadow / glow reaches past the ink,
+    # image px (measured by style._surface_around_ink); 0 when the surface is
+    # already flat right beside the strokes. The cover must swallow it: the
+    # shadow is far below the ink threshold, so the glyph band alone leaves a
+    # dark fringe of source raster around every cover.
+    glow_px: float = 0.0
     # (y0, y1) of the band this block's solid fill actually paints, image px;
     # None = derive it from the ink band. Written by DeckBuilder's
     # stacked-overlap trim — see _trim_stacked_overlaps' docstring for why the

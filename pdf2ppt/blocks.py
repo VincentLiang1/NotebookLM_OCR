@@ -766,6 +766,129 @@ def propagate_column_clamp(lines: list[Line], styles: list[Style]) -> None:
             sj.bold = si.bold
 
 
+def propagate_row_clamp(lines: list[Line], styles: list[Style]) -> None:
+    """Parallel card stacks across one row must share a font size.
+
+    p13 lays five cards across a row. Four hold a line long enough for the
+    card border to clamp it — YaHei is wider than the source face, so the long
+    line cannot keep its natural size — but the fourth card's lines are all
+    four characters wide, nothing clamps them, and they snap two steps higher:
+    the source draws all five alike, the output came out 20/20/20/28/20 (user
+    2026-08-23: the fourth should be 20 too). sync_clamped_twins already
+    carries the ruling that a mixed family reads worse than the whole family
+    at the clamped size (2026-06-13, p5 Git Hook), but its gate reaches one
+    snap step and wants a twin at exactly the size the clamped line wanted, so
+    a two-step split falls through.
+
+    Two rules keep this from amplifying a single bad clamp into a whole row:
+
+    * Compare STACKS by their MEDIAN estimate, not lines. p13's （抓未知
+      measures 28.4 beside its card-mates' 25.5-26.4 because the full-width
+      paren fills the em box; per-line matching would drag two of the three
+      lines down and split the card.
+    * The clamped size must be the row family's MAJORITY. p15 puts three
+      quote columns in a row and the first column's opening line was already
+      mis-clamped to 20 while its five siblings measured 24 — a minority
+      clamp dragging the majority down cost that page its lead/body contrast.
+      Majority-only turns p13 (four of five at 20) on and p15 (one of four)
+      off.
+    """
+    n = len(lines)
+    parent = list(range(n))
+
+    def find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    def same_surface(a: Style, b: Style) -> bool:
+        if a.bold != b.bold:
+            return False
+        if max(abs(x - y) for x, y in zip(a.text_rgb, b.text_rgb)) > 45:
+            return False
+        if (a.bg_rgb is None) != (b.bg_rgb is None):
+            return False
+        return a.bg_rgb is None or max(
+            abs(x - y) for x, y in zip(a.bg_rgb, b.bg_rgb)) <= 25
+
+    def ok(i: int) -> bool:
+        return (not lines[i].angle and not lines[i].arc_sagitta
+                and styles[i].est_pt > 0 and styles[i].font_pt in FONT_SIZES)
+
+    # stacks: the vertical neighbours harmonize_font_sizes already unified
+    for i in range(n):
+        if not ok(i):
+            continue
+        for j in range(i + 1, n):
+            if not ok(j) or styles[i].font_pt != styles[j].font_pt:
+                continue
+            a, b = (i, j) if lines[i].bbox[1] <= lines[j].bbox[1] else (j, i)
+            la, lb = lines[a], lines[b]
+            h = min(la.height, lb.height)
+            if not (-0.6 * h < lb.bbox[1] - la.bbox[3] < 0.45 * h):
+                continue
+            ox = min(la.bbox[2], lb.bbox[2]) - max(la.bbox[0], lb.bbox[0])
+            if ox < 0.4 * min(la.width, lb.width):
+                continue
+            if not same_surface(styles[a], styles[b]):
+                continue
+            parent[find(i)] = find(j)
+
+    stacks: dict[int, list[int]] = {}
+    for i in range(n):
+        if ok(i):
+            stacks.setdefault(find(i), []).append(i)
+
+    def med(g: list[int]) -> float:
+        v = sorted(styles[i].est_pt for i in g)
+        return v[len(v) // 2] if len(v) % 2 else (v[len(v) // 2 - 1]
+                                                  + v[len(v) // 2]) / 2
+
+    def span(g: list[int], k0: int, k1: int) -> tuple[float, float]:
+        return (min(lines[i].bbox[k0] for i in g),
+                max(lines[i].bbox[k1] for i in g))
+
+    info = {k: (med(g), span(g, 1, 3), span(g, 0, 2)) for k, g in stacks.items()}
+    done: set[frozenset[int]] = set()
+    for ka in list(stacks):
+        est_a, (ay0, ay1), _ = info[ka]
+        fam = []
+        for kb in stacks:
+            est_b, (by0, by1), _ = info[kb]
+            if abs(est_a - est_b) > 0.15 * max(est_a, est_b):
+                continue
+            if not same_surface(styles[stacks[ka][0]], styles[stacks[kb][0]]):
+                continue
+            oy = min(ay1, by1) - max(ay0, by0)
+            if oy < 0.5 * min(ay1 - ay0, by1 - by0):
+                continue
+            fam.append(kb)
+        key = frozenset(fam)
+        if len(fam) < 3 or key in done:
+            continue
+        done.add(key)
+        pts = [styles[stacks[k][0]].font_pt for k in fam]
+        low = min(pts)
+        if pts.count(low) * 2 <= len(pts):
+            continue  # the clamped size is a minority: it is the odd one out
+        if snap_font_size(est_a) <= low:
+            continue  # nothing is being held below its natural size
+        held = [info[k][2] for k in fam
+                if styles[stacks[k][0]].font_pt == low]
+        for k in fam:
+            if styles[stacks[k][0]].font_pt <= low:
+                continue
+            bx0, bx1 = info[k][2]
+            # only a stack standing BESIDE the clamped ones follows them; one
+            # sharing their column is a heading over its body, not a twin
+            if any(min(bx1, hx1) - max(bx0, hx0)
+                   > 0.2 * min(bx1 - bx0, hx1 - hx0) for hx0, hx1 in held):
+                continue
+            for i in stacks[k]:
+                styles[i].font_pt = low
+
+
 def clamp_row_neighbors(lines: list[Line], styles: list[Style],
                         px_to_slide_pt: float) -> None:
     """A line's rendered text must not run into its same-row right

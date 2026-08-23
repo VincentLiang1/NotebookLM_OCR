@@ -126,8 +126,9 @@ class DeckBuilder:
                     x0 = max(x0, block.style.cover_x0_px)
                 if len(block.lines) == 1 and block.style.cover_x1_px is not None:
                     x1 = min(x1, block.style.cover_x1_px)
-                left = ex(x0 - COVER_PAD_PX)
-                width = ex(x1 + COVER_PAD_PX) - left
+                gl, gr = self._glow_reach_x(img, block, x0, x1)
+                left = ex(x0 - COVER_PAD_PX - gl)
+                width = ex(x1 + COVER_PAD_PX + gr) - left
                 # cover height follows the glyph ink band, not the OCR box:
                 # detector boxes carry large vertical slack that would paint
                 # over diagram lines above/below the text. The text frame
@@ -321,7 +322,11 @@ class DeckBuilder:
                 cov_y0, cov_y1 = y0 - over, y1 + over
             elif single and style.ink_bottom_px:
                 cov_h = style.ink_bottom_px - style.ink_top_px
-                pad_v = max(4.0, 0.08 * cov_h)
+                # the glyph band plus whatever the text's own drop shadow
+                # reaches past it: the shadow is far below the ink threshold,
+                # so a band sized on ink alone leaves a dark fringe of source
+                # raster hugging every cover (p13 cards)
+                pad_v = max(4.0, 0.08 * cov_h, style.glow_px)
                 cov_y0 = style.ink_top_px - pad_v
                 cov_y1 = style.ink_bottom_px + pad_v
             else:
@@ -330,6 +335,42 @@ class DeckBuilder:
             cov_y0 = min(cov_y0, style.ink_top_px - self._leading_comp_em(block)
                          * style.font_pt * px_per_pt)
         return cov_y0, cov_y1
+
+    @staticmethod
+    def _glow_reach_x(img, block, x0: float, x1: float) -> tuple[float, float]:
+        """How far the cover may grow sideways to swallow the text's own drop
+        shadow. The OCR box's horizontal slack is inconsistent (CLAUDE.md's
+        second invariant): on p13 it left 22px beside Hook but only 4px beside
+        (無腦零等待)'s opening paren, so that line kept a dark smear down its
+        left edge. Grow by the measured glow radius, stopping at the first
+        column carrying real ink so the cover cannot swallow a card border, a
+        leader line or a neighbouring glyph."""
+        import numpy as np
+
+        st = block.style
+        if img is None or st.glow_px <= 0 or st.bg_rgb is None:
+            return 0.0, 0.0
+        y0 = int(max(0, st.ink_top_px))
+        y1 = int(min(img.shape[0], st.ink_bottom_px))
+        if y1 - y0 < 4:
+            return 0.0, 0.0
+        reach = int(round(st.glow_px))
+        bg = np.asarray(st.bg_rgb, dtype=int)
+
+        def clear_run(lo: int, hi: int, from_right: bool) -> float:
+            lo, hi = max(0, lo), min(img.shape[1], hi)
+            if hi <= lo:
+                return 0.0
+            win = img[y0:y1, lo:hi].astype(int)
+            inked = (np.abs(win - bg).max(axis=2) > 60).mean(axis=0) > 0.05
+            if from_right:
+                inked = inked[::-1]
+            return float(np.argmax(inked) if inked.any() else len(inked))
+
+        l0 = int(round(x0 - COVER_PAD_PX))
+        r0 = int(round(x1 + COVER_PAD_PX))
+        return (clear_run(l0 - reach, l0, True),
+                clear_run(r0, r0 + reach, False))
 
     @staticmethod
     def _trim_row_overlaps(blocks, img) -> None:
@@ -430,10 +471,32 @@ class DeckBuilder:
                 up, lo = (a, b) if itop(a) <= itop(b) else (b, a)
                 up_y0, up_y1 = self._cover_band(up, px_per_pt)
                 lo_y0, lo_y1 = self._cover_band(lo, px_per_pt)
-                if up_y1 <= lo_y0:
-                    continue  # painted bands already clear
                 x_lo = max(0, int(max(ax0, bx0)))
                 x_hi = min(img.shape[1], int(min(ax1, bx1)))
+                if up_y1 <= lo_y0:
+                    # A GAP between the two painted bands. Normally fine, but
+                    # when the text carries a drop shadow the strip left
+                    # untouched between two stacked lines IS that shadow, and
+                    # it reads as a dark bar across the chip (p13's cards).
+                    # Make the two covers meet at the seam instead. Gated so a
+                    # genuine gap is never flooded: a glow must actually have
+                    # been measured, the two fills must match, the strip must
+                    # be short, and nothing but background may sit in it.
+                    if (max(up.style.glow_px, lo.style.glow_px) <= 0
+                            or up.style.bg_rgb is None or lo.style.bg_rgb is None
+                            or max(abs(u - v) for u, v in
+                                   zip(up.style.bg_rgb, lo.style.bg_rgb)) > 20
+                            or lo_y0 - up_y1 > max(8.0, 0.5 * min(
+                                ibot(up) - itop(up), ibot(lo) - itop(lo)))
+                            or x_hi - x_lo < 8
+                            or not self._strip_is_blank(img, up.style.bg_rgb,
+                                                        x_lo, x_hi,
+                                                        up_y1, lo_y0)):
+                        continue
+                    seam = (up_y1 + lo_y0) / 2
+                    up.style.cover_band_px = (up_y0, seam)
+                    lo.style.cover_band_px = (seam, lo_y1)
+                    continue
                 # the gap runs between the two INK bands; when only the pads
                 # overlap that gap is ibot(up)..itop(lo), when the ink bands
                 # themselves overlap it is the other way round
@@ -475,6 +538,23 @@ class DeckBuilder:
                 # extension over the override, which clamps `lo` back for us
                 up.style.cover_band_px = (up_y0, min(up_y1, boundary))
                 lo.style.cover_band_px = (max(lo_y0, boundary), lo_y1)
+
+    @staticmethod
+    def _strip_is_blank(img, bg, x_lo: int, x_hi: int,
+                        y_lo: float, y_hi: float) -> bool:
+        """No row of img[y_lo:y_hi, x_lo:x_hi] carries glyph-strength ink
+        against `bg` — the same test the seam scan uses, applied to the whole
+        strip so a cover can only be grown across empty background."""
+        import numpy as np
+
+        y0, y1 = int(np.floor(y_lo)), int(np.ceil(y_hi))
+        y0, y1 = max(0, y0), min(img.shape[0], y1)
+        if y1 <= y0:
+            return True
+        win = img[y0:y1, x_lo:x_hi].astype(int)
+        row_ink = (np.abs(win - np.asarray(bg, dtype=int)).max(axis=2)
+                   > 60).sum(axis=1)
+        return bool((row_ink <= 0.04 * (x_hi - x_lo)).all())
 
     @staticmethod
     def _arc_geometry(block, px_per_pt: float, img=None):
