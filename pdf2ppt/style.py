@@ -1351,8 +1351,14 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
                     and np.abs(halo_col.astype(int)
                                - np.asarray(bg_rgb)).max() >= 20):
                 bg_rgb = tuple(int(v) for v in halo_col)
-        # the ring itself sits inside the shadow; re-read it clear of it
-        clean = _glow_free_bg(img, line, bg_rgb, near, glow_px)
+        # the ring itself sits inside the shadow; re-read it clear of it.
+        # One band SHORT of glow_px: that radius is the cover's reach (the
+        # outer edge of the band that confirmed the surface), and pushing the
+        # re-sampling ring that far walks it off the fill — measured across
+        # four decks, 16 lines drifted 7-14 units, several onto a neighbouring
+        # surface (Transformer p2 Pre-RMSNorm 248->234, p4's K chips).
+        clean = _glow_free_bg(img, line, bg_rgb, near,
+                              glow_px - HALO_BAND_PX)
         if clean is not None:
             bg_rgb = clean
 

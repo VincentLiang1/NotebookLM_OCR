@@ -477,8 +477,20 @@ def harmonize_across_dropped(lines: list[Line], styles: list[Style],
         if sa.est_pt > 0 and sb.est_pt > 0 and abs(sa.est_pt - sb.est_pt) \
                 > 0.20 * max(sa.est_pt, sb.est_pt):
             continue  # too different to be the same paragraph
-        sb.font_pt = sa.font_pt
-        sb.bold = sa.bold
+        # never past the tail's own width ceilings: this is the only size
+        # setter in the file that could raise a line, and raising one past
+        # max_fit_pt puts it off the slide (CLAUDE.md's p15 case) or through
+        # the card border clamp_pt records. Wrap-group unification enforces
+        # the same ceilings (harmonize_font_sizes).
+        target = sa.font_pt
+        for cap in (sb.max_fit_pt, sb.clamp_pt):
+            if cap is not None and target > sb.font_pt:
+                target = min(target, snap_font_size(cap))
+        if target != sb.font_pt and target in FONT_SIZES:
+            sb.font_pt = target
+            sb.bold = sa.bold
+        elif target == sb.font_pt:
+            sb.bold = sa.bold
 
 
 def lines_to_blocks(lines: list[Line], styles: list[Style],
@@ -530,6 +542,73 @@ def _autobold_only(st: Style) -> bool:
             and st.font_pt >= 24)
 
 
+def _wrap_pair(lines: list[Line], styles: list[Style],
+               i: int, j: int) -> bool:
+    """Are i and j two lines of one wrapped paragraph? The single definition
+    of that predicate — harmonize_font_sizes builds its groups from it and
+    sync_clamped_twins asks the same question about a drag target's mates, so
+    a hand-copied approximation there would answer differently (it collected
+    rotated chips, vetoed on cross-chip neighbours harmonize_font_sizes would
+    never pair, and split 1v1 marginal-bold pairs)."""
+    for k in (i, j):
+        if lines[k].angle or lines[k].arc_sagitta or styles[k].est_pt <= 0:
+            return False
+    a, b = (i, j) if lines[i].bbox[1] <= lines[j].bbox[1] else (j, i)
+    la, lb = lines[a], lines[b]
+    sa, sb = styles[a], styles[b]
+    h = min(la.height, lb.height)
+    if not (-0.6 * h < lb.bbox[1] - la.bbox[3] < 0.45 * h):
+        return False
+    ox = min(la.bbox[2], lb.bbox[2]) - max(la.bbox[0], lb.bbox[0])
+    if ox < 0.4 * min(la.width, lb.width):
+        return False
+    if sa.bold != sb.bold:
+        # a marginal template-bold verdict must not break a wrap group:
+        # 為體系化的高價值資產。 (14pt wrap tail, born snapped 16 / r=0.146
+        # barely over threshold) was locked out of its 14pt regular wrap-
+        # mates, stranding it at 16pt bold. Adjacency + matched style
+        # outweighs a marginal r; the group majority settles both below.
+        bs = sa if sa.bold else sb
+        if not (_tpl_marginal_bold(bs) or _autobold_only(bs)):
+            return False
+    if (sa.bg_rgb is None) != (sb.bg_rgb is None):
+        return False
+    # 25, not 16: photo-panel gradients drift the bg estimate between wrap-
+    # mates (p7 成果/零/研究 measured 180/160/153 and the trio snapped
+    # 18/20/20); cross-chip pairs are still blocked by the gates above
+    if sa.bg_rgb is not None and max(
+            abs(x - y) for x, y in zip(sa.bg_rgb, sb.bg_rgb)) > 25:
+        return False
+    if max(abs(x - y) for x, y in zip(sa.text_rgb, sb.text_rgb)) > 45:
+        return False
+    # 14%: p11's wrap pair V1 輿 V2 同時回 (11.8) / AI 要求比對差距 (13.5)
+    # differs 12.6%; a true 12-vs-14 pair differs ~19%
+    return abs(sa.est_pt - sb.est_pt) <= 0.14 * max(sa.est_pt, sb.est_pt)
+
+
+def _wrap_partition(lines: list[Line], styles: list[Style]) -> list[list[int]]:
+    """Transitive closure of _wrap_pair — the actual paragraph groups, not
+    the direct-neighbour approximation. A 3-line paragraph chains A-B-C with
+    A and C never adjacent, so pairwise mates would have let C strand."""
+    n = len(lines)
+    parent = list(range(n))
+
+    def find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    for i in range(n):
+        for j in range(i + 1, n):
+            if _wrap_pair(lines, styles, i, j):
+                parent[find(i)] = find(j)
+    groups: dict[int, list[int]] = {}
+    for i in range(n):
+        groups.setdefault(find(i), []).append(i)
+    return list(groups.values())
+
+
 def harmonize_font_sizes(lines: list[Line], styles: list[Style],
                          ) -> None:
     """Wrapped lines of one paragraph must share a font size.
@@ -543,67 +622,7 @@ def harmonize_font_sizes(lines: list[Line], styles: list[Style],
     whose pre-snap estimates differ within noise (12%), and when such a
     group snapped to two adjacent FONT_SIZES steps, unify — majority
     wins, ties re-snap the group's median estimate."""
-    n = len(lines)
-    parent = list(range(n))
-
-    def find(i: int) -> int:
-        while parent[i] != i:
-            parent[i] = parent[parent[i]]
-            i = parent[i]
-        return i
-
-    def ok(i: int) -> bool:
-        return (not lines[i].angle and not lines[i].arc_sagitta
-                and styles[i].est_pt > 0)
-
-    for i in range(n):
-        if not ok(i):
-            continue
-        for j in range(n):
-            if j == i or not ok(j):
-                continue
-            a, b = (i, j) if lines[i].bbox[1] <= lines[j].bbox[1] else (j, i)
-            la, lb = lines[a], lines[b]
-            sa, sb = styles[a], styles[b]
-            h = min(la.height, lb.height)
-            gap = lb.bbox[1] - la.bbox[3]
-            if not (-0.6 * h < gap < 0.45 * h):
-                continue
-            ox = min(la.bbox[2], lb.bbox[2]) - max(la.bbox[0], lb.bbox[0])
-            if ox < 0.4 * min(la.width, lb.width):
-                continue
-            if sa.bold != sb.bold:
-                # a marginal template-bold verdict must not break a wrap
-                # group: 為體系化的高價值資產。 (14pt wrap tail, born
-                # snapped 16 / r=0.146 barely over threshold) was locked
-                # out of its 14pt regular wrap-mates, stranding it at
-                # 16pt bold. Adjacency + matched style outweighs a
-                # marginal r; the group majority then settles both size
-                # and weight below.
-                bs = sa if sa.bold else sb
-                if not (_tpl_marginal_bold(bs) or _autobold_only(bs)):
-                    continue
-            if (sa.bg_rgb is None) != (sb.bg_rgb is None):
-                continue
-            # 25, not 16: photo-panel gradients drift the bg estimate
-            # between wrap-mates (p7 成果/零/研究 measured 180/160/153 and
-            # the trio snapped 18/20/20); cross-chip pairs are still
-            # blocked by the adjacency gates above
-            if sa.bg_rgb is not None and max(
-                    abs(x - y) for x, y in zip(sa.bg_rgb, sb.bg_rgb)) > 25:
-                continue
-            if max(abs(x - y) for x, y in zip(sa.text_rgb, sb.text_rgb)) > 45:
-                continue
-            # 14%: p11's wrap pair V1 輿 V2 同時回 (11.8) / AI 要求比對
-            # 差距 (13.5) differs 12.6%; a true 12-vs-14 pair differs ~19%
-            if abs(sa.est_pt - sb.est_pt) > 0.14 * max(sa.est_pt, sb.est_pt):
-                continue
-            parent[find(i)] = find(j)
-
-    groups: dict[int, list[int]] = {}
-    for i in range(n):
-        groups.setdefault(find(i), []).append(i)
-    for g in groups.values():
+    for g in _wrap_partition(lines, styles):
         # marginal template-bold members follow a strict regular majority
         # of their wrap group (1v1 pairs stay untouched: 人類專屬：精選
         # at r=0.219 keeps its bold lead-in over its regular wrap tail)
@@ -659,30 +678,34 @@ def sync_clamped_twins(lines: list[Line], styles: list[Style]) -> None:
     header family looks broken, and the user prefers the family at the
     clamped size. Gates are tight: bold headers only, est within 10%,
     same text color / background surface, similar line length, exactly
-    one snap step apart."""
-    n = len(lines)
+    one snap step apart.
 
-    def _wrap_mates(j: int) -> list[int]:
-        """Lines that harmonize_font_sizes already unified with j — same
-        size, adjacent, x-overlapping, same weight/colour/fill."""
-        out = []
-        for k in range(n):
-            if k == j or styles[k].font_pt != styles[j].font_pt:
-                continue
-            if styles[k].bold != styles[j].bold:
-                continue
-            a, b = (lines[j], lines[k]) if lines[j].bbox[1] <= lines[k].bbox[1]                 else (lines[k], lines[j])
-            h = min(a.height, b.height)
-            if not (-0.6 * h < b.bbox[1] - a.bbox[3] < 0.45 * h):
-                continue
-            ox = min(a.bbox[2], b.bbox[2]) - max(a.bbox[0], b.bbox[0])
-            if ox < 0.4 * min(a.width, b.width):
-                continue
-            if max(abs(x - y) for x, y
-                   in zip(styles[k].text_rgb, styles[j].text_rgb)) > 45:
-                continue
-            out.append(k)
-        return out
+    A twin that belongs to a WRAP GROUP moves with its whole group or not at
+    all, judged on the group's MEDIAN estimate. p15's lead sentence 'AI 讓
+    「一直以來划不來' matched a clamped body line on its own (est 26.6 vs
+    24.4) and was dragged 24->20 while its wrap tail '的事」變得划得來。'
+    (est 28.4) stayed — one sentence at two sizes; the group median 27.5 is
+    11% off the dragger and correctly refuses. p11's 分級 / (low~xhigh) cell
+    is the opposite: median 31.8 against a 31.0 dragger, so the cell moves
+    whole and stops standing out from its table. Groups come from
+    _wrap_partition, computed ONCE before any mutation — deriving them from
+    the live font_pt made the result depend on line order."""
+    n = len(lines)
+    group_of: dict[int, list[int]] = {}
+    for g in _wrap_partition(lines, styles):
+        for i in g:
+            group_of[i] = g
+
+    def _same_family(i: int, k: int, want: float) -> bool:
+        si, sk = styles[i], styles[k]
+        if not sk.bold or sk.font_pt != want or sk.est_pt <= 0:
+            return False
+        if max(abs(a - b) for a, b in zip(si.text_rgb, sk.text_rgb)) > 45:
+            return False
+        if (si.bg_rgb is None) != (sk.bg_rgb is None):
+            return False
+        return si.bg_rgb is None or max(
+            abs(a - b) for a, b in zip(si.bg_rgb, sk.bg_rgb)) <= 25
 
     for i in range(n):
         si = styles[i]
@@ -693,43 +716,25 @@ def sync_clamped_twins(lines: list[Line], styles: list[Style]) -> None:
                 or FONT_SIZES.index(want) - FONT_SIZES.index(si.font_pt) != 1):
             continue
         emi = _measure_em(lines[i].text) or text_width_em(lines[i].text)
-
-        def _twin_ok(j: int, check_em: bool = True) -> bool:
-            sj = styles[j]
-            if j == i or not sj.bold or sj.font_pt != want or sj.est_pt <= 0:
-                return False
-            if abs(si.est_pt - sj.est_pt) > 0.10 * max(si.est_pt, sj.est_pt):
-                return False
-            if max(abs(a - b)
-                   for a, b in zip(si.text_rgb, sj.text_rgb)) > 45:
-                return False
-            if (si.bg_rgb is None) != (sj.bg_rgb is None):
-                return False
-            if si.bg_rgb is not None and max(
-                    abs(a - b) for a, b in zip(si.bg_rgb, sj.bg_rgb)) > 25:
-                return False
-            if not check_em:
-                return True   # a wrap-mate belongs with j by construction;
-            #                   the length heuristic is for unrelated lines
-            emj = _measure_em(lines[j].text) or text_width_em(lines[j].text)
-            return not (emi and emj) or 0.6 <= emi / emj <= 1.6
-
         for j in range(n):
-            if not _twin_ok(j):
+            if j == i or not _same_family(i, j, want):
                 continue
-            # a wrap group moves whole or not at all: p15's lead sentence
-            # 'AI 讓「一直以來划不來' matched a clamped BODY line closely
-            # enough (est 26.6 vs 24.4) to be dragged 24->20 while its own
-            # wrap-mate '的事」變得划得來。' (est 28.4) did not match and
-            # stayed at 24, splitting one sentence across two sizes. p11's
-            # 分級 / (low~xhigh) cell is the opposite case: the mate matches
-            # perfectly and only failed the LENGTH heuristic (2 em vs 6),
-            # which says nothing about a line already known to belong here.
-            mates = _wrap_mates(j)
-            if not all(_twin_ok(k, check_em=False) for k in mates):
+            if abs(si.est_pt - styles[j].est_pt) > 0.10 * max(si.est_pt,
+                                                              styles[j].est_pt):
                 continue
-            for t in (j, *mates):
-                styles[t].font_pt = si.font_pt
+            emj = _measure_em(lines[j].text) or text_width_em(lines[j].text)
+            if emi and emj and not (0.6 <= emi / emj <= 1.6):
+                continue
+            grp = group_of.get(j, [j])
+            if not all(_same_family(i, k, want) for k in grp):
+                continue
+            ests = sorted(styles[k].est_pt for k in grp)
+            med = (ests[len(ests) // 2] if len(ests) % 2
+                   else (ests[len(ests) // 2 - 1] + ests[len(ests) // 2]) / 2)
+            if abs(si.est_pt - med) > 0.10 * max(si.est_pt, med):
+                continue
+            for k in grp:
+                styles[k].font_pt = si.font_pt
 
 
 def harmonize_stacked_overlap_size(lines: list[Line],

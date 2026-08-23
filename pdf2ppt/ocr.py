@@ -252,11 +252,29 @@ def _is_big5(ch: str) -> bool:
         return False
 
 
-def _emits_simplified(texts) -> bool:
-    """Any ideograph on the page that Big5 cannot write — the rec model
-    demonstrably slipped here, so its ambiguous readings are suspect too."""
-    return any("一" <= c <= "鿿" and not _is_big5(c)
-               for t in texts for c in t)
+def _emits_simplified(engine, lines) -> bool:
+    """Evidence that the rec model slipped into simplified on THIS page.
+
+    A character Big5 cannot write is the proof, but three kinds of innocent
+    text carry those too, and any one of them would switch the whole guard
+    off for the page:
+      - a deliberately depicted pure-simplified string (CLAUDE.md's 掌控习惯):
+        those lines are protected content, not slips, so they get no vote;
+      - variant/foreign ideographs that are not simplified forms at all
+        (喆 堃 犇, 辻 働 図) — required to be something s2tw actually rewrites;
+      - illustration garbage, which is why the vote needs the same confidence
+        floor _page_vocab uses.
+    """
+    for ln in lines:
+        if ln.score < 0.8:      # same confidence floor as _page_vocab
+            continue
+        if engine._t2s is None or engine._t2s.convert(ln.text) == ln.text:
+            continue                      # pure simplified: depicted content
+        for c in ln.text:
+            if ("一" <= c <= "鿿" and not _is_big5(c)
+                    and engine._s2t.convert(c) != c):
+                return True
+    return False
 
 
 def _fix_warning_icon(text: str, char_boxes, img: np.ndarray):
@@ -605,7 +623,7 @@ class OcrEngine:
             except ImportError:
                 pass
 
-    def _fix_simplified_strays(self, text: str, slipping: bool = True) -> str:
+    def _fix_simplified_strays(self, text: str, slipping: bool) -> str:
         """Convert to Traditional only when a line MIXES both scripts: a
         pure-simplified line is intentional content (e.g. a depicted search
         query), a mixed line is the rec model slipping on single glyphs.
@@ -894,7 +912,7 @@ class OcrEngine:
         # did the rec model actually slip into simplified anywhere on this
         # page? A character that cannot be written in Big5 is proof; without
         # any, _fix_simplified_strays leaves the ambiguous pairs alone
-        page_slipping = _emits_simplified(ln.text for ln in lines)
+        page_slipping = _emits_simplified(self, lines)
         for ln in lines:
             # tilted lines were already rectified by the detector; the
             # rotation rescue only helps when the tilt was NOT detected
@@ -957,8 +975,8 @@ class OcrEngine:
                     break
 
         self._vocab_correct(lines)
-        self._confirm_simplified_strays(lines)
-        self._rescue_sibling_bands(img_rgb, lines)
+        self._confirm_simplified_strays(lines, page_slipping)
+        self._rescue_sibling_bands(img_rgb, lines, page_slipping)
 
         lines.sort(key=lambda ln: (ln.bbox[1], ln.bbox[0]))
         return lines
@@ -1024,7 +1042,7 @@ class OcrEngine:
                     ln.char_boxes = None
                 ln.text = fixed
 
-    def _confirm_simplified_strays(self, lines) -> None:
+    def _confirm_simplified_strays(self, lines, slipping: bool) -> None:
         """The mixed-script test in _fix_simplified_strays never fires
         when every CJK char of a line slips to simplified at once (p3
         'AI 执行：', p9 'LLM 合规'): the line reads as pure simplified,
@@ -1040,6 +1058,15 @@ class OcrEngine:
             return
         for ln in lines:
             as_trad = self._s2t.convert(ln.text)
+            if not slipping and len(as_trad) == len(ln.text):
+                # same guard as _fix_simplified_strays: without page-level
+                # evidence of a slip, only rewrite what cannot be Traditional.
+                # Vocabulary corroboration alone is not enough here — a deck
+                # that spells one word both ways (台北 and 臺北) supplies its
+                # own 'evidence' and this pass would paint a 臺 cover over a
+                # 台 glyph, which CLAUDE.md rates worse than leaving it.
+                as_trad = "".join(a if a == o or not _is_big5(o) else o
+                                  for a, o in zip(as_trad, ln.text))
             if as_trad == ln.text or len(as_trad) != len(ln.text):
                 continue
             runs, start, changed = [], None, False
@@ -1063,7 +1090,8 @@ class OcrEngine:
                 ln.char_boxes = None
             ln.text = as_trad
 
-    def _rescue_sibling_bands(self, img_rgb: np.ndarray, lines) -> None:
+    def _rescue_sibling_bands(self, img_rgb: np.ndarray, lines,
+                              slipping: bool) -> None:
         """Detection misses the second line of tiny two-line chips
         entirely (p9: 資訊 found, 架構 below it invisible to det at any
         scale). Probe directly above/below each small chip-sized CJK line
@@ -1098,7 +1126,8 @@ class OcrEngine:
                                   use_cls=False, use_rec=True)
                 if res is None or res.txts is None or not res.txts:
                     continue
-                cand = self._fix_simplified_strays(res.txts[0].strip())
+                cand = self._fix_simplified_strays(res.txts[0].strip(),
+                                                   slipping)
                 if not (res.scores and float(res.scores[0]) >= 0.5
                         and 2 <= len(cand) <= 4
                         and all("一" <= c <= "鿿" for c in cand)):
