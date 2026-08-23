@@ -291,7 +291,8 @@ def _rule_between(img, a: Line, b: Line, bg) -> bool:
     if gx1 - gx0 < 2 or y1 - y0 < 8:
         return False
     win = img[y0:y1, gx0:gx1].astype(int)
-    ink = np.abs(win - np.asarray(bg, dtype=int)).max(axis=2) > 60
+    ink = (np.abs(win - np.asarray(bg, dtype=int)).max(axis=2)
+           > style_mod.INK_DIST)
     return bool((ink.mean(axis=0) >= 0.8).any())
 
 
@@ -329,11 +330,12 @@ def merge_row_title_fragments(lines: list[Line], styles: list[Style],
         gap = lines[rgt].bbox[0] - lines[lft].bbox[2]
         if gap > 0.8 * h:
             return False
-        if max(abs(p - q) for p, q in zip(sa.text_rgb, sb.text_rgb)) > 45:
+        # bg_tol=inf on purpose: detector-shattered title fragments sit on
+        # whatever the box happened to catch, so only the fill's PRESENCE is
+        # comparable here — the column rule below is the real separator
+        if not _same_surface(sa, sb, bg_tol=float("inf")):
             return False
-        if (sa.bg_rgb is None) != (sb.bg_rgb is None):
-            return False
-        return not _rule_between(img, a, b, sa.bg_rgb or sb.bg_rgb)
+        return not _rule_between(img, a, b, sa.bg_rgb)
 
     out_l, out_s = [], []
     for i in order:
@@ -420,12 +422,7 @@ def harmonize_code_block_latin(lines: list[Line], styles: list[Style],
             gap = max(li.bbox[1], lj.bbox[1]) - min(li.bbox[3], lj.bbox[3])
             if gap > 0.6 * h:
                 continue  # not vertically stacked / adjacent
-            if (si.bg_rgb is None) != (sj.bg_rgb is None):
-                continue
-            if si.bg_rgb is not None and max(
-                    abs(a - b) for a, b in zip(si.bg_rgb, sj.bg_rgb)) > 25:
-                continue
-            if max(abs(a - b) for a, b in zip(si.text_rgb, sj.text_rgb)) > 45:
+            if not _same_surface(si, sj):
                 continue
             si.font_pt = sj.font_pt
             break
@@ -467,12 +464,7 @@ def harmonize_across_dropped(lines: list[Line], styles: list[Style],
         h = min(la.height, lb.height)
         if abs(la.bbox[0] - lb.bbox[0]) > 0.6 * h:
             continue  # not the same column (shared left edge)
-        if (sa.bg_rgb is None) != (sb.bg_rgb is None):
-            continue
-        if sa.bg_rgb is not None and max(
-                abs(x - y) for x, y in zip(sa.bg_rgb, sb.bg_rgb)) > 25:
-            continue
-        if max(abs(x - y) for x, y in zip(sa.text_rgb, sb.text_rgb)) > 45:
+        if not _same_surface(sa, sb):
             continue
         if sa.est_pt > 0 and sb.est_pt > 0 and abs(sa.est_pt - sb.est_pt) \
                 > 0.20 * max(sa.est_pt, sb.est_pt):
@@ -483,14 +475,13 @@ def harmonize_across_dropped(lines: list[Line], styles: list[Style],
         # the card border clamp_pt records. Wrap-group unification enforces
         # the same ceilings (harmonize_font_sizes).
         target = sa.font_pt
-        for cap in (sb.max_fit_pt, sb.clamp_pt):
-            if cap is not None and target > sb.font_pt:
-                target = min(target, snap_font_size(cap))
-        if target != sb.font_pt and target in FONT_SIZES:
-            sb.font_pt = target
-            sb.bold = sa.bold
-        elif target == sb.font_pt:
-            sb.bold = sa.bold
+        if target > sb.font_pt:
+            for cap in (sb.max_fit_pt, sb.clamp_pt):
+                if cap is not None:
+                    target = min(target, snap_font_size(target, max_pt=cap,
+                                                        tol=1.0))
+        sb.font_pt = target
+        sb.bold = sa.bold
 
 
 def lines_to_blocks(lines: list[Line], styles: list[Style],
@@ -542,6 +533,53 @@ def _autobold_only(st: Style) -> bool:
             and st.font_pt >= 24)
 
 
+def _same_surface(a: Style, b: Style, bg_tol: float = 25,
+                  txt_tol: float = 45) -> bool:
+    """Same text colour and same background fill — the "these two lines are
+    part of one design element" half of every pairing gate in this file.
+    Tolerances default to the calibrated 45/25; the two deliberate outliers
+    (harmonize_stacked_overlap_size at 30, harmonize_chip_bg at 40) pass
+    their own, so an intentional difference is visible as one."""
+    if max(abs(x - y) for x, y in zip(a.text_rgb, b.text_rgb)) > txt_tol:
+        return False
+    if (a.bg_rgb is None) != (b.bg_rgb is None):
+        return False
+    return a.bg_rgb is None or max(
+        abs(x - y) for x, y in zip(a.bg_rgb, b.bg_rgb)) <= bg_tol
+
+
+def _vert_adjacent(la: Line, lb: Line) -> bool:
+    """Stacked close enough, and x-overlapping enough, to be consecutive
+    lines of one block. The geometry half of _wrap_pair, shared so the wrap
+    window cannot drift between the passes that read it."""
+    a, b = (la, lb) if la.bbox[1] <= lb.bbox[1] else (lb, la)
+    h = min(a.height, b.height)
+    if not (-0.6 * h < b.bbox[1] - a.bbox[3] < 0.45 * h):
+        return False
+    ox = min(a.bbox[2], b.bbox[2]) - max(a.bbox[0], b.bbox[0])
+    return ox >= 0.4 * min(a.width, b.width)
+
+
+def _union_groups(n: int, is_pair) -> list[list[int]]:
+    """Transitive closure of a pairwise predicate, as index groups."""
+    parent = list(range(n))
+
+    def find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    for i in range(n):
+        for j in range(i + 1, n):
+            if is_pair(i, j):
+                parent[find(i)] = find(j)
+    groups: dict[int, list[int]] = {}
+    for i in range(n):
+        groups.setdefault(find(i), []).append(i)
+    return list(groups.values())
+
+
 def _wrap_pair(lines: list[Line], styles: list[Style],
                i: int, j: int) -> bool:
     """Are i and j two lines of one wrapped paragraph? The single definition
@@ -553,15 +591,10 @@ def _wrap_pair(lines: list[Line], styles: list[Style],
     for k in (i, j):
         if lines[k].angle or lines[k].arc_sagitta or styles[k].est_pt <= 0:
             return False
+    if not _vert_adjacent(lines[i], lines[j]):
+        return False
     a, b = (i, j) if lines[i].bbox[1] <= lines[j].bbox[1] else (j, i)
-    la, lb = lines[a], lines[b]
     sa, sb = styles[a], styles[b]
-    h = min(la.height, lb.height)
-    if not (-0.6 * h < lb.bbox[1] - la.bbox[3] < 0.45 * h):
-        return False
-    ox = min(la.bbox[2], lb.bbox[2]) - max(la.bbox[0], lb.bbox[0])
-    if ox < 0.4 * min(la.width, lb.width):
-        return False
     if sa.bold != sb.bold:
         # a marginal template-bold verdict must not break a wrap group:
         # 為體系化的高價值資產。 (14pt wrap tail, born snapped 16 / r=0.146
@@ -571,15 +604,10 @@ def _wrap_pair(lines: list[Line], styles: list[Style],
         bs = sa if sa.bold else sb
         if not (_tpl_marginal_bold(bs) or _autobold_only(bs)):
             return False
-    if (sa.bg_rgb is None) != (sb.bg_rgb is None):
-        return False
-    # 25, not 16: photo-panel gradients drift the bg estimate between wrap-
-    # mates (p7 成果/零/研究 measured 180/160/153 and the trio snapped
-    # 18/20/20); cross-chip pairs are still blocked by the gates above
-    if sa.bg_rgb is not None and max(
-            abs(x - y) for x, y in zip(sa.bg_rgb, sb.bg_rgb)) > 25:
-        return False
-    if max(abs(x - y) for x, y in zip(sa.text_rgb, sb.text_rgb)) > 45:
+    # bg tolerance 25, not 16: photo-panel gradients drift the estimate
+    # between wrap-mates (p7 成果/零/研究 measured 180/160/153 and the trio
+    # snapped 18/20/20); cross-chip pairs are blocked by the gates above
+    if not _same_surface(sa, sb):
         return False
     # 14%: p11's wrap pair V1 輿 V2 同時回 (11.8) / AI 要求比對差距 (13.5)
     # differs 12.6%; a true 12-vs-14 pair differs ~19%
@@ -590,23 +618,8 @@ def _wrap_partition(lines: list[Line], styles: list[Style]) -> list[list[int]]:
     """Transitive closure of _wrap_pair — the actual paragraph groups, not
     the direct-neighbour approximation. A 3-line paragraph chains A-B-C with
     A and C never adjacent, so pairwise mates would have let C strand."""
-    n = len(lines)
-    parent = list(range(n))
-
-    def find(i: int) -> int:
-        while parent[i] != i:
-            parent[i] = parent[parent[i]]
-            i = parent[i]
-        return i
-
-    for i in range(n):
-        for j in range(i + 1, n):
-            if _wrap_pair(lines, styles, i, j):
-                parent[find(i)] = find(j)
-    groups: dict[int, list[int]] = {}
-    for i in range(n):
-        groups.setdefault(find(i), []).append(i)
-    return list(groups.values())
+    return _union_groups(len(lines),
+                         lambda i, j: _wrap_pair(lines, styles, i, j))
 
 
 def harmonize_font_sizes(lines: list[Line], styles: list[Style],
@@ -697,15 +710,9 @@ def sync_clamped_twins(lines: list[Line], styles: list[Style]) -> None:
             group_of[i] = g
 
     def _same_family(i: int, k: int, want: float) -> bool:
-        si, sk = styles[i], styles[k]
-        if not sk.bold or sk.font_pt != want or sk.est_pt <= 0:
-            return False
-        if max(abs(a - b) for a, b in zip(si.text_rgb, sk.text_rgb)) > 45:
-            return False
-        if (si.bg_rgb is None) != (sk.bg_rgb is None):
-            return False
-        return si.bg_rgb is None or max(
-            abs(a - b) for a, b in zip(si.bg_rgb, sk.bg_rgb)) <= 25
+        sk = styles[k]
+        return (sk.bold and sk.font_pt == want and sk.est_pt > 0
+                and _same_surface(styles[i], sk))
 
     for i in range(n):
         si = styles[i]
@@ -728,9 +735,7 @@ def sync_clamped_twins(lines: list[Line], styles: list[Style]) -> None:
             grp = group_of.get(j, [j])
             if not all(_same_family(i, k, want) for k in grp):
                 continue
-            ests = sorted(styles[k].est_pt for k in grp)
-            med = (ests[len(ests) // 2] if len(ests) % 2
-                   else (ests[len(ests) // 2 - 1] + ests[len(ests) // 2]) / 2)
+            med = float(np.median([styles[k].est_pt for k in grp]))
             if abs(si.est_pt - med) > 0.10 * max(si.est_pt, med):
                 continue
             for k in grp:
@@ -767,12 +772,7 @@ def harmonize_stacked_overlap_size(lines: list[Line],
             xov = min(a.bbox[2], b.bbox[2]) - max(a.bbox[0], b.bbox[0])
             if xov < 0.4 * min(a.width, b.width):
                 continue
-            if max(abs(x - y) for x, y in zip(sa.text_rgb, sb.text_rgb)) > 45:
-                continue
-            if (sa.bg_rgb is None) != (sb.bg_rgb is None):
-                continue
-            if sa.bg_rgb is not None and max(
-                    abs(x - y) for x, y in zip(sa.bg_rgb, sb.bg_rgb)) > 30:
+            if not _same_surface(sa, sb, bg_tol=30):
                 continue
             minh = min(a.height, b.height)
             yov = min(a.bbox[3], b.bbox[3]) - max(a.bbox[1], b.bbox[1])
@@ -835,12 +835,7 @@ def propagate_column_clamp(lines: list[Line], styles: list[Style]) -> None:
                 continue
             if abs(li.bbox[0] - lj.bbox[0]) > 0.5 * min(li.height, lj.height):
                 continue  # same column (shared left edge)
-            if max(abs(a - b) for a, b in zip(si.text_rgb, sj.text_rgb)) > 45:
-                continue
-            if (si.bg_rgb is None) != (sj.bg_rgb is None):
-                continue
-            if si.bg_rgb is not None and max(
-                    abs(a - b) for a, b in zip(si.bg_rgb, sj.bg_rgb)) > 25:
+            if not _same_surface(si, sj):
                 continue
             sj.font_pt = si.font_pt
             sj.bold = si.bold
@@ -877,71 +872,37 @@ def propagate_row_clamp(lines: list[Line], styles: list[Style]) -> None:
       beside them.
     """
     n = len(lines)
-    parent = list(range(n))
-
-    def find(i: int) -> int:
-        while parent[i] != i:
-            parent[i] = parent[parent[i]]
-            i = parent[i]
-        return i
-
-    def same_surface(a: Style, b: Style) -> bool:
-        if a.bold != b.bold:
-            return False
-        if max(abs(x - y) for x, y in zip(a.text_rgb, b.text_rgb)) > 45:
-            return False
-        if (a.bg_rgb is None) != (b.bg_rgb is None):
-            return False
-        return a.bg_rgb is None or max(
-            abs(x - y) for x, y in zip(a.bg_rgb, b.bg_rgb)) <= 25
 
     def ok(i: int) -> bool:
         return (not lines[i].angle and not lines[i].arc_sagitta
                 and styles[i].est_pt > 0 and styles[i].font_pt in FONT_SIZES)
 
-    # stacks: the vertical neighbours harmonize_font_sizes already unified
-    for i in range(n):
-        if not ok(i):
-            continue
-        for j in range(i + 1, n):
-            if not ok(j) or styles[i].font_pt != styles[j].font_pt:
-                continue
-            a, b = (i, j) if lines[i].bbox[1] <= lines[j].bbox[1] else (j, i)
-            la, lb = lines[a], lines[b]
-            h = min(la.height, lb.height)
-            if not (-0.6 * h < lb.bbox[1] - la.bbox[3] < 0.45 * h):
-                continue
-            ox = min(la.bbox[2], lb.bbox[2]) - max(la.bbox[0], lb.bbox[0])
-            if ox < 0.4 * min(la.width, lb.width):
-                continue
-            if not same_surface(styles[a], styles[b]):
-                continue
-            parent[find(i)] = find(j)
+    def stacked(i: int, j: int) -> bool:
+        # the vertical neighbours harmonize_font_sizes already unified
+        return (ok(i) and ok(j) and styles[i].font_pt == styles[j].font_pt
+                and _vert_adjacent(lines[i], lines[j])
+                and styles[i].bold == styles[j].bold
+                and _same_surface(styles[i], styles[j]))
 
-    stacks: dict[int, list[int]] = {}
-    for i in range(n):
-        if ok(i):
-            stacks.setdefault(find(i), []).append(i)
+    stacks = {k: g for k, g in enumerate(_union_groups(n, stacked))
+              if all(ok(i) for i in g)}
 
-    def med(g: list[int]) -> float:
-        v = sorted(styles[i].est_pt for i in g)
-        return v[len(v) // 2] if len(v) % 2 else (v[len(v) // 2 - 1]
-                                                  + v[len(v) // 2]) / 2
+    def family(a: Style, b: Style) -> bool:
+        return a.bold == b.bold and _same_surface(a, b)
 
-    def span(g: list[int], k0: int, k1: int) -> tuple[float, float]:
-        return (min(lines[i].bbox[k0] for i in g),
-                max(lines[i].bbox[k1] for i in g))
-
-    info = {k: (med(g), span(g, 1, 3), span(g, 0, 2)) for k, g in stacks.items()}
+    info = {k: (float(np.median([styles[i].est_pt for i in g])),
+                (min(lines[i].bbox[1] for i in g),
+                 max(lines[i].bbox[3] for i in g)))
+            for k, g in stacks.items()}
     done: set[frozenset[int]] = set()
     for ka in list(stacks):
-        est_a, (ay0, ay1), _ = info[ka]
+        est_a, (ay0, ay1) = info[ka]
         fam = []
         for kb in stacks:
-            est_b, (by0, by1), _ = info[kb]
+            est_b, (by0, by1) = info[kb]
             if abs(est_a - est_b) > 0.15 * max(est_a, est_b):
                 continue
-            if not same_surface(styles[stacks[ka][0]], styles[stacks[kb][0]]):
+            if not family(styles[stacks[ka][0]], styles[stacks[kb][0]]):
                 continue
             oy = min(ay1, by1) - max(ay0, by0)
             if oy < 0.5 * min(ay1 - ay0, by1 - by0):
@@ -1109,11 +1070,8 @@ def reeval_clamped_bold(lines: list[Line], styles: list[Style]) -> None:
     for st in styles:
         if not st.bold or st.font_pt >= 24:
             continue
-        chroma = max(st.text_rgb) - min(st.text_rgb)
-        dark_chromatic = (chroma > style_mod.CHROMA_MAX and st.bg_rgb is not None
-                          and sum(st.text_rgb) < sum(st.bg_rgb)
-                          and (st.bold_r is None
-                               or st.bold_r < style_mod.CHROMA_TRUST_R))
+        dark_chromatic = style_mod.is_dark_chromatic(
+            st.text_rgb, st.bg_rgb, st.bold_r)
         if (st.bold_r is not None and st.font_pt >= style_mod.TPL_MIN_PT
                 and not dark_chromatic):
             st.bold = st.bold_r >= style_mod.BOLD_R_THRESH

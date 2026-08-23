@@ -252,6 +252,14 @@ def _is_big5(ch: str) -> bool:
         return False
 
 
+def _trad_only(as_trad: str, original: str) -> str:
+    """Accept only the rewrites Big5 cannot spell; leave OpenCC's ambiguous
+    merges (划/劃, 升/昇, 台/臺, 注/註) at whatever the model actually read.
+    Caller guarantees the two strings are the same length."""
+    return "".join(a if a == o or not _is_big5(o) else o
+                   for a, o in zip(as_trad, original))
+
+
 def _emits_simplified(engine, lines) -> bool:
     """Evidence that the rec model slipped into simplified on THIS page.
 
@@ -265,10 +273,12 @@ def _emits_simplified(engine, lines) -> bool:
       - illustration garbage, which is why the vote needs the same confidence
         floor _page_vocab uses.
     """
+    if engine._t2s is None:
+        return False
     for ln in lines:
         if ln.score < 0.8:      # same confidence floor as _page_vocab
             continue
-        if engine._t2s is None or engine._t2s.convert(ln.text) == ln.text:
+        if engine._t2s.convert(ln.text) == ln.text:
             continue                      # pure simplified: depicted content
         for c in ln.text:
             if ("一" <= c <= "鿿" and not _is_big5(c)
@@ -644,8 +654,7 @@ class OcrEngine:
             return text
         if slipping or len(as_trad) != len(text):
             return as_trad
-        return "".join(a if a == o or not _is_big5(o) else o
-                       for a, o in zip(as_trad, text))
+        return _trad_only(as_trad, text)
 
     def _rescue_tilted(self, img_rgb: np.ndarray, line: Line):
         """Low-confidence lines are often tilted (ribbon/arc text the
@@ -1065,8 +1074,7 @@ class OcrEngine:
                 # that spells one word both ways (台北 and 臺北) supplies its
                 # own 'evidence' and this pass would paint a 臺 cover over a
                 # 台 glyph, which CLAUDE.md rates worse than leaving it.
-                as_trad = "".join(a if a == o or not _is_big5(o) else o
-                                  for a, o in zip(as_trad, ln.text))
+                as_trad = _trad_only(as_trad, ln.text)
             if as_trad == ln.text or len(as_trad) != len(ln.text):
                 continue
             runs, start, changed = [], None, False

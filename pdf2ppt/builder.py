@@ -347,6 +347,8 @@ class DeckBuilder:
         leader line or a neighbouring glyph."""
         import numpy as np
 
+        from .style import INK_DIST
+
         st = block.style
         if img is None or st.glow_px <= 0 or st.bg_rgb is None:
             return 0.0, 0.0
@@ -362,7 +364,7 @@ class DeckBuilder:
             if hi <= lo:
                 return 0.0
             win = img[y0:y1, lo:hi].astype(int)
-            inked = (np.abs(win - bg).max(axis=2) > 60).mean(axis=0) > 0.05
+            inked = (np.abs(win - bg).max(axis=2) > INK_DIST).mean(axis=0) > 0.05
             if from_right:
                 inked = inked[::-1]
             return float(np.argmax(inked) if inked.any() else len(inked))
@@ -482,17 +484,20 @@ class DeckBuilder:
                     # genuine gap is never flooded: a glow must actually have
                     # been measured, the two fills must match, the strip must
                     # be short, and nothing but background may sit in it.
-                    if (max(up.style.glow_px, lo.style.glow_px) <= 0
-                            or up.style.bg_rgb is None or lo.style.bg_rgb is None
-                            or max(abs(u - v) for u, v in
-                                   zip(up.style.bg_rgb, lo.style.bg_rgb)) > 20
-                            or lo_y0 - up_y1 > max(8.0, 0.5 * min(
-                                ibot(up) - itop(up), ibot(lo) - itop(lo)))
-                            or x_hi - x_lo < 8
-                            or not self._strip_is_blank(img, up.style.bg_rgb,
-                                                        x_lo, x_hi,
-                                                        up_y1, lo_y0)):
+                    if max(up.style.glow_px, lo.style.glow_px) <= 0:
+                        continue        # no shadow: the gap is a real one
+                    if up.style.bg_rgb is None or lo.style.bg_rgb is None:
                         continue
+                    if max(abs(u - v) for u, v in
+                           zip(up.style.bg_rgb, lo.style.bg_rgb)) > 20:
+                        continue        # two different fills, not one chip
+                    gap_cap = max(8.0, 0.5 * min(ibot(up) - itop(up),
+                                                 ibot(lo) - itop(lo)))
+                    if lo_y0 - up_y1 > gap_cap or x_hi - x_lo < 8:
+                        continue
+                    if not self._strip_is_blank(img, up.style.bg_rgb,
+                                                x_lo, x_hi, up_y1, lo_y0):
+                        continue        # something real stands in the gap
                     seam = (up_y1 + lo_y0) / 2
                     up.style.cover_band_px = (up_y0, seam)
                     lo.style.cover_band_px = (seam, lo_y1)
@@ -506,10 +511,7 @@ class DeckBuilder:
                 boundary = (itop(lo) + ibot(up)) / 2
                 if (bg is not None and x_hi - x_lo >= 8
                         and 0 <= y_lo < y_hi <= img.shape[0]):
-                    win = img[y_lo:y_hi, x_lo:x_hi].astype(int)
-                    row_ink = (np.abs(win - np.asarray(bg, dtype=int))
-                               .max(axis=2) > 60).sum(axis=1)
-                    blank = row_ink <= 0.04 * (x_hi - x_lo)
+                    blank = self._blank_rows(img, bg, x_lo, x_hi, y_lo, y_hi)
                     runs, s = [], None
                     for j, v in enumerate(blank):
                         if v and s is None:
@@ -540,21 +542,30 @@ class DeckBuilder:
                 lo.style.cover_band_px = (max(lo_y0, boundary), lo_y1)
 
     @staticmethod
-    def _strip_is_blank(img, bg, x_lo: int, x_hi: int,
-                        y_lo: float, y_hi: float) -> bool:
-        """No row of img[y_lo:y_hi, x_lo:x_hi] carries glyph-strength ink
-        against `bg` — the same test the seam scan uses, applied to the whole
-        strip so a cover can only be grown across empty background."""
+    def _blank_rows(img, bg, x_lo: int, x_hi: int,
+                    y_lo: float, y_hi: float):
+        """Per-row mask over img[y_lo:y_hi, x_lo:x_hi]: True where no
+        glyph-strength ink stands against `bg`. The seam scan walks it for
+        the widest blank run; _strip_is_blank asks whether it is all True."""
         import numpy as np
 
-        y0, y1 = int(np.floor(y_lo)), int(np.ceil(y_hi))
-        y0, y1 = max(0, y0), min(img.shape[0], y1)
+        from .style import INK_DIST
+
+        y0 = max(0, int(np.floor(y_lo)))
+        y1 = min(img.shape[0], int(np.ceil(y_hi)))
         if y1 <= y0:
-            return True
+            return np.zeros(0, dtype=bool)
         win = img[y0:y1, x_lo:x_hi].astype(int)
         row_ink = (np.abs(win - np.asarray(bg, dtype=int)).max(axis=2)
-                   > 60).sum(axis=1)
-        return bool((row_ink <= 0.04 * (x_hi - x_lo)).all())
+                   > INK_DIST).sum(axis=1)
+        return row_ink <= 0.04 * (x_hi - x_lo)
+
+    @classmethod
+    def _strip_is_blank(cls, img, bg, x_lo: int, x_hi: int,
+                        y_lo: float, y_hi: float) -> bool:
+        """No row of the strip carries glyph-strength ink against `bg`, so a
+        cover may be grown across it."""
+        return bool(cls._blank_rows(img, bg, x_lo, x_hi, y_lo, y_hi).all())
 
     @staticmethod
     def _arc_geometry(block, px_per_pt: float, img=None):
