@@ -181,7 +181,7 @@ uv run python pdf2ppt_gui_2.py         # 圖形介面（或雙擊「啟動.bat�
 
 | 代稱 | 檔案 |
 |---|---|
-| `guard` | 使用者提供的 `AI_Quality_Guardrails.pdf`（p11–p15 案例的來源；⚠️ 使用者已從 Downloads 移除，要再驗需請他重新提供） |
+| `guard` | `C:\SOURCE5\AI協作開發的軟體品質護欄\AI_Quality_Guardrails.pdf`（p11–p15 案例的來源；同資料夾的 `.pptx` 是使用者自己的存檔，**不是基準**） |
 | `trans` | `C:\SOURCE5\Raw_Sources\大模型架構\Transformer_演進地圖_NotebookLM簡報.pdf` |
 | `gptbp` | `C:\SOURCE5\Raw_Sources\大模型架構\GPT图解 大模型是怎样构建的\blueprint\The_GPT_Blueprint.pdf` |
 | `rlbp` | `C:\SOURCE5\FUTURES\AI\Reinforcement_Learning_Blueprint.pdf` |
