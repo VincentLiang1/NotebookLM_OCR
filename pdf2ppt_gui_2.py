@@ -24,9 +24,10 @@ NotebookLM PDF → PPT  桌面轉檔工具（圖形介面）
 OCR / 排版工作全部沿用 pdf2ppt 套件。注意選項清單目前是手抄 cli.py 的
 argparse 定義：在 cli.py 增刪旗標或改預設值時，這裡與 README 的選項表要一起改。
 
-版面：主畫面只留輸入／輸出檔與「色塊改由文字方塊自帶」一個核取方塊，其餘選項
-全部收在預設收合的「進階選項」區（_toggle_advanced）。「色塊改由文字方塊自帶」
-的預設值刻意與 cli.py 的 --cover 相反，兩者的理由見各自的註解。
+版面：主畫面只留輸入／輸出檔，其餘選項全部收在預設收合的「進階選項」區
+（_toggle_advanced）。色塊的選項曾經是主畫面上唯一的核取方塊（要拿它做 A/B），
+2026-08-24 量完之後 cli.py 的預設換成 --no-cover，這裡也就跟著收進進階區、
+反向成「輸出獨立色塊形狀」，預設不勾 —— 三方的預設值現在一致。
 """
 from __future__ import annotations
 
@@ -219,10 +220,11 @@ class App(tk.Tk):
 
         self.fast = tk.BooleanVar(value=False)
         self.no_s2t = tk.BooleanVar(value=False)
-        # ⚠️ 這一個的預設**刻意**與 cli.py 的 --cover 不同（使用者
-        # 2026-08-23 指示預設打開，要看「只有文字方塊帶底色」的效果）。
-        # 其餘布林選項與 argparse 一致，改一邊要改兩邊。
-        self.no_cover = tk.BooleanVar(value=True)
+        # 這一個存的是**反向**旗標：cli.py 的預設是 --no-cover，所以 GUI 拿
+        # 「要不要輸出獨立色塊」當開關（不勾 = 走預設）。2026-08-23 到
+        # 08-24 之間它曾經是主畫面上唯一的核取方塊、且預設與 cli.py 相反，
+        # 量完 A/B 後兩邊的預設對齊了。其餘布林選項與 argparse 一致。
+        self.cover = tk.BooleanVar(value=False)
         self.keep_watermark = tk.BooleanVar(value=False)
         self.keep_tiny_text = tk.BooleanVar(value=False)
         self.merge_lines = tk.BooleanVar(value=False)
@@ -273,13 +275,8 @@ class App(tk.Tk):
             row=1, column=2, pady=(6, 0))
         files.columnconfigure(1, weight=1)
 
-        # ---- 主畫面上唯一留著的選項 ----
-        # 其餘選項全部收進進階區（日常轉檔一項都不必動），只有這一個要拿來
-        # 做 A/B：色塊獨立畫 vs 讓文字方塊自帶底色，兩者在 PowerPoint 裡
-        # 的可編輯性差很多，得看過實際輸出才選得出來
-        ttk.Checkbutton(
-            root, text="色塊改由文字方塊自帶（移動文字時底色跟著走）",
-            variable=self.no_cover).pack(anchor="w", padx=16, pady=(6, 0))
+        # 主畫面到這裡就結束：選項一個都不露出來（日常轉檔一項都不必動）。
+        # 色塊那一項曾經留在這裡做 A/B，量完之後收進了進階區。
 
         # ---- 進階區的收合按鈕 ----
         # 底下兩區建好但不 pack，按下去才用 before=actions 插回原位
@@ -347,6 +344,7 @@ class App(tk.Tk):
             ("保留圖表內小字（預設保留原圖不轉文字）", self.keep_tiny_text),
             ("相鄰同樣式行合併成一個文字方塊", self.merge_lines),
             ("關閉簡體混入修正", self.no_s2t),
+            ("色塊獨立畫成矩形（預設是讓文字方塊自帶底色）", self.cover),
             ("輸出除錯資料（OCR 疊圖 PNG + JSON）", self.debug),
         ]
         # 一列一項：雙欄版的第 0 欄由最長的標籤決定寬度，兩欄合計會超出視窗的
@@ -511,8 +509,8 @@ class App(tk.Tk):
             argv.append("--fast")
         if self.no_s2t.get():
             argv.append("--no-s2t")
-        if self.no_cover.get():
-            argv.append("--no-cover")
+        if self.cover.get():
+            argv.append("--cover")
         if self.keep_watermark.get():
             argv.append("--keep-watermark")
         if self.keep_tiny_text.get():

@@ -182,9 +182,9 @@ def test_every_cli_flag_has_a_gui_control():
     （`--lang` 在 CLI 與 README 都有、GUI 完全沒有，2026-08-16 補上）。
 
     兩個刻意的例外寫在這裡，不是寫在註解裡——例外要能被讀到才算數。"""
-    # --cover 是預設值，GUI 只需要 --no-cover 這一個開關；輸出路徑由 GUI
-    # 自己的存檔對話框決定，不經 --output
-    deliberate = {"--cover", "--output"}
+    # --no-cover 自 2026-08-24 起是預設值，GUI 只需要 --cover 這一個反向
+    # 開關（在進階區）；輸出路徑由 GUI 自己的存檔對話框決定，不經 --output
+    deliberate = {"--no-cover", "--output"}
     missing = [f for f in sorted(_cli_long_flags() - deliberate)
                if f'"{f}"' not in GUI_PY]
     assert not missing, f"pdf2ppt_gui_2.py 沒有對應控制項的旗標：{missing}"

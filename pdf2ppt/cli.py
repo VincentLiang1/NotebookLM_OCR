@@ -189,19 +189,31 @@ def main(argv: list[str] | None = None) -> int:
     # A real pair, not a flag plus an inert twin: an accepted-but-unread
     # --cover made `--no-cover --cover` silently mean no-cover, and it also
     # stole the --c/--co abbreviations from the flag that does something.
+    #
+    # --no-cover is the DEFAULT since 2026-08-24. The two modes were measured
+    # against each other on all 15 pages of `guard` (PowerPoint COM export,
+    # per-pixel diff): the worst page differs on 0.22% of its pixels by >8
+    # levels, all of it hairline background rule at the cover's top edge
+    # (the no-cover band runs 0.20em taller). Visually it is a wash, so the
+    # decision falls to editing: no-cover emits 255 shapes where cover emits
+    # 463, and all 227 text lines behave alike -- under --cover, 19 of them
+    # keep their own fill anyway (two-tone banners, inline highlight, arcs),
+    # so the user cannot tell by looking which lines take one click to
+    # recolor and which take two. See docs/spec/06 for the full comparison.
     cov = ap.add_mutually_exclusive_group()
     cov.add_argument("--no-cover", dest="no_cover", action="store_true",
                      help="carry each block's fill on its own text shape "
                           "instead of a separate cover rectangle, so the "
                           "background travels with the text when you move it "
-                          "in PowerPoint. Two-tone banner lines keep their "
-                          "own cover rects either way (one shape cannot hold "
-                          "two fills), and lines with no usable background "
-                          "estimate stay transparent")
+                          "in PowerPoint (the default). Two-tone banner lines "
+                          "keep their own cover rects either way (one shape "
+                          "cannot hold two fills), and lines with no usable "
+                          "background estimate stay transparent")
     cov.add_argument("--cover", dest="no_cover", action="store_false",
                      help="separate cover rectangles under transparent text "
-                          "boxes (the default)")
-    ap.set_defaults(no_cover=False)
+                          "boxes; deleting a text box then leaves the cover "
+                          "behind, still hiding the raster underneath")
+    ap.set_defaults(no_cover=True)
     ap.add_argument("--keep-watermark", action="store_true",
                     help="keep the bottom-right export watermark (NotebookLM "
                          "/ Gemini Notebook) instead of wiping it")
