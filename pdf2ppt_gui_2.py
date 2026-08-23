@@ -23,6 +23,10 @@ NotebookLM PDF → PPT  桌面轉檔工具（圖形介面）
 這支 GUI 只負責「收集選項 + 呼叫專案的轉檔邏輯 + 即時顯示進度」，真正的
 OCR / 排版工作全部沿用 pdf2ppt 套件。注意選項清單目前是手抄 cli.py 的
 argparse 定義：在 cli.py 增刪旗標或改預設值時，這裡與 README 的選項表要一起改。
+
+版面：主畫面只留輸入／輸出檔與「色塊改由文字方塊自帶」一個核取方塊，其餘選項
+全部收在預設收合的「進階選項」區（_toggle_advanced）。「色塊改由文字方塊自帶」
+的預設值刻意與 cli.py 的 --cover 相反，兩者的理由見各自的註解。
 """
 from __future__ import annotations
 
@@ -42,6 +46,12 @@ from tkinter import filedialog, messagebox, ttk
 
 
 APP_TITLE = "NotebookLM PDF → PPT 轉檔工具"
+
+# 進階區的收合按鈕文字。預設收起來：這些選項全部有校準過的預設值
+# （200 DPI + Microsoft YaHei 是整條管線唯一校準過的作業點），日常轉檔一項
+# 都不必動，攤在主畫面上只是讓「選檔 → 開始轉檔」這條主線被十幾個控制項擋住。
+ADV_SHOW_TEXT = "▸ 進階選項（頁碼、字型、DPI、除錯…）"
+ADV_HIDE_TEXT = "▾ 進階選項（收合）"
 
 # 記住專案位置的設定檔（存在使用者家目錄，跟著使用者走）
 CONFIG_PATH = Path.home() / ".notebooklm_pdf2ppt_gui.json"
@@ -168,8 +178,8 @@ class App(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title(APP_TITLE)
-        self.geometry("760x760")
-        self.minsize(680, 640)
+        self.geometry("760x620")
+        self.minsize(680, 520)
 
         self.log_queue: "queue.Queue" = queue.Queue()
         # 整個行程共用同一個 writer。pdf2ppt 的相依套件會在 import 當下就把
@@ -209,15 +219,21 @@ class App(tk.Tk):
 
         self.fast = tk.BooleanVar(value=False)
         self.no_s2t = tk.BooleanVar(value=False)
-        self.no_cover = tk.BooleanVar(value=False)
+        # ⚠️ 這一個的預設**刻意**與 cli.py 的 --cover 不同（使用者
+        # 2026-08-23 指示預設打開，要看「只有文字方塊帶底色」的效果）。
+        # 其餘布林選項與 argparse 一致，改一邊要改兩邊。
+        self.no_cover = tk.BooleanVar(value=True)
         self.keep_watermark = tk.BooleanVar(value=False)
         self.keep_tiny_text = tk.BooleanVar(value=False)
         self.merge_lines = tk.BooleanVar(value=False)
         self.debug = tk.BooleanVar(value=False)
 
+        # 進階區是否展開（不寫進設定檔：每次開起來都回到最單純的畫面）
+        self.show_advanced = tk.BooleanVar(value=False)
+
     # ---- 介面 ----
     def _build_ui(self) -> None:
-        pad = {"padx": 8, "pady": 4}
+        pad = self._pad = {"padx": 8, "pady": 4}
         root = ttk.Frame(self, padding=12)
         root.pack(fill="both", expand=True)
 
@@ -257,9 +273,25 @@ class App(tk.Tk):
             row=1, column=2, pady=(6, 0))
         files.columnconfigure(1, weight=1)
 
+        # ---- 主畫面上唯一留著的選項 ----
+        # 其餘選項全部收進進階區（日常轉檔一項都不必動），只有這一個要拿來
+        # 做 A/B：色塊獨立畫 vs 讓文字方塊自帶底色，兩者在 PowerPoint 裡
+        # 的可編輯性差很多，得看過實際輸出才選得出來
+        ttk.Checkbutton(
+            root, text="色塊改由文字方塊自帶（移動文字時底色跟著走）",
+            variable=self.no_cover).pack(anchor="w", padx=16, pady=(6, 0))
+
+        # ---- 進階區的收合按鈕 ----
+        # 底下兩區建好但不 pack，按下去才用 before=actions 插回原位
+        toggle_row = ttk.Frame(root)
+        toggle_row.pack(fill="x", padx=8, pady=(2, 0))
+        self.adv_toggle = ttk.Button(toggle_row, text=ADV_SHOW_TEXT,
+                                     width=34,
+                                     command=self._toggle_advanced)
+        self.adv_toggle.pack(side="left")
+
         # ---- 常用選項 ----
-        opt = ttk.LabelFrame(root, text="常用選項", padding=10)
-        opt.pack(fill="x", **pad)
+        opt = self.opt_frame = ttk.LabelFrame(root, text="常用選項", padding=10)
 
         ttk.Label(opt, text="頁碼（例 1-5,8，留空=全部）：").grid(
             row=0, column=0, sticky="w")
@@ -308,14 +340,12 @@ class App(tk.Tk):
             row=4, column=0, columnspan=4, sticky="w", pady=(8, 0))
 
         # ---- 進階開關 ----
-        adv = ttk.LabelFrame(root, text="進階開關", padding=10)
-        adv.pack(fill="x", **pad)
+        adv = self.adv_frame = ttk.LabelFrame(root, text="進階開關", padding=10)
         checks = [
             ("使用快速模型（mobile，較快但繁中較不準）", self.fast),
             ("保留浮水印（NotebookLM／Gemini Notebook）", self.keep_watermark),
             ("保留圖表內小字（預設保留原圖不轉文字）", self.keep_tiny_text),
             ("相鄰同樣式行合併成一個文字方塊", self.merge_lines),
-            ("色塊改由文字方塊自帶（移動文字時底色跟著走）", self.no_cover),
             ("關閉簡體混入修正", self.no_s2t),
             ("輸出除錯資料（OCR 疊圖 PNG + JSON）", self.debug),
         ]
@@ -326,7 +356,7 @@ class App(tk.Tk):
                 row=i, column=0, sticky="w", padx=6, pady=2)
 
         # ---- 動作列 ----
-        actions = ttk.Frame(root)
+        actions = self.actions_frame = ttk.Frame(root)
         actions.pack(fill="x", **pad)
         self.run_btn = ttk.Button(actions, text="開始轉檔", command=self._start)
         self.run_btn.pack(side="left")
@@ -350,6 +380,30 @@ class App(tk.Tk):
         self.log.config(yscrollcommand=sb.set)
         self._append("提示：首次轉檔會自動下載 OCR 模型（約數十 MB），"
                      "期間畫面只會顯示進度條，請耐心等候。\n")
+
+    # ---- 進階區收合 ----
+    def _toggle_advanced(self) -> None:
+        show = not self.show_advanced.get()
+        self.show_advanced.set(show)
+        if show:
+            self.opt_frame.pack(fill="x", before=self.actions_frame,
+                                **self._pad)
+            self.adv_frame.pack(fill="x", before=self.actions_frame,
+                                **self._pad)
+            self.adv_toggle.config(text=ADV_HIDE_TEXT)
+            # 視窗高度是啟動時就寫死的，展開後的內容塞不進去時 pack 只能去壓
+            # 唯一 expand=True 的日誌區（它沒有捲軸可退，只會被壓成幾像素），
+            # 所以不夠高就把視窗撐開。只長不縮：收合後多出來的空間全歸日誌
+            # 區，而視窗管理員可能把我們要的高度夾掉一截（工作區高度），
+            # 「還原成展開前的高度」那種寫法會因為夾掉的那幾像素而失效
+            self.update_idletasks()
+            need = self.winfo_reqheight()
+            if need > self.winfo_height():
+                self.geometry(f"{self.winfo_width()}x{need}")
+        else:
+            self.opt_frame.pack_forget()
+            self.adv_frame.pack_forget()
+            self.adv_toggle.config(text=ADV_SHOW_TEXT)
 
     # ---- 專案位置 ----
     def _refresh_project_label(self) -> None:
