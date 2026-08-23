@@ -7,7 +7,7 @@ if "%~1"=="" (
   echo 用法：把一個或多個 PDF 拖到這個檔案上面。
   echo.
   echo 會用預設選項轉檔，.pptx 直接輸出到 PDF 旁邊、同名。
-  echo 要調選項請改用「啟動.bat」的圖形介面。
+  echo 要調選項請改用「啟動.vbs」的圖形介面。
   echo.
   pause
   exit /b 1

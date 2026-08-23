@@ -21,3 +21,6 @@ verify/
 
 # pytest
 .pytest_cache/
+
+# GUI 啟動記錄（啟動.vbs 重導向的目的地）—— 每次啟動覆寫，不是原始碼
+*.log

@@ -191,6 +191,12 @@ class App(tk.Tk):
         # 第二輪之後這些套件的訊息就會流進一個沒人管的舊物件；共用一個實例
         # 讓那些逃逸的參考在定義上就是對的。
         self.writer = QueueWriter(self.log_queue)
+        # 啟動當下的 stderr，要留著：從「啟動.vbs」進來時它是被 cmd 重導向到
+        # 「啟動.log」的檔案 handle，是沒有黑視窗之後唯一收得到錯誤的地方。
+        # ⚠️ 必須存這個參考而不是每次讀 sys.stderr——轉檔期間 sys.stderr 是
+        # QueueWriter（只到日誌區、關掉視窗就沒了），而錯誤最需要留底的正是
+        # 那段時間。也不可自己開檔寫：cmd 的 `>` 握著同一個檔，會撞在一起。
+        self._boot_stderr = sys.stderr
         self.worker: threading.Thread | None = None
         self.running = False
         self.project_dir: Path | None = find_project_dir()
@@ -598,8 +604,12 @@ class App(tk.Tk):
         except SystemExit as e:        # argparse 在參數錯誤時會 raise 這個
             rc = int(e.code) if isinstance(e.code, int) else 1
         except Exception:
+            tb = traceback.format_exc()
             self.log_queue.put("\n[發生錯誤]\n")
-            self.log_queue.put(traceback.format_exc())
+            self.log_queue.put(tb)
+            # 也留一份底：此刻 sys.stderr 是 QueueWriter，只到日誌區，關掉
+            # 視窗就沒了；轉檔失敗正是事後最需要拿得出訊息的時候
+            self._write_log("[轉檔失敗] argv=" + repr(argv) + "\n" + tb)
         finally:
             sys.stdout, sys.stderr = old_out, old_err
             try:
@@ -687,6 +697,41 @@ class App(tk.Tk):
         except tk.TclError:
             pass
         self.log.see("end")
+
+    # ---- 錯誤留底 ----
+    def _write_log(self, text: str) -> None:
+        """把錯誤寫回啟動當下的 stderr —— 從「啟動.vbs」進來時那就是
+        「啟動.log」，從「啟動.bat」進來時那就是主控台。
+
+        兩種入口都不必特別處理，也不必知道 log 檔在哪：重導向是啟動端的事，
+        這裡只負責把東西交到那條管子上。全程吞例外——留底失敗絕不能反過來
+        變成新的錯誤，蓋掉真正要記的那一個。"""
+        out = self._boot_stderr
+        if out is None:          # pythonw 在沒有任何 handle 時 stderr 就是 None
+            return
+        try:
+            out.write(text if text.endswith("\n") else text + "\n")
+            out.flush()
+        except Exception:
+            pass
+
+    def report_callback_exception(self, exc, val, tb) -> None:
+        """Tk 對 callback 裡漏出來的例外預設只印 stderr、不彈任何東西。
+
+        有黑視窗時那還算看得到，改用「啟動.vbs」之後就是徹底靜默——按鈕沒反應
+        而畫面毫無說明。改成三件事都做：寫 log、進日誌區、彈對話框。"""
+        text = "".join(traceback.format_exception(exc, val, tb))
+        self._write_log("[未預期的錯誤]\n" + text)
+        try:
+            self._append("\n[未預期的錯誤]\n" + text)
+        except Exception:
+            pass
+        try:
+            messagebox.showerror(
+                "發生未預期的錯誤",
+                f"{val}\n\n完整內容已寫進專案資料夾的「啟動.log」。")
+        except Exception:
+            pass
 
     # ---- 關閉 ----
     def _on_close(self) -> None:

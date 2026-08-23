@@ -12,24 +12,27 @@
 
 ```powershell
 uv sync                                # 建環境（雙擊「安裝.bat」也是跑這句）；rapidocr 首次轉檔才下載 ONNX 模型
-uv run pytest                          # 文件與程式碼的一致性（tests/test_docs.py）
+uv run pytest                          # 文件與程式碼的一致性（tests/test_docs.py、tests/test_docs_index.py）
 uv run python pdf2ppt.py "input.pdf"          # 完整轉換 -> input.pptx
 uv run python pdf2ppt.py in.pdf -o out.pptx --pages 1-2 --debug   # 快速迭代：指定頁 + 疊框 PNG/JSON
 uv run python tools/compare_pptx.py generated.pptx reference.pptx # 與參考簡報比對文字召回率
-uv run python pdf2ppt_gui_2.py         # 圖形介面（或雙擊「啟動.bat」）
+uv run python pdf2ppt_gui_2.py         # 圖形介面（或雙擊「啟動.vbs」，不開黑視窗）
 ```
 
 ⚠️ **GUI 的選項清單是手抄 `cli.py` 的 argparse 定義**（標籤、預設值、`--device` 的 choices、粗體模式的旗標對應）。在 `cli.py` 增刪旗標或改預設值時，`pdf2ppt_gui_2.py` 與 README 的選項表必須同一輪一起改 —— 已經漂移過一次（`--lang` 在 CLI 與 README 都有、GUI 完全沒有對應控制項，2026-08-16 補上）。
 
 ⚠️ **GUI 主畫面一個選項都不露出來**（使用者 2026-08-23／08-24 指示，見 `_toggle_advanced`）：只留輸入／輸出檔，其餘全部收進預設收合的「進階選項」區（理由：那些值日常一項都不必動，攤在主畫面上只是擋住主線）。**預設值三方一致**（2026-08-24 起）—— 色塊那一項曾經是主畫面上唯一的核取方塊、且刻意與 `cli.py` 相反以便做 A/B，量完之後 `cli.py` 的預設改成 `--no-cover`，GUI 也收進進階區並**反向**成「色塊獨立畫成矩形」（存 `self.cover`、預設不勾、勾了才送 `--cover`）。⚠️ **GUI 存的是反向旗標**，所以 `tests/test_docs.py` 的三方一致例外清單是 `{"--no-cover", "--output"}`（不是 `--cover`）。
 
-自動化測試只有 `tests/test_docs.py`（文件與程式碼的一致性）；**轉換品質沒有自動測試**，靠的是四份 deck 全跑加目視比對（見下方「驗證」）。
+自動化測試只有 `tests/test_docs.py`（文件與程式碼的一致性）與 `tests/test_docs_index.py`（指路不得斷掉、`CLAUDE.md` 字元上限，2026-08-24 隨文件分層規範加入）；**轉換品質沒有自動測試**，靠的是四份 deck 全跑加目視比對（見下方「驗證」）。
+
+⚠️ **動到 `啟動.vbs`、`啟動.bat` 或 GUI 的啟動／錯誤處理路徑之前先讀 `docs/dev/gui-啟動與錯誤留底.md`**：藏掉主控台就等於藏掉所有錯誤，所以要有東西接住（決策層級的那一句在 `docs/spec/09-執行環境與效能.md` §9.5，那一份放綁著 Windows／VBScript／Tkinter 的實作細節）。
 
 ## 協作方式
 
 以下**必須當場生效**，所以抄在這裡——完整理由、沿革與災情紀錄在 `docs/dev/collaboration.md`，只寫在那裡等於沒寫（要有人想到去讀才載得進來）。
 
 - ⚠️ **使用者說「記住 / 記憶下來」= 寫進 repo，不是寫進 Claude Code 的記憶功能**（2026-08-17 自 `meeting-scribe` 移植）：記憶目錄在 `%USERPROFILE%\.claude\projects\<由專案路徑編出來的名字>\`、**在 repo 之外且 git 不追蹤**，而使用者換電腦的方式是**複製專案資料夾**——寫在那裡的東西一份都帶不走，光是把專案搬到別的資料夾，那個依路徑編出來的目錄名就對不上了。聽到時：**必須當場生效**的規則寫進**這一份**（只有 `CLAUDE.md` 每次自動載入）、門檻的理由與反例寫 `docs/spec/` 對應章節、協作方式的沿革與災情寫 `docs/dev/`，兩者都要在這裡留一句指路；然後**一併提交推送**，並**在回覆裡說清楚寫進哪個檔**，好讓他知道換機器之後還在。⚠️ 同理，全域的 `C:\Users\vli\.claude\CLAUDE.md` 也帶不走——跨專案規則若對本專案是關鍵的，就在這裡再寫一份。沿革見 `docs/dev/collaboration.md` §1。
+- **文件分三層，決定「這段話該寫哪一層」或要新增文件之前先讀 `docs/dev/documentation.md`**（2026-08-24 定案）：`CLAUDE.md` 只放每次載入都值得的硬護欄與指路（有字元上限，測試守著）、`docs/spec/` 放**換一種語言重寫仍然成立**的問題與決策、`docs/dev/` 放綁著這份實作的細節。⚠️ **平台變體住在 `docs/spec/` 底下的平台子目錄**，頂層永遠只有 spec 與 dev 兩個。⚠️ **那份規範三個 repo（meeting-scribe / MP4-2-SRT / NotebookLM_OCR）各存一份、措辭一致，改了要一起改**。
 - **回覆使用者一律用繁體中文**（台灣用語），不必等他提醒；專有名詞、API 名稱、程式碼、路徑、log 原文照原樣保留。使用者的**內容領域也是繁中**——這正是 OCR 必須用 PP-OCRv5 **server** 辨識模型而非預設 v4 mobile 的理由。
 - **git commit 訊息一律繁體中文**（使用者 2026-06-11 指示）：技術名詞、函式名、常數、px 數值保留原文；訊息內**避免雙引號**（PowerShell 5.1 會截斷），結尾加 `Co-Authored-By`。
 - **修正完成並驗證後自動 commit + push，不要再問**（使用者 2026-06-11 指示）；**功能新增或修改時 `README.md` 要在同一輪同步更新後一起提交**（判準：使用者看得到的行為變了沒有）。⚠️ **`CLAUDE.md` 是被 git 追蹤的**——`.gitignore` 只擋 `*.pdf`／`*.pptx`／`verify/`／`*.debug.*` 那幾類，提交時不要漏掉它。
@@ -199,7 +202,8 @@ uv run python pdf2ppt_gui_2.py         # 圖形介面（或雙擊「啟動.bat�
 - PowerShell 會吃掉 `python -c` 單行指令中的雙引號；這類情況請改用 Bash 工具或腳本檔。git commit 訊息中的雙引號也會被截斷 — 訊息避免使用雙引號
 - 中文輸出字型預設 Microsoft YaHei（之前為 Noto Sans TC）；**所有拉丁字元一律輸出 Arial，但 ≥28pt 的大標題拉丁改用 Arial Narrow**（使用者指示 2026-06-12：來源字型拉丁較窄，p4「Layer 0: 三層架構分工與 Karpathy 模式知識庫」用 Arial 渲染明顯過長 — 改字型、不可降字級）：每個 run 設 `<a:latin>`=Arial/Arial Narrow（依 `NARROW_MIN_PT`） + `<a:ea>`=YaHei，PowerPoint 按字元類別自動選用，中英混排同行雙字型、不需拆 run；`--font` 只控制東亞字型。寬度量測用 `C:\Windows\Fonts\msyh.ttc`（純拉丁且 ≥3 字的行改用 arial.ttf、出生估字級 ≥28 的行拉丁段改用 ARIALN.TTF 與輸出一致 — 2 字短串的寬度夾制騎在 snap 平手點上，曾把 p8「98」籌片從 20pt 推成 24pt 粗體；`_cjk_band_height` 的單字映射一律維持 YaHei 度量、不可改）；本機另有 Noto Sans TC 在 `%LOCALAPPDATA%\Microsoft\Windows\Fonts\` 作為備援
 - 提交與推送、回覆語言、字型選擇等協作規則見上方「協作方式」章節
-- 相依鎖定的理由（為什麼是 `onnxruntime-directml`、為什麼 `rapidocr` 鎖在 3.8）、效能數字與三個 `.bat` 入口見 `docs/spec/09-執行環境與效能.md`
+- 相依鎖定的理由（為什麼是 `onnxruntime-directml`、為什麼 `rapidocr` 鎖在 3.8）、效能數字與四個入口見 `docs/spec/09-執行環境與效能.md`
+- ⚠️ **`啟動.vbs`（無黑視窗）藏掉主控台＝藏掉所有錯誤**，所以錯誤一律寫進 `啟動.log`；**動到啟動或錯誤處理路徑之前先讀 `docs/dev/gui-啟動與錯誤留底.md`**（決策層在 `docs/spec/09` §9.5）。兩個違反了才會發現的陷阱：GUI 留底要寫 `App.__init__` **存起來的** `self._boot_stderr`，**不可讀當下的 `sys.stderr`**（轉檔期間那是 `QueueWriter`，只到日誌區、關窗就沒）；**也不可自己 open 那個 log 檔**（cmd 的 `>` 全程握著它）
 
 ## 量過而否決的路（別再做一次）
 

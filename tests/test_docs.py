@@ -162,8 +162,13 @@ def test_documented_symbols_exist_in_the_code():
     assert HISTORICAL <= cited, (
         f"白名單裡有文件已經不提的符號，該刪了：{sorted(HISTORICAL - cited)}")
     for hit in cited - HISTORICAL:
+        # 三種定義形式：def/class、模組層級常數，以及**實例屬性**
+        # （`self._boot_stderr = ...`）。第三種是 2026-08-24 補的：文件指得到
+        # 實例屬性是正常的，少了它會逼著文件改寫成 `self._x` 只為了閃過測試，
+        # 那等於用「規避」換「通過」，守備範圍反而變小
         if not re.search(rf"\b(?:def|class)\s+{re.escape(hit)}\b|"
-                         rf"^\s*{re.escape(hit)}\s*[:=]", src, re.M):
+                         rf"^\s*{re.escape(hit)}\s*[:=]|"
+                         rf"\bself\.{re.escape(hit)}\s*[:=][^=]", src, re.M):
             problems.append(hit)
     assert not problems, (
         "文件提到但程式裡找不到定義的符號：" + "、".join(sorted(problems)))

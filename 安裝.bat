@@ -12,6 +12,6 @@ if errorlevel 1 (
   exit /b 1
 )
 echo.
-echo 安裝完成。之後請雙擊「啟動.bat」開圖形介面，或把 PDF 拖到「轉檔.bat」上面。
+echo 安裝完成。之後請雙擊「啟動.vbs」開圖形介面，或把 PDF 拖到「轉檔.bat」上面。
 echo   註：OCR 模型（約 100MB）會在第一次轉檔時自動下載，需要一次網路。
 pause
