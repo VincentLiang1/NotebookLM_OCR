@@ -87,6 +87,12 @@ BOLD_R_THRESH = 0.13     # midpoint of regular max 0.09 / bold min 0.17
 # green cells (stroke_rel ~0.10) from the genuinely-bold green header
 # (~0.17). Achromatic body/cells sit at chroma <=6; chromatic labels at >=20.
 CHROMA_MAX = 15
+CHROMA_TRUST_R = 0.35   # the chromatic fallback only covers the template's
+#                         MARGINAL band: the measured false positives topped
+#                         out at r=0.27 (p11 研究員), so a verdict this far
+#                         above BOLD_R_THRESH stands even on coloured text
+#                         (p6's navy list headings, r=0.44/0.57, came out
+#                         regular beside their identically-styled sibling)
 TPL_MARGINAL_R = 0.22    # below this a template bold verdict is marginal:
 #                          cohort votes and wrap groups may overturn it
 #                          (人類輸入 r=0.25 is the lowest confirmed real
@@ -305,8 +311,11 @@ def _surface_around_ink(inner: np.ndarray, ink: np.ndarray,
     until it has faded into the fill.
 
     Returns ((colour, share) or None when nothing settled, glow radius in px,
-    colour of the first band or None). The radius is how far the drift
-    reached -- 0 when the first band already settled, i.e. no shadow at all --
+    colour of the first band or None). The radius runs to the OUTER edge of
+    the band that confirmed the surface, not the inner one: HALO_SETTLED
+    tolerates 5 units of residual, so the inner edge still carried ~9 units
+    of shadow and p14's caption banner kept a visible line under its last
+    row. 0 when the first band already settled, i.e. no shadow at all --
     and the cover has to swallow it or the source shadow survives as a dark
     fringe around every painted rectangle. The first band's colour is the
     shadow at its darkest, which _glow_free_bg uses to tell a clean
@@ -326,7 +335,7 @@ def _surface_around_ink(inner: np.ndarray, ink: np.ndarray,
                   - bands[i + 1][0].astype(int)).max() <= HALO_SETTLED:
             return (bands[i + 1],
                     0.0 if i == 0 else float(HALO_SKIP_PX
-                                             + (i + 1) * HALO_BAND_PX),
+                                             + (i + 2) * HALO_BAND_PX),
                     near)
     return (None,
             float(HALO_SKIP_PX + HALO_BANDS * HALO_BAND_PX) if bands else 0.0,
@@ -1511,7 +1520,8 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
         # the white-on-dark case the template IS calibrated for, so keep it.
         chroma = max(text_rgb) - min(text_rgb)
         dark_chromatic = (chroma > CHROMA_MAX and bg_rgb is not None
-                          and sum(text_rgb) < sum(bg_rgb))
+                          and sum(text_rgb) < sum(bg_rgb)
+                          and (bold_r is None or bold_r < CHROMA_TRUST_R))
         if font_pt >= 24:
             bold = True
         elif (bold_r is not None and font_pt >= TPL_MIN_PT

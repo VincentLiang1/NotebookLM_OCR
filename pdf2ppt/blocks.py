@@ -661,6 +661,29 @@ def sync_clamped_twins(lines: list[Line], styles: list[Style]) -> None:
     same text color / background surface, similar line length, exactly
     one snap step apart."""
     n = len(lines)
+
+    def _wrap_mates(j: int) -> list[int]:
+        """Lines that harmonize_font_sizes already unified with j — same
+        size, adjacent, x-overlapping, same weight/colour/fill."""
+        out = []
+        for k in range(n):
+            if k == j or styles[k].font_pt != styles[j].font_pt:
+                continue
+            if styles[k].bold != styles[j].bold:
+                continue
+            a, b = (lines[j], lines[k]) if lines[j].bbox[1] <= lines[k].bbox[1]                 else (lines[k], lines[j])
+            h = min(a.height, b.height)
+            if not (-0.6 * h < b.bbox[1] - a.bbox[3] < 0.45 * h):
+                continue
+            ox = min(a.bbox[2], b.bbox[2]) - max(a.bbox[0], b.bbox[0])
+            if ox < 0.4 * min(a.width, b.width):
+                continue
+            if max(abs(x - y) for x, y
+                   in zip(styles[k].text_rgb, styles[j].text_rgb)) > 45:
+                continue
+            out.append(k)
+        return out
+
     for i in range(n):
         si = styles[i]
         if not si.bold or si.est_pt <= 0:
@@ -670,24 +693,43 @@ def sync_clamped_twins(lines: list[Line], styles: list[Style]) -> None:
                 or FONT_SIZES.index(want) - FONT_SIZES.index(si.font_pt) != 1):
             continue
         emi = _measure_em(lines[i].text) or text_width_em(lines[i].text)
-        for j in range(n):
+
+        def _twin_ok(j: int, check_em: bool = True) -> bool:
             sj = styles[j]
             if j == i or not sj.bold or sj.font_pt != want or sj.est_pt <= 0:
-                continue
+                return False
             if abs(si.est_pt - sj.est_pt) > 0.10 * max(si.est_pt, sj.est_pt):
-                continue
+                return False
             if max(abs(a - b)
                    for a, b in zip(si.text_rgb, sj.text_rgb)) > 45:
-                continue
+                return False
             if (si.bg_rgb is None) != (sj.bg_rgb is None):
-                continue
+                return False
             if si.bg_rgb is not None and max(
                     abs(a - b) for a, b in zip(si.bg_rgb, sj.bg_rgb)) > 25:
-                continue
+                return False
+            if not check_em:
+                return True   # a wrap-mate belongs with j by construction;
+            #                   the length heuristic is for unrelated lines
             emj = _measure_em(lines[j].text) or text_width_em(lines[j].text)
-            if emi and emj and not (0.6 <= emi / emj <= 1.6):
+            return not (emi and emj) or 0.6 <= emi / emj <= 1.6
+
+        for j in range(n):
+            if not _twin_ok(j):
                 continue
-            sj.font_pt = si.font_pt
+            # a wrap group moves whole or not at all: p15's lead sentence
+            # 'AI 讓「一直以來划不來' matched a clamped BODY line closely
+            # enough (est 26.6 vs 24.4) to be dragged 24->20 while its own
+            # wrap-mate '的事」變得划得來。' (est 28.4) did not match and
+            # stayed at 24, splitting one sentence across two sizes. p11's
+            # 分級 / (low~xhigh) cell is the opposite case: the mate matches
+            # perfectly and only failed the LENGTH heuristic (2 em vs 6),
+            # which says nothing about a line already known to belong here.
+            mates = _wrap_mates(j)
+            if not all(_twin_ok(k, check_em=False) for k in mates):
+                continue
+            for t in (j, *mates):
+                styles[t].font_pt = si.font_pt
 
 
 def harmonize_stacked_overlap_size(lines: list[Line],
@@ -745,8 +787,13 @@ def harmonize_stacked_overlap_size(lines: list[Line],
                 return h if h > 0 else ln.height
 
             ba, bb = _band(sa, a), _band(sb, b)
+            # 0.10, not 0.15: p7's callout title 盲改 CSS3 次不中 (band 114,
+            # 28pt) sat 14.9% from its body line 'AI 講得很有道理…' (band 97,
+            # 20pt) and was dragged two whole steps down. The wrap-mate pairs
+            # this shape exists for measure far closer (p13 第三階段 122 vs
+            # 擴展與制度重構 114 = 6.6%).
             nat_close = (ba > 0 and bb > 0
-                         and abs(ba - bb) <= 0.15 * max(ba, bb))
+                         and abs(ba - bb) <= 0.10 * max(ba, bb))
             clamped = ssm.font_pt < snap_font_size(ssm.est_pt)
             if not (box_overlap or (adjacent and nat_close and clamped)):
                 continue
@@ -1059,7 +1106,9 @@ def reeval_clamped_bold(lines: list[Line], styles: list[Style]) -> None:
             continue
         chroma = max(st.text_rgb) - min(st.text_rgb)
         dark_chromatic = (chroma > style_mod.CHROMA_MAX and st.bg_rgb is not None
-                          and sum(st.text_rgb) < sum(st.bg_rgb))
+                          and sum(st.text_rgb) < sum(st.bg_rgb)
+                          and (st.bold_r is None
+                               or st.bold_r < style_mod.CHROMA_TRUST_R))
         if (st.bold_r is not None and st.font_pt >= style_mod.TPL_MIN_PT
                 and not dark_chromatic):
             st.bold = st.bold_r >= style_mod.BOLD_R_THRESH

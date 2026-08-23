@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import math
 import re
+from functools import lru_cache
 from statistics import median
 
 import numpy as np
@@ -237,6 +238,25 @@ def _looks_like_filled_icon(img: np.ndarray, bbox) -> bool:
     t = np.clip(np.dot(p - a, ab) / max(1e-6, np.dot(ab, ab)), 0.0, 1.0)
     residual = float(np.linalg.norm(p - (a + t * ab)))
     return residual >= 45.0
+
+
+@lru_cache(maxsize=4096)
+def _is_big5(ch: str) -> bool:
+    """Whether the character exists in Big5 — i.e. can be Traditional at all.
+    True for the ambiguous pairs OpenCC merges (划, 升, 台, 注, 征), False for
+    simplified-only forms (恶, 实, 内, 两, 决)."""
+    try:
+        ch.encode("cp950")
+        return True
+    except UnicodeEncodeError:
+        return False
+
+
+def _emits_simplified(texts) -> bool:
+    """Any ideograph on the page that Big5 cannot write — the rec model
+    demonstrably slipped here, so its ambiguous readings are suspect too."""
+    return any("一" <= c <= "鿿" and not _is_big5(c)
+               for t in texts for c in t)
 
 
 def _fix_warning_icon(text: str, char_boxes, img: np.ndarray):
@@ -585,10 +605,18 @@ class OcrEngine:
             except ImportError:
                 pass
 
-    def _fix_simplified_strays(self, text: str) -> str:
+    def _fix_simplified_strays(self, text: str, slipping: bool = True) -> str:
         """Convert to Traditional only when a line MIXES both scripts: a
         pure-simplified line is intentional content (e.g. a depicted search
-        query), a mixed line is the rec model slipping on single glyphs."""
+        query), a mixed line is the rec model slipping on single glyphs.
+
+        `slipping` says whether the page gave any evidence of a real slip
+        (see _emits_simplified). Without it, only characters that CANNOT be
+        Traditional are rewritten: OpenCC also merges pairs where BOTH forms
+        are valid Traditian characters (划/劃, 升/昇, 台/臺, 注/註), and on a
+        page the model read correctly those rewrites are pure damage —
+        划得來 became 劃得來, 拉升 became 拉昇, 注定 became 註定 (user
+        2026-08-23; every one verified against the render)."""
         if self._s2t is None:
             return text
         as_trad = self._s2t.convert(text)
@@ -596,7 +624,10 @@ class OcrEngine:
             return text
         if self._t2s.convert(text) == text:  # pure simplified: keep
             return text
-        return as_trad
+        if slipping or len(as_trad) != len(text):
+            return as_trad
+        return "".join(a if a == o or not _is_big5(o) else o
+                       for a, o in zip(as_trad, text))
 
     def _rescue_tilted(self, img_rgb: np.ndarray, line: Line):
         """Low-confidence lines are often tilted (ribbon/arc text the
@@ -860,6 +891,10 @@ class OcrEngine:
         # preliminary page vocabulary (from the confidently-read raw lines)
         # so the trailing-CJK recovery can validate a recovered token
         vocab = self._page_vocab(lines)
+        # did the rec model actually slip into simplified anywhere on this
+        # page? A character that cannot be written in Big5 is proof; without
+        # any, _fix_simplified_strays leaves the ambiguous pairs alone
+        page_slipping = _emits_simplified(ln.text for ln in lines)
         for ln in lines:
             # tilted lines were already rectified by the detector; the
             # rotation rescue only helps when the tilt was NOT detected
@@ -892,7 +927,7 @@ class OcrEngine:
                     ln.bbox = (blt_x0, ln.bbox[1], ln.bbox[2], ln.bbox[3])
             ln.text = _pangu_spacing(ln.text).strip()
             ln.text = _fix_trailing_degree(ln.text)
-            ln.text = self._fix_simplified_strays(ln.text)
+            ln.text = self._fix_simplified_strays(ln.text, page_slipping)
             ln.text = _fix_confusions(ln.text)
             new_text = _normalize_bullet(ln.text)
             if new_text != ln.text:
