@@ -27,38 +27,46 @@
 
 ## 安裝
 
-需求：Python 3.10+（開發環境為 3.14）、Windows/macOS/Linux
+需求：Windows、[uv](https://docs.astral.sh/uv/)（Python 由 uv 自己準備，目前鎖在 3.14）
+
+**雙擊「安裝.bat」**即可，它做的就是一句 `uv sync`。手動的話：
 
 ```bash
-pip install -r requirements.txt
+uv sync
 ```
+
+第一次會下載約 300MB（`onnxruntime-directml` 佔大宗），之後由 `uv.lock` 鎖住版本，換電腦重跑一樣的組合。OCR 模型（約 100MB）另外在**第一次轉檔**時自動下載，需要一次網路。
+
+裝好之後三個入口：
+
+| 檔案 | 做什麼 |
+|---|---|
+| **啟動.bat** | 開圖形介面（`pdf2ppt_gui_2.py`），可以逐項調選項 |
+| **轉檔.bat** | 把一個或多個 PDF **拖到它上面**，用預設選項轉檔，`.pptx` 直接輸出到 PDF 旁邊、同名 |
+| **安裝.bat** | 建環境／更新相依套件 |
 
 中文輸出字型預設為 Microsoft YaHei（Windows 內建），可用 `--font` 改成其他字型；英文（拉丁字元）一律輸出為 Arial、**大標題（≥28pt）改用 Arial Narrow**（來源簡報的拉丁字較窄，長標題用 Arial 會明顯過長）— 中英混排的行會同時呈現兩種字型（PowerPoint 的字元級字型機制，單一 run 即可承載）。
 
-### GPU 加速（選用）
+### GPU 加速
 
-OCR 推論支援 GPU，實測 **快約 4×**（Intel Arc 140V：整份 15 頁簡報 50 秒，CPU 為 210 秒）。依硬體擇一安裝對應的 onnxruntime 套件（取代預設的 CPU 版 `onnxruntime`）：
+**不需要任何額外安裝或設定**：相依套件裡直接綁的就是 `onnxruntime-directml`（Windows 上任何支援 DirectX 12 的 GPU：Intel Arc/Iris、AMD、NVIDIA 皆可），實測 **快約 4×**（Intel Arc 140V：整份 15 頁簡報 50 秒，CPU 為 210 秒）。
+
+`--device` 預設為 `auto`，依可用性自動選用 DirectML > CUDA > CPU，執行時會印出 `Inference device: dml/cuda/cpu` 供確認；也可用 `--device dml/cuda/cpu` 強制指定。NVIDIA 的 CUDA 路徑要另外 `uv pip install onnxruntime-gpu`。
+
+> ⚠️ **不要改裝成 CPU 版的 `onnxruntime`**：DirectML 版是「取代」CPU 版的完整 build（同時提供 CPUExecutionProvider），裝了 CPU 版就沒有 GPU，而且**首次**執行需要一次性的驅動 shader 編譯、那次速度看起來與 CPU 差不多——所以裝錯了不會當場發現，只會一直慢 4 倍。編譯結果會由顯示驅動快取到磁碟，**第二次起**才看得到完整的加速效果。
+
+### 開發
 
 ```bash
-# Windows（任何支援 DirectX 12 的 GPU：Intel Arc/Iris、AMD、NVIDIA 皆可）
-pip uninstall onnxruntime
-pip install onnxruntime-directml
-
-# NVIDIA GPU（需 CUDA 環境，Windows/Linux）
-pip uninstall onnxruntime
-pip install onnxruntime-gpu
+uv run pytest          # 文件與程式碼的一致性測試（tests/test_docs.py）
 ```
-
-安裝後**不需任何額外設定**：`--device` 預設為 `auto`，會依可用性自動選用 DirectML > CUDA > CPU，執行時會印出 `Inference device: dml/cuda/cpu` 供確認；也可用 `--device dml/cuda/cpu` 強制指定。
-
-> **注意**：DirectML **首次**執行需要一次性的驅動 shader 編譯，該次速度看起來與 CPU 差不多 — 這是正常現象，編譯結果會由顯示驅動快取到磁碟，**第二次起**才會看到完整的 GPU 加速效果。
 
 ## 使用方式
 
 ### 圖形介面
 
 ```bash
-python pdf2ppt_gui_2.py
+uv run python pdf2ppt_gui_2.py
 ```
 
 在專案根目錄執行即可（它會自己找到同目錄的 `pdf2ppt` 套件）。介面上挑輸入 PDF、輸出位置與選項，按「開始轉檔」，轉檔進度即時顯示在下方日誌區。功能與下列命令列選項一一對應，唯一多做的事是把選項組成命令列後在背景執行緒呼叫同一支 `pdf2ppt.cli.main()`。
@@ -70,10 +78,10 @@ python pdf2ppt_gui_2.py
 ### 命令列
 
 ```bash
-python pdf2ppt.py input.pdf                    # 輸出 input.pptx
-python pdf2ppt.py input.pdf -o output.pptx     # 指定輸出檔名
-python pdf2ppt.py input.pdf --pages 1-5,8      # 只轉指定頁
-python pdf2ppt.py input.pdf --keep-watermark   # 保留右下角的匯出浮水印
+uv run python pdf2ppt.py input.pdf                    # 輸出 input.pptx
+uv run python pdf2ppt.py input.pdf -o output.pptx     # 指定輸出檔名
+uv run python pdf2ppt.py input.pdf --pages 1-5,8      # 只轉指定頁
+uv run python pdf2ppt.py input.pdf --keep-watermark   # 保留右下角的匯出浮水印
 ```
 
 ### 選項
@@ -133,7 +141,7 @@ PDF 頁面 ──PyMuPDF 渲染(200dpi)──▶ 頁面影像 ─┬─▶ 投�
 倉庫附有比對工具，可把轉換結果與參考 PPTX 做文字召回率比對：
 
 ```bash
-python tools/compare_pptx.py generated.pptx reference.pptx
+uv run python tools/compare_pptx.py generated.pptx reference.pptx
 ```
 
 在 15 頁的範例簡報上，文字召回率 100%。

@@ -9,7 +9,7 @@ NotebookLM PDF → PPT  桌面轉檔工具（圖形介面）
 使用方式
 --------
 1. 先安裝相依套件（在專案資料夾內執行）：
-       pip install -r requirements.txt
+       uv sync
    （需要 GPU 加速可另外 pip install onnxruntime-directml / onnxruntime-gpu）
 
 2. 在專案根目錄執行：
@@ -539,7 +539,7 @@ class App(tk.Tk):
                         f"原始錯誤：{e}") from e
                 raise ModuleNotFoundError(
                     f"缺少相依套件 {e.name}。\n"
-                    f"請在 {proj} 執行：pip install -r requirements.txt\n"
+                    f"請在 {proj} 執行：uv sync\n"
                     f"原始錯誤：{e}") from e
             self.loaded_from = proj
             rc = main(argv)

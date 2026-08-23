@@ -43,7 +43,9 @@
 
 ## 5. 參考檔的來歷（拿錯檔會得到假的品質數字）
 
-- `SOURCE.pptx` 是**文字**基準，**只**用於 `tools/compare_pptx.py` 的召回率比對。⚠️ **絕不可拿它校準樣式**：它的粗體/字級旗標是從我們自己更早的輸出繼承來的（使用者只修文字、不修樣式），2026-06-12 那批漏判的粗體在參考檔裡**同樣是錯的**。樣式的真值只有一個：**PDF 渲染圖的目視比對**。
+⚠️ **`SOURCE.pdf` 與 `SOURCE.pptx` 已於 2026-08 由使用者刪除，救不回來**：`.gitignore` 從第一個 commit 起就擋 `*.pdf`／`*.pptx`，它們**從未進過版控**（`git log --all --diff-filter=A` 是空的，兩個 dangling commit 也只有 `.py`／`.md`），回收桶與全機掃描也都沒有。現行語料見 `CLAUDE.md` 的「驗證」章。以下是它們還在時的來歷，留著是因為「參考檔不可拿來校準樣式」這條教訓對任何新的參考檔照樣成立：
+
+- （已刪）`SOURCE.pptx` 是**文字**基準，**只**用於 `tools/compare_pptx.py` 的召回率比對。⚠️ **絕不可拿它校準樣式**：它的粗體/字級旗標是從我們自己更早的輸出繼承來的（使用者只修文字、不修樣式），2026-06-12 那批漏判的粗體在參考檔裡**同樣是錯的**。樣式的真值只有一個：**PDF 渲染圖的目視比對**。
 - 使用者 OneDrive 裡的 `LLM WikiI資料攝入工作流.pptx` 是 DeckEdit 輸出**再由使用者手動修正過**的版本（可當文字真值）；`DECKEDIT結果.pptx` 是未修正的原始 DeckEdit 輸出。
 - DeckEdit 在第 3、5、7、8、9、14、15 頁完全沒有輸出文字（我們的轉換器有），所以比對報表出現 `ref=0` 的列是預期內的。
 
@@ -59,9 +61,9 @@
 
 ```bash
 rm -rf verify/ *.debug.json *.debug.p*.png dbg*.pptx dbg.* _dbg_*.py nul.* *.tmp.png
-ls -1   # 目視確認只剩原始碼 + SOURCE.pdf / SOURCE.pptx / 產出的 .pptx
+ls -1   # 目視確認只剩原始碼、設定檔、.bat 與產出的 .pptx
 ```
 
 `ls -1` 那步是**強制**的——它才是抓得到「漏了一個 glob」的那一步。
 
-⚠️ 永遠不要刪 `SOURCE.pdf`、`SOURCE.pptx`，以及要交給使用者驗收的產出 `.pptx`。臨時檔一律寫到 scratchpad 目錄，不要落在專案裡。
+⚠️ 永遠不要刪要交給使用者驗收的產出 `.pptx`（`SOURCE.pdf`／`SOURCE.pptx` 已不存在，見 §5）。臨時檔一律寫到 scratchpad 目錄，不要落在專案裡。

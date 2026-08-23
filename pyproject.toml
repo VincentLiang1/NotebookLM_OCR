@@ -1,0 +1,38 @@
+[project]
+name = "notebooklm-pdf-2-ppt"
+version = "0.1.0"
+description = "把 NotebookLM 簡報 PDF 轉成可編輯 PowerPoint（全解析度背景圖 + 實心蓋板 + 樣式比對過的可編輯文字）"
+requires-python = ">=3.12"
+dependencies = [
+    "pymupdf>=1.27",
+    "python-pptx>=1.0",
+    "pillow>=10",
+    "numpy>=1.26",
+    # ⬆️ 不可放到 3.9：3.9.2 改掉了模型設定的 API，本專案的參數在它上面直接
+    # ValueError: Invalid OCR configuration.（2026-08-23 uv 建環境時實際撞到）
+    "rapidocr>=3.8,<3.9",
+    # ⚠️ onnxruntime-directml，不是 onnxruntime：DirectML 版是「取代」CPU 版的
+    # 完整 build（同時提供 CPUExecutionProvider），裝了 CPU 版就沒有 GPU。實測
+    # Intel Arc 140V 全份 50s vs CPU 210s（快 4.2×），而首跑要付一次驅動 shader
+    # 編譯、看起來與 CPU 同速 —— 裝錯了不會當場發現，只會一直慢 4 倍。
+    # 這個專案只在 Windows 上跑（PowerShell COM 匯出、cp950 .bat、
+    # C:\Windows\Fonts\msyh.ttc 量字寬），所以直接綁平台。
+    "onnxruntime-directml>=1.24; sys_platform == 'win32'",
+    "onnxruntime>=1.26; sys_platform != 'win32'",
+    "opencc-python-reimplemented>=0.1.7",
+]
+
+[dependency-groups]
+dev = ["pytest>=8.0"]
+
+[tool.uv]
+# 這個 repo 不做成套件安裝：進入點是根目錄的 `pdf2ppt.py` 與 `pdf2ppt_gui_2.py`
+# 兩個腳本，而根目錄同時有 `pdf2ppt.py` 與 `pdf2ppt/` 套件（同名），做成 wheel
+# 只會製造麻煩。uv 只負責管依賴與 .venv。
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# 測試 `import pdf2ppt`／`import tools.compare_pptx` 時要看得到專案根目錄。
+# uv 不安裝本專案（見上面的 package = false），所以這條是必要的，不是方便。
+pythonpath = ["."]

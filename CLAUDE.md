@@ -9,16 +9,17 @@
 ## 常用指令
 
 ```powershell
-pip install -r requirements.txt        # rapidocr 首次執行會下載 ONNX 模型（需要一次網路）
-python pdf2ppt.py "input.pdf"          # 完整轉換 -> input.pptx
-python pdf2ppt.py in.pdf -o out.pptx --pages 1-2 --debug   # 快速迭代：指定頁 + 疊框 PNG/JSON
-python tools/compare_pptx.py generated.pptx reference.pptx # 與參考簡報比對文字召回率
-python pdf2ppt_gui_2.py                # 圖形介面（在專案根目錄執行）
+uv sync                                # 建環境（雙擊「安裝.bat」也是跑這句）；rapidocr 首次轉檔才下載 ONNX 模型
+uv run pytest                          # 文件與程式碼的一致性（tests/test_docs.py）
+uv run python pdf2ppt.py "input.pdf"          # 完整轉換 -> input.pptx
+uv run python pdf2ppt.py in.pdf -o out.pptx --pages 1-2 --debug   # 快速迭代：指定頁 + 疊框 PNG/JSON
+uv run python tools/compare_pptx.py generated.pptx reference.pptx # 與參考簡報比對文字召回率
+uv run python pdf2ppt_gui_2.py         # 圖形介面（或雙擊「啟動.bat」）
 ```
 
 ⚠️ **GUI 的選項清單是手抄 `cli.py` 的 argparse 定義**（標籤、預設值、`--device` 的 choices、粗體模式的旗標對應）。在 `cli.py` 增刪旗標或改預設值時，`pdf2ppt_gui_2.py` 與 README 的選項表必須同一輪一起改 —— 已經漂移過一次（`--lang` 在 CLI 與 README 都有、GUI 完全沒有對應控制項，2026-08-16 補上）。
 
-本專案沒有自動化測試；驗證方式是轉換範例 PDF 並與參考 PPTX 比對（見下方「驗證」）。
+自動化測試只有 `tests/test_docs.py`（文件與程式碼的一致性）；**轉換品質沒有自動測試**，靠的是四份 deck 全跑加目視比對（見下方「驗證」）。
 
 ## 協作方式
 
@@ -55,7 +56,7 @@ python pdf2ppt_gui_2.py                # 圖形介面（在專案根目錄執行
 以下是經過校準才得到的關鍵不變量 — 不要隨意更動：
 
 - **兩套座標系**：PDF 頁面可以是任何尺寸（範例：1376×768 pt = 19.1 吋寬），但投影片固定為 12192000 EMU（960 pt）寬。字級必須換算到「投影片」點數空間：`px_to_slide_pt = 960 / image_width`。
-- **字級來自字墨而非 OCR 框**：RapidOCR 偵測框的留白不一致。`style.py` 量測框內緊貼字形墨水的高度，再除以 `CJK_INK_RATIO = 0.91`（用 PowerPoint COM 實際渲染輸出、回測墨水高度所得的實證值）。字墨列要**分群取最重的群**（空隙 > 8px 即切群；行內真實空隙如 i 的點 ≤ ~4px）— 跨進框內的外來墨水會灌高字墨帶、放大字級、讓蓋板塗掉鄰近內容：膠囊框線的圓角/反鋸齒列佔寬 < 0.85 混進字墨（images/ 案例：離主帶 16 空白列）；上一行的底線 `_` 與下一行的字頂也會壓進框內（graph.sh 案例：各離主帶 9 空白列，門檻曾是 0.12×框高=11.4 而漏切）。
+- **字級來自字墨而非 OCR 框**：RapidOCR 偵測框的留白不一致。`style.py` 量測框內緊貼字形墨水的高度，再除以 `CJK_INK_RATIO = 0.875`（用 PowerPoint COM 實際渲染輸出、回測墨水高度所得的實證值；原本是 0.91，commit 4c97794 重新校準成 0.875 而本檔漏改，2026-08-23 由 `tests/test_docs.py` 首次執行時拓出）。字墨列要**分群取最重的群**（空隙 > 8px 即切群；行內真實空隙如 i 的點 ≤ ~4px）— 跨進框內的外來墨水會灌高字墨帶、放大字級、讓蓋板塗掉鄰近內容：膠囊框線的圓角/反鋸齒列佔寬 < 0.85 混進字墨（images/ 案例：離主帶 16 空白列）；上一行的底線 `_` 與下一行的字頂也會壓進框內（graph.sh 案例：各離主帶 9 空白列，門檻曾是 0.12×框高=11.4 而漏切）。
 - **密集粗體字墨帶不可被 `MAX_INK_ROW_FRAC` 切碎**（`style.py` 的緊字墨界計算，使用者回報 2026-06-14）：`MAX_INK_ROW_FRAC=0.85` 是用來剔除「整列幾乎全是墨」的 ribbon 背景列，但**密集粗體文字在其最擠的中段列也會超過 0.85**（p14 白色粗體「Redmine 工單開立與完成時間戳」峰值 0.90、「全力建構內部 Codebase Skill」0.94，真實心 ribbon 才 ~1.0），這些列被剔除後在字墨帶中間打洞、heaviest-group 分組把帶切成碎片、只剩一小片 → 量成 6–10pt（該行其實是填滿框的 24pt 大字）。**修法**：仍把近實心列從帶的 row set 剔除，但分組時**只在「真正空白縫（>8 列無任何字墨）」切組、橋接被 cap 剔除的近實心列**（span 含被橋接的密集列）。對正常行（無近實心列）與舊的鄰行分離案例（graph.sh 9 空白列、images/ 16 空白列）邏輯完全等價——它們本就由空白縫分隔。連帶修好 p13 金色塊（第二階段：試點 從 10.5pt 救回、漏偵測的「同步補強 DORA 地基」也回來了）。
 - **同卡堆疊標籤統一字級**（`blocks.py` 的 `harmonize_stacked_overlap_size`，**在 `harmonize_font_sizes` 之前跑**，使用者回報 2026-06-14）：同一張卡片上下堆疊、原稿同字級的標籤行，pipeline 量成不同字級。**必須在字級調和前跑**，否則調和會把已修正的字級重新併回去。兩種失效形狀，皆拉到較小（可靠）字級，同卡閘門＝同粗體/文字色（≤45）/底色（≤30）＋x 重疊 ≥0.4×min 寬：
   - **(A) 偵測框 y 重疊**（>0.12×min 高）：上框吃進下行字頂、上行字墨帶捕捉鄰字而高估（p8「單一」疊「主專案」、原稿同 24 但單一量 28）。框 y 重疊本身就是異常訊號。
@@ -174,18 +175,31 @@ python pdf2ppt_gui_2.py                # 圖形介面（在專案根目錄執行
 
 ## 驗證
 
-1. `python pdf2ppt.py "SOURCE.pdf" -o generated.pptx`
-2. `python tools/compare_pptx.py generated.pptx "SOURCE.pptx"` — 真實內容行預期 100% 召回；被 `drop_illegible_lines` 刻意丟棄的插圖雜訊行（參考檔若未過濾會含有）列為 MISS 屬預期，逐條確認 MISS 都是雜訊/留圖行即可。⚠️ **`SOURCE.pptx` 只是「文字」基準，絕不可拿來校準樣式**：它的粗體／字級旗標是從我們自己更早的輸出繼承來的（使用者只修文字、不修樣式），2026-06-12 那批漏判的粗體**在參考檔裡同樣是錯的**；樣式的真值只有一個——PDF 渲染圖的目視比對。來歷見 `docs/dev/collaboration.md` §5
-3. 視覺驗證：用 PowerPoint COM 把投影片匯出成 PNG（`$pp = New-Object -ComObject PowerPoint.Application; ...Slides.Item($i).Export(path,"PNG",1376,768)`），與 `pymupdf` 的頁面渲染圖上下並排比對，比對圖放 `verify/`。
-4. **不要重新產生 `SOURCE.pptx`**（使用者指示 2026-06-12）：每輪修正只產生並保留 `generated.pptx` 給使用者自行驗證；`SOURCE.pptx` 由使用者管理、僅作為步驟 2 的比對基準。
+⚠️ **`SOURCE.pdf` 與 `SOURCE.pptx` 已於 2026-08 由使用者刪除，救不回來**（`.gitignore` 從第一個 commit 起就擋 `*.pdf`／`*.pptx`，它們**從未進過版控**；回收桶與全機掃描也都沒有）。連帶後果要記住：本檔「架構」章裡引用**早期 p-編號**的案例（p5 Git Hook 家族、p8 單一/主專案、p13 第三階段、p14 啟動【技術解法】…）**再也無法回歸測試**，只剩文字記錄；2026-08-23 那輪 code review 就因此無法驗證 `nat_close` 門檻的餘裕。⚠️ **p-編號有兩種來源**：p11–p15 那批新的（藍籌片投影、橘色橫幅、五張並排卡片、步驟徽章「2」）指的是 `AI_Quality_Guardrails`，不是 SOURCE.pdf。
+
+現行語料是磁碟上這四份 deck（比單一 deck 更廣，2026-08-23 的每一次驗證都跑在它們上面）：
+
+| 代稱 | 檔案 |
+|---|---|
+| `guard` | 使用者提供的 `AI_Quality_Guardrails.pdf`（p11–p15 案例的來源；⚠️ 使用者已從 Downloads 移除，要再驗需請他重新提供） |
+| `trans` | `C:\SOURCE5\Raw_Sources\大模型架構\Transformer_演進地圖_NotebookLM簡報.pdf` |
+| `gptbp` | `C:\SOURCE5\Raw_Sources\大模型架構\GPT图解 大模型是怎样构建的\blueprint\The_GPT_Blueprint.pdf` |
+| `rlbp` | `C:\SOURCE5\FUTURES\AI\Reinforcement_Learning_Blueprint.pdf` |
+
+驗證步驟：
+
+1. `uv run pytest` — 文件與程式碼的一致性（常數值、指路、CLI 旗標三方一致、否決索引）。**這一支只驗機器驗得到的**，語意的真值仍然只有步驟 3。
+2. **四份 deck 全跑、逐行對照 `--debug` 的 JSON**：改動前先跑一輪存成基準，改完再跑一輪，比對每一行的 `text`／`font_pt`／`bold`／`bg_rgb`／`text_rgb`／`est_pt`。**預期是零差異**——有差異的每一行都要能說出為什麼，說不出來就是回歸。這比「跑一份看起來對」強得多：2026-08-23 靠它抓到「一個 +3px 的取樣半徑讓 16 行底色漂移 7–14 個單位、數行整個落到鄰近表面」。
+3. **視覺驗證（樣式的唯一真值）**：用 PowerPoint COM 把投影片匯出成 PNG（`$pp = New-Object -ComObject PowerPoint.Application; ...Slides.Item($i).Export(path,"PNG",1376,768)`），與 `pymupdf` 的頁面渲染圖上下並排比對，比對圖放 `verify/`。
+4. `uv run python tools/compare_pptx.py generated.pptx reference.pptx` — 文字召回率比對。⚠️ **參考檔絕不可拿來校準樣式**：舊的 `SOURCE.pptx` 的粗體／字級旗標是從我們自己更早的輸出繼承來的（使用者只修文字、不修樣式），2026-06-12 那批漏判的粗體**在參考檔裡同樣是錯的**。來歷見 `docs/dev/collaboration.md` §5。目前沒有現成的參考檔，這一步只在使用者提供時做。
 5. **刪除其餘驗證產物**（使用者指示，⚠️ **這條失守過兩次**：2026-06-12、2026-06-14，兩次成因一模一樣）：**不要憑記憶手打片段的 `rm`**——兩次都是漏了 `--debug` 的疊圖 `*.debug.p*.png`，而且 `.gitignore` 已經涵蓋這些檔，所以 `git status` 看起來乾淨、**把殘留藏起來了**（**乾淨的 git status 不等於乾淨的工作目錄**）。每一輪的**最後一個動作**跑一次完整掃描：
 
    ```bash
    rm -rf verify/ *.debug.json *.debug.p*.png dbg*.pptx dbg.* _dbg_*.py nul.* *.tmp.png
-   ls -1   # 強制：目視確認只剩原始碼 + SOURCE.pdf/SOURCE.pptx + 要交付的 .pptx
+   ls -1   # 強制：目視確認只剩原始碼、設定檔、.bat 與要交付的 .pptx
    ```
 
-   `ls -1` 那步不可省——它才是抓得到「漏掉一個 glob」的那一步。永遠不要刪 `SOURCE.pdf`、`SOURCE.pptx` 與要交給使用者驗收的產出 `.pptx`；臨時檔一律寫到 scratchpad 目錄，不要落在專案裡。見 `docs/dev/collaboration.md` §6。
+   `ls -1` 那步不可省——它才是抓得到「漏掉一個 glob」的那一步。**永遠不要刪要交給使用者驗收的產出 `.pptx`**；臨時檔一律寫到 scratchpad 目錄，不要落在專案裡。見 `docs/dev/collaboration.md` §6。
 
 ## 環境注意事項
 

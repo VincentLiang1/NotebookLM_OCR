@@ -18,3 +18,6 @@ verify/
 # Claude Code 的本機東西：權限允許清單（settings.json）與 worktree 工作副本。
 # 換電腦是複製整個專案資料夾，所以它照樣帶得走，不必靠 git（與 MP4-2-SRT 一致）
 .claude/
+
+# pytest
+.pytest_cache/
