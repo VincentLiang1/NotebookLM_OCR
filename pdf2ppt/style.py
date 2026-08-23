@@ -46,6 +46,11 @@ BLUR_PX = 6
 
 RING_PX = 4            # background sampled from this ring around the bbox
 BG_MIN_SHARE = 0.55    # below this dominance the ring is not a flat background
+# --- surface walk outward from the strokes (see _surface_around_ink) ---
+HALO_SKIP_PX = 3       # anti-aliasing next to the strokes, tinted by the text
+HALO_BAND_PX = 3       # width of one sampling band
+HALO_BANDS = 5         # ... so the walk reaches 3 + 5*3 = 18px from the ink
+HALO_SETTLED = 5       # two bands within this distance are the same surface
 INK_DIST = 60        # Chebyshev distance from bg to count a pixel as ink
 MIN_INK_ROW_PX = 3   # a row needs this many ink pixels to count toward height
 MAX_INK_ROW_FRAC = 0.85  # rows nearly all "ink" are background outside a ribbon
@@ -264,6 +269,49 @@ def _dilate(mask: np.ndarray, times: int = 3) -> np.ndarray:
                 | np.roll(mask, 1, 0) | np.roll(mask, -1, 0)
                 | np.roll(mask, 1, 1) | np.roll(mask, -1, 1))
     return mask
+
+
+def _grow(mask: np.ndarray, times: int = 1) -> np.ndarray:
+    """_dilate without the wrap-around: np.roll carries the last row onto the
+    first, which at the distances _surface_around_ink walks would smear the
+    glyph ring onto the opposite edge of the crop."""
+    for _ in range(times):
+        out = mask.copy()
+        out[1:] |= mask[:-1]
+        out[:-1] |= mask[1:]
+        out[:, 1:] |= mask[:, :-1]
+        out[:, :-1] |= mask[:, 1:]
+        mask = out
+    return mask
+
+
+def _surface_around_ink(inner: np.ndarray, ink: np.ndarray,
+                        min_px: int = 60) -> tuple[np.ndarray, float] | None:
+    """Colour of the surface the glyphs sit on, measured outward from the ink.
+
+    Sampling one annulus beside the strokes assumes that annulus IS a surface.
+    Decks that give their text a soft drop shadow break the assumption: the
+    annulus lands inside the shadow and the cover comes out a darkened version
+    of the chip (AI_Quality_Guardrails p11-p15 painted [83,129,169] patches on
+    a [81,144,201] chip). So walk outward one band at a time and accept a band
+    only once the NEXT band out agrees with it: a real surface agrees at the
+    first band (identical to sampling the annulus), a shadow keeps drifting
+    until it has faded into the fill. Never settling means no surface was
+    found near the glyphs -- the caller keeps whatever it had."""
+    prev = _grow(ink, HALO_SKIP_PX)
+    bands = []
+    for _ in range(HALO_BANDS):
+        cur = _grow(prev, HALO_BAND_PX)
+        shell = cur & ~prev
+        prev = cur
+        if shell.sum() < min_px:
+            break
+        bands.append(_dominant_color(inner[shell]))
+    for i in range(len(bands) - 1):
+        if np.abs(bands[i][0].astype(int)
+                  - bands[i + 1][0].astype(int)).max() <= HALO_SETTLED:
+            return bands[i + 1]
+    return None
 
 
 def _core_color(inner: np.ndarray, mask: np.ndarray,
@@ -1093,12 +1141,9 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
     if bg_rgb is None and len(rows) and ink.sum() >= 30:
         band_ink = np.zeros_like(ink)
         band_ink[rows[0]:rows[-1] + 1] = ink[rows[0]:rows[-1] + 1]
-        near = _dilate(band_ink, 3)
-        halo = _dilate(near, 3) & ~near
-        if halo.sum() >= 60:
-            halo_col, share = _dominant_color(inner[halo])
-            if share >= 0.65:
-                bg_rgb = tuple(int(v) for v in halo_col)
+        found = _surface_around_ink(inner, band_ink)
+        if found is not None and found[1] >= 0.65:
+            bg_rgb = tuple(int(v) for v in found[0])
 
     # --- mixed-line CJK band (font size only): latin descenders (g/p/y,
     # parens, /) drop below the ideograph band and stretch the whole-line
@@ -1136,15 +1181,15 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
         if cjk_h:
             ink_h_font_px = min(ink_h_px, cjk_h)
 
-    # --- halo refinement: the cover color should match the pixels near the
-    # glyphs, not the ring (which may lie on a different band, e.g. black
-    # text on a near-white strip between grey strips). Skip the 3px closest
-    # to the strokes: that's the anti-aliasing zone, tinted by the text. ---
+    # --- halo refinement: the cover color should match the surface the glyphs
+    # sit on, not the ring (which may lie on a different band, e.g. black text
+    # on a near-white strip between grey strips). _surface_around_ink skips
+    # the anti-aliasing zone AND any drop shadow, and reports nothing when the
+    # colour never settles -- then the ring stands. ---
     if bg_rgb is not None and text_rgb_override is None:
-        near = _dilate(ink, 3)
-        halo = _dilate(near, 3) & ~near
-        if halo.sum() >= 60:
-            halo_col, halo_share = _dominant_color(inner[halo])
+        found = _surface_around_ink(inner, ink)
+        if found is not None:
+            halo_col, halo_share = found
             # only override when the ring clearly sat on a different
             # surface; for same-surface cases the ring color is purer
             if (halo_share >= BG_MIN_SHARE
