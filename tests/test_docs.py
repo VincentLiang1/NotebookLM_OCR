@@ -265,3 +265,34 @@ def test_claude_md_points_at_every_spec_chapter():
     missing = [name for n, name in sorted(_spec_numbers().items())
                if n != 0 and name not in CLAUDE_MD]
     assert not missing, f"CLAUDE.md 沒有指向這些章節：{missing}"
+
+
+def test_flow_chapters_say_when_to_read_them():
+    """流程六章每一章開頭都要寫「動到 X 之前請先讀完這一章」。
+
+    這是從 `meeting-scribe` 的 `docs/dev/*.md` 學來的：把「什麼時候該讀」
+    **寫死在文件裡**，而不是指望讀的人自己判斷。一章規格沒人讀到，
+    跟沒寫是一樣的。"""
+    trigger = "之前請先讀完這一章"
+    missing = [name for n, name in sorted(_spec_numbers().items())
+               if 3 <= n <= 8 and trigger not in SPEC_TEXT[name]]
+    assert not missing, f"這幾章沒寫「什麼時候該讀」：{missing}"
+
+
+def test_the_map_says_when_to_read_every_chapter():
+    """§0.3 的文件地圖每一列都要有「什麼時候讀」。
+
+    地圖是讀者第一眼看到的東西；只列檔名與內容的話，他要把十二章
+    都點開才知道哪一章跟手上的事有關。"""
+    nums = _spec_numbers()
+    overview = SPEC_TEXT[nums[0]]
+    problems = []
+    for ln in overview.split('\n'):
+        if not ln.startswith("| `") or ".md`" not in ln:
+            continue
+        cells = [c.strip() for c in ln.strip().strip("|").split("|")]
+        if len(cells) < 3 or not cells[-1]:
+            problems.append(ln[:60])
+    assert not problems, ("地圖這幾列沒寫「什麼時候讀」："
+                          + "".join('\n  ' + q for q in problems))
+
