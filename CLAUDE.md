@@ -27,7 +27,7 @@ uv run python pdf2ppt_gui_2.py         # 圖形介面（或雙擊「啟動.vbs�
 
 自動化測試只有 `tests/test_docs.py`（文件與程式碼的一致性）與 `tests/test_docs_index.py`（指路不得斷掉、`CLAUDE.md` 字元上限，2026-08-24 隨文件分層規範加入）；**轉換品質沒有自動測試**，靠的是四份 deck 全跑加目視比對（見下方「驗證」）。
 
-⚠️ **動到 `啟動.vbs`、`啟動（顯示訊息）.bat` 或 GUI 的啟動／錯誤處理路徑之前先讀 `docs/dev/gui-啟動與錯誤留底.md`**：藏掉主控台就等於藏掉所有錯誤，所以要有東西接住（決策層級的那一句在 `docs/spec/09-執行環境與效能.md` §9.5，那一份放綁著 Windows／VBScript／Tkinter 的實作細節）。
+⚠️ **動到 `啟動.vbs`、`啟動（顯示訊息）.bat` 或 GUI 的啟動／錯誤處理路徑之前先讀 `docs/dev/gui-啟動與錯誤留底.md`**：藏掉主控台就等於藏掉所有錯誤，所以要有東西接住（決策層級的那一句在 `docs/spec/09-執行環境與效能.md` §9.3，那一份放綁著 Windows／VBScript／Tkinter 的實作細節）。
 
 ## 協作方式
 
@@ -182,7 +182,7 @@ uv run python pdf2ppt_gui_2.py         # 圖形介面（或雙擊「啟動.vbs�
 | `gptbp` | `C:\SOURCE5\Raw_Sources\大模型架構\GPT图解 大模型是怎样构建的\blueprint\The_GPT_Blueprint.pdf` |
 | `rlbp` | `C:\SOURCE5\FUTURES\AI\Reinforcement_Learning_Blueprint.pdf` |
 
-驗證步驟（完整版見 `docs/spec/10-驗收準則與測試策略.md`）：
+驗證步驟（**為什麼這樣驗**見 `docs/spec/10-驗收準則與測試策略.md`；**照著打就能跑的指令、語料路徑與清掃 glob** 見 `docs/dev/verification.md`）：
 
 1. `uv run pytest` — 文件與程式碼的一致性（常數值、指路、CLI 旗標三方一致、否決索引）。**這一支只驗機器驗得到的**，語意的真值仍然只有步驟 3。
 2. **四份 deck 全跑、逐行對照 `--debug` 的 JSON**：改動前先跑一輪存成基準，改完再跑一輪，比對每一行的 `text`／`font_pt`／`bold`／`bg_rgb`／`text_rgb`／`est_pt`。**預期是零差異**——有差異的每一行都要能說出為什麼，說不出來就是回歸。這比「跑一份看起來對」強得多：2026-08-23 靠它抓到「一個 +3px 的取樣半徑讓 16 行底色漂移 7–14 個單位、數行整個落到鄰近表面」。
@@ -204,8 +204,8 @@ uv run python pdf2ppt_gui_2.py         # 圖形介面（或雙擊「啟動.vbs�
 - PowerShell 會吃掉 `python -c` 單行指令中的雙引號；這類情況請改用 Bash 工具或腳本檔。git commit 訊息中的雙引號也會被截斷 — 訊息避免使用雙引號
 - 中文輸出字型預設 Microsoft YaHei（之前為 Noto Sans TC）；**所有拉丁字元一律輸出 Arial，但 ≥28pt 的大標題拉丁改用 Arial Narrow**（使用者指示 2026-06-12：來源字型拉丁較窄，p4「Layer 0: 三層架構分工與 Karpathy 模式知識庫」用 Arial 渲染明顯過長 — 改字型、不可降字級）：每個 run 設 `<a:latin>`=Arial/Arial Narrow（依 `NARROW_MIN_PT`） + `<a:ea>`=YaHei，PowerPoint 按字元類別自動選用，中英混排同行雙字型、不需拆 run；`--font` 只控制東亞字型。寬度量測用 `C:\Windows\Fonts\msyh.ttc`（純拉丁且 ≥3 字的行改用 arial.ttf、出生估字級 ≥28 的行拉丁段改用 ARIALN.TTF 與輸出一致 — 2 字短串的寬度夾制騎在 snap 平手點上，曾把 p8「98」籌片從 20pt 推成 24pt 粗體；`_cjk_band_height` 的單字映射一律維持 YaHei 度量、不可改）；本機另有 Noto Sans TC 在 `%LOCALAPPDATA%\Microsoft\Windows\Fonts\` 作為備援
 - 提交與推送、回覆語言、字型選擇等協作規則見上方「協作方式」章節
-- 相依鎖定的理由（為什麼是 `onnxruntime-directml`、為什麼 `rapidocr` 鎖在 3.8）、效能數字與四個入口見 `docs/spec/09-執行環境與效能.md`
-- ⚠️ **`啟動.vbs`（無黑視窗）藏掉主控台＝藏掉所有錯誤**，所以錯誤一律寫進 `啟動.log`；**動到啟動或錯誤處理路徑之前先讀 `docs/dev/gui-啟動與錯誤留底.md`**（決策層在 `docs/spec/09` §9.5）。兩個違反了才會發現的陷阱：GUI 留底要寫 `App.__init__` **存起來的** `self._boot_stderr`，**不可讀當下的 `sys.stderr`**（轉檔期間那是 `QueueWriter`，只到日誌區、關窗就沒）；**也不可自己 open 那個 log 檔**（cmd 的 `>` 全程握著它）
+- 相依鎖定、字型檔路徑、cp950／PowerShell、四個入口與 GUI 手抄清單的細節見 `docs/dev/windows-環境與入口.md`；決策層（為什麼要 GPU build、首跑編譯不可當效能結論、換字型要重跑回歸）在 `docs/spec/09-執行環境與效能.md`
+- ⚠️ **`啟動.vbs`（無黑視窗）藏掉主控台＝藏掉所有錯誤**，所以錯誤一律寫進 `啟動.log`；**動到啟動或錯誤處理路徑之前先讀 `docs/dev/gui-啟動與錯誤留底.md`**（決策層在 `docs/spec/09` §9.3）。兩個違反了才會發現的陷阱：GUI 留底要寫 `App.__init__` **存起來的** `self._boot_stderr`，**不可讀當下的 `sys.stderr`**（轉檔期間那是 `QueueWriter`，只到日誌區、關窗就沒）；**也不可自己 open 那個 log 檔**（cmd 的 `>` 全程握著它）
 
 ## 量過而否決的路（別再做一次）
 
