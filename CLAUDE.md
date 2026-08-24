@@ -6,7 +6,7 @@
 
 `NotebookLM_PDF_2_PPT` — 將 NotebookLM 簡報 PDF 檔轉換成可編輯 PowerPoint 的工具（CLI `pdf2ppt.py` 為主，另有 Tkinter 圖形介面 `pdf2ppt_gui_2.py` 包在同一支 `cli.main()` 外面），每頁投影片以全解析度頁面渲染圖為背景，疊上實心填色矩形蓋住點陣文字，並承載可編輯、樣式比對過的文字（字級、粗體、文字色、蓋板色皆從影像估計）。
 
-**完整規格書在 `docs/spec/`**（從零重建一次需要知道的一切，13 章），十分鐘版的架構導讀在 `docs/系統規格.md`；產品定位、使用者拍板過不得重開的決策、名詞定義見 `docs/spec/01-產品定位與硬性原則.md`。
+**完整規格書在 `docs/spec/`**（從零重建一次需要知道的一切，13 章），十分鐘版的架構導讀在 `docs/dev/architecture.md`；產品定位、使用者拍板過不得重開的決策、名詞定義見 `docs/spec/01-產品定位與硬性原則.md`。
 
 ⚠️ **spec 正文技術中立，模組檔名與私有函式名一律集中在 `docs/spec/12-附錄-現行實作對照.md`**（2026-08-24 起，判準見 `docs/dev/documentation.md`）：新增一條規則時，**規則本身**寫進對應章節，**指路**寫進那一章。門檻數值、實測數據、反例留在正文，那是規格唯一不可再生的部分。
 
@@ -46,7 +46,7 @@ uv run python pdf2ppt_gui_2.py         # 圖形介面（或雙擊「啟動.vbs�
   | 使用者看得到的行為（CLI 旗標、輸出規則、丟棄規則、限制） | `README.md` 對應章節 **＋ `pdf2ppt_gui_2.py` 的選項清單**（它是手抄 argparse 的，漂移過一次） |
   | 通用規則、不變量、門檻本身 | **本檔**的「不變量索引」（只有 `CLAUDE.md` 每次自動載入） |
   | 門檻的**理由、反例、被推翻過的前一版結論** | `docs/spec/` 對應章節（完整規格書）**＋**本檔的那一行要跟著改 |
-  | 模組之間的關係、新增/拆分模組 | `docs/系統規格.md`（十分鐘架構導讀） |
+  | 模組之間的關係、新增/拆分模組 | `docs/dev/architecture.md`（十分鐘架構導讀） |
   | 新增一章 spec | 同時改 `docs/spec/00-總覽與閱讀指南.md` 的文件地圖（`tests/test_docs.py` 雙向釘著） |
   | 沿革、災情紀錄、完整推導 | `docs/dev/` 並在本檔留一句可 grep 的指路 |
   | 常數的值或理由 | **該常數上方的註解**（那是正典，本檔指過去而已） |
@@ -61,7 +61,7 @@ uv run python pdf2ppt_gui_2.py         # 圖形介面（或雙擊「啟動.vbs�
 每頁的處理管線（由 `pdf2ppt/cli.py` 調度）：
 渲染（`render.py`，PyMuPDF @200dpi，同一張渲染圖同時供 OCR 與投影片背景使用）→ OCR（`ocr.py`，RapidOCR PP-OCRv5 + server 辨識模型 — 繁體中文準確度遠勝預設的 v4 mobile；`--fast` 可切回）→ 樣式估計（`style.py`）→ 選擇性行合併（`blocks.py`，預設與 DeckEdit 相同、每個 OCR 行一個形狀）→ PPTX 輸出（`builder.py`）。
 
-**完整的 pass 順序**（順序本身是契約）見 `docs/spec/02-領域模型與資料契約.md` §2.6；模組之間的關係見 `docs/系統規格.md`。
+**完整的 pass 順序**（順序本身是契約）見 `docs/spec/02-領域模型與資料契約.md` §2.6；模組之間的關係見 `docs/dev/architecture.md`。
 
 ### 最高原則：所有調整必須具通用性（使用者指示 2026-06-13）
 

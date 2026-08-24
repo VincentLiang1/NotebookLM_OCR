@@ -14,7 +14,7 @@ uv run pytest
 
 `tests/test_docs.py` 內部分兩份文件集合：
 
-- `RULE_DOCS` = `CLAUDE.md` ＋ `docs/系統規格.md` ＋ `docs/spec/*.md` —— 死指路檢查用。
+- `RULE_DOCS` = `CLAUDE.md` ＋ `docs/dev/architecture.md` ＋ `docs/spec/*.md` —— 死指路檢查用。⚠️ **架構導讀是明確列進去的**：它是模組名最多的文件，而下面那條刻意不吃整個 `docs/dev/`。
 - `SYMBOL_DOCS` = 上面再加 `docs/dev/*.md` —— 常數值與符號指路檢查用。
 
 ⚠️ **`docs/dev/` 只進後者**：dev 文件裡有刻意寫出來的**示範路徑**（平台變體的目錄 `docs/spec/<平台>/`、姊妹 repo 的例子），死指路檢查會誤咬。真正的檔案路徑由 `tests/test_docs_index.py` 全 repo 掃，那一條要求副檔名、不會咬到目錄示範。

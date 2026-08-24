@@ -175,7 +175,7 @@ uv run python tools/compare_pptx.py generated.pptx reference.pptx
 | 文件 | 讀者 | 內容 |
 | --- | --- | --- |
 | 本檔 | 使用者 | 安裝、操作、選項表、已知限制 |
-| `docs/系統規格.md` | 維護者 | 十分鐘的架構導讀（模組之間怎麼接） |
+| `docs/dev/architecture.md` | 維護者 | 十分鐘的架構導讀（模組之間怎麼接） |
 | `docs/spec/` | 重建者 | 完整規格書 12 章：每一條規則的門檻、實測依據、誤殺過什麼、量過而否決的路 |
 | `CLAUDE.md` | AI／開發者 | 硬規則與指路（每次對話自動載入） |
 | `docs/dev/collaboration.md` | 維護者 | 協作方式的沿革與災情紀錄 |

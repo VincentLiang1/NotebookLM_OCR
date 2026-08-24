@@ -47,8 +47,13 @@ SPEC_TEXT = {p.name: p.read_text(encoding="utf-8") for p in SPEC_FILES}
 # 分散在這幾份，任何一份漂掉都一樣害人。
 #
 RULE_DOCS = {"CLAUDE.md": CLAUDE_MD,
-             "docs/系統規格.md": (ROOT / "docs" / "系統規格.md").read_text(
-                 encoding="utf-8"),
+             # ⚠️ 架構導讀 2026-08-24 從 docs 頂層搬進 docs/dev/，但
+             # **必須留在這一份名單裡**：底下的 SYMBOL_DOCS 會整個 docs/dev/
+             # 加掃，可是「死指路」那條刻意不吃 dev（dev 有示範用的假路徑）。
+             # 而這一份正是模組名最多的文件——漏了它就等於搬完之後沒人守它。
+             "docs/dev/architecture.md": (
+                 ROOT / "docs" / "dev" / "architecture.md").read_text(
+                     encoding="utf-8"),
              **{f"docs/spec/{n}": t for n, t in SPEC_TEXT.items()}}
 
 # 常數值與符號指路**另外**加掃 `docs/dev/`（2026-08-24）：spec 正文改成技術中立、
@@ -229,7 +234,8 @@ def test_claude_md_still_points_at_the_long_form_docs():
 
     2026-08-23 把 78 條規則搬進 `docs/spec/` 之後，這幾條指路是**唯一**能把
     人從自動載入的 CLAUDE.md 帶到完整理由的東西——掉了就等於那些反例不存在。"""
-    for pointer in ("docs/dev/collaboration.md", "docs/spec/", "docs/系統規格.md"):
+    for pointer in ("docs/dev/collaboration.md", "docs/spec/",
+                    "docs/dev/architecture.md"):
         assert pointer in CLAUDE_MD, f"CLAUDE.md 少了指向 {pointer} 的那句"
 
 
