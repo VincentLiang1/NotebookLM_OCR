@@ -34,11 +34,27 @@ uv run python pdf2ppt.py "<pdf>" -o "<out>.pptx" --debug
 | 代稱 | 檔案 |
 | --- | --- |
 | `guard` | `C:\SOURCE5\AI協作開發的軟體品質護欄\AI_Quality_Guardrails.pdf` |
+| `guardV2` | `C:\SOURCE5\AI協作開發的軟體品質護欄\AI_時代軟體品質精密護欄V2.pdf`（2026-08-24 起的改版，使用者現在轉的就是這一份）|
 | `trans` | `C:\SOURCE5\Raw_Sources\大模型架構\Transformer_演進地圖_NotebookLM簡報.pdf` |
 | `gptbp` | `C:\SOURCE5\Raw_Sources\大模型架構\GPT图解 大模型是怎样构建的\blueprint\The_GPT_Blueprint.pdf` |
 | `rlbp` | `C:\SOURCE5\FUTURES\AI\Reinforcement_Learning_Blueprint.pdf` |
 
-四份一起跑約 5 分鐘。⚠️ `guard` 同資料夾的 `.pptx` 是使用者自己的存檔，**不是基準**。
+五份一起跑約 5 分鐘。⚠️ `guard` 同資料夾的 `.pptx` 是使用者自己的存檔，**不是基準**。
+
+### 兩個省時間的做法（2026-08-25 用出來的）
+
+**A/B 不要靠 git stash 來回切。** 匯入 `pdf2ppt.cli`，把要比較的那個函式換掉、在同一支腳本裡跑兩趟，就能一次得到「同一份 PDF、同一顆模型、只差這一條規則」的對照：
+
+```python
+from pdf2ppt import blocks, cli
+NEW = blocks._is_illegible
+def OLD(line, style): ...          # 舊版判別式，照抄再改回去
+blocks._is_illegible = OLD         # 或 NEW
+sys.argv = ['pdf2ppt.py', pdf, '-o', out, '--debug']
+cli.main()                         # 兩趟各吐一份 debug.json，逐行比
+```
+
+**要調門檻時，先把量測傾印出來、再離線試。** OCR 一趟五份 deck 要三分鐘，而門檻通常要試好幾個值。先跑一次把每一行的**原始量測**（分數、字級、角度、欄投影的重心散佈…）存成 JSON，之後所有門檻都在那份 JSON 上算——2026-08-25 那輪就是這樣在幾秒內量出「散佈 >0.25 的純字母行有 8 個，其中 6 個是真內容」，否決掉一條看起來很合理的規則。
 
 文字召回率比對（只在使用者提供參考檔時才做）：
 

@@ -25,7 +25,13 @@ TINY_CJK_KEEP = 0.85     # clean small CJK chips (p5 基礎/進階 0.89–0.93)
 TINY_LATIN_KEEP = 0.94   # clean small latin/digits (p9 timestamps 0.94+)
 SMALL_PT = 14
 SMALL_MIN_SCORE = 0.72   # small + this blurry is a misread (p3 <小> 0.57)
-GLYPH_MIN_SCORE = 0.75   # short non-CJK soup at any size (p14 di 0.53)
+LATIN_MIN_SCORE = 0.75   # a latin-only line this unsure is a misread at any
+                         # length or size. Measured over the five decks: all
+                         # 31 latin lines below it are garbage (p14 di 0.53,
+                         # rlbp p8's sub/superscript formula read as
+                         # DtsaDtse 0.63, gptbp p7 ×××× 0.72), while the band
+                         # just above carries real content (JR. PAC-MAN 0.85,
+                         # EVOLUTION&OPTIMIZATION(8YEARS) 0.84, Level O 0.85)
 
 
 def _rotated_decor_pair(a: Line, b: Line) -> bool:
@@ -56,7 +62,11 @@ def _is_illegible(line: Line, style: Style) -> bool:
         return line.score < TINY_LATIN_KEEP
     if style.font_pt <= SMALL_PT and line.score < SMALL_MIN_SCORE:
         return True
-    return n_cjk == 0 and len(text) <= 3 and line.score < GLYPH_MIN_SCORE
+    # No length gate: it used to read "<= 3 chars", which left the big
+    # garbage untouched -- a 36pt formula strip read as OtSat$Set (0.58)
+    # or a 60pt row of ×××× (0.72) is exactly the case where an editable
+    # misread paints over a perfectly good raster.
+    return n_cjk == 0 and line.score < LATIN_MIN_SCORE
 
 
 def drop_illegible_lines(lines: list[Line], styles: list[Style],
