@@ -7,8 +7,10 @@ The recognition model drops most spaces. They are restored two ways:
 """
 from __future__ import annotations
 
+import logging
 import math
 import re
+from collections import Counter
 from functools import lru_cache
 from statistics import median
 
@@ -603,6 +605,15 @@ class OcrEngine:
         params = {
             "Det.ocr_version": OCRVersion.PPOCRV5,
             "Rec.ocr_version": OCRVersion.PPOCRV5,
+            # The engine announces itself in 12 INFO lines (three models x
+            # engine name / file checked / path used / provider) and none of
+            # them answer anything cli.py cannot say in one line. WARNING,
+            # not ERROR, and set through the config rather than on the logger:
+            # RapidOCR's constructor calls setLevel(cfg.Global.log_level)
+            # itself, so anything set beforehand is overwritten -- and a model
+            # that fails its checksum has to stay audible, because the first
+            # run downloads ~90MB over the network.
+            "Global.log_level": "warning",
         }
         if not fast:
             params["Rec.model_type"] = ModelType.SERVER
@@ -616,6 +627,20 @@ class OcrEngine:
         elif self.device == "cuda":
             params["EngineConfig.onnxruntime.use_cuda"] = True
         self.engine = RapidOCR(params=params)
+        # Now that the models are loaded, drop the last level too. RapidOCR
+        # logs one WARNING per detection that comes back empty, and the
+        # rotation rescue asks it to detect inside a single line's crop seven
+        # times for every low-score line -- an empty result there is the
+        # expected answer, not a fault, and the code already treats it as one.
+        # Left audible they bury the run log the user sends us under warnings
+        # that mean nothing (13 of them on the guard deck, 7 on rlbp).
+        # ⚠️ AFTER the constructor: a download failure during it must be heard.
+        # A detection failure on a real page still is -- it surfaces as
+        # 'page N: 0 lines' in our own per-page summary.
+        logging.getLogger("RapidOCR").setLevel(logging.ERROR)
+
+        # what the last recognize() had to correct, for the --debug summary
+        self.last_fixes: dict[str, int] = {}
 
         # the rec model occasionally emits simplified lookalikes (惡→恶)
         # even for Traditional Chinese input; OpenCC normalizes them back.
@@ -865,6 +890,12 @@ class OcrEngine:
         return cand, new_x1
 
     def recognize(self, img_rgb: np.ndarray, min_score: float = 0.5) -> list[Line]:
+        # Every correction below is invisible in the output -- the PPTX shows
+        # the corrected text with nothing saying it was corrected. Counting
+        # them costs one comparison each and turns 'page 9 looks wrong' into
+        # a place to look (see cli.py, printed under --debug).
+        fixes: Counter = Counter()
+        self.last_fixes = {}
         # use_det/use_cls/use_rec persist across calls inside RapidOCR, so
         # always pass them explicitly (rec-only calls would poison the next)
         result = self.engine(img_rgb[:, :, ::-1], use_det=True, use_cls=True,
@@ -880,9 +911,14 @@ class OcrEngine:
                                             result.scores, word_results):
             text = text.strip()
             if not text or score < min_score:
+                fixes["below_min_score"] += bool(text)
                 continue
+            was = text
             text, char_boxes = _restore_latin_gaps(text, words, img_rgb)
+            fixes["latin_gap"] += text != was
+            was = text
             text = _fix_warning_icon(text, char_boxes, img_rgb)
+            fixes["warn_icon"] += text != was
             quad = np.asarray(quad, dtype=float)
             x0, y0 = quad.min(axis=0)
             x1, y1 = quad.max(axis=0)
@@ -892,6 +928,7 @@ class OcrEngine:
             # 0.86) — a glyph is one ink color, an icon is fill + outline
             if (len(text) == 1 and text.isascii() and text.isalpha()
                     and _looks_like_filled_icon(img_rgb, (x0, y0, x1, y1))):
+                fixes["icon_as_letter"] += 1
                 continue
 
             # tilt from the quad's top+bottom edges (averaged for stability);
@@ -928,6 +965,7 @@ class OcrEngine:
             if ln.score < RESCUE_SCORE and ln.angle == 0.0:
                 rescued = self._rescue_tilted(img_rgb, ln)
                 if rescued:
+                    fixes["tilt_rescue"] += 1
                     ln.text, ang, center, size, arc = rescued
                     ln.char_boxes = None  # boxes no longer match the text
                     if arc:
@@ -942,22 +980,36 @@ class OcrEngine:
             if ln.angle == 0.0:
                 extended = self._extend_trailing(img_rgb, ln, vocab)
                 if extended:
+                    fixes["trailing"] += 1
                     ln.text, new_x1 = extended
                     ln.bbox = (ln.bbox[0], ln.bbox[1], new_x1, ln.bbox[3])
             if ln.angle == 0.0 and ln.char_boxes:
+                was = ln.text
                 ln.text, ln.char_boxes = _restore_pipes(
                     ln.text, ln.char_boxes, img_rgb)
+                fixes["pipe"] += ln.text != was
             if ln.angle == 0.0:
+                was = ln.text
                 ln.text, ln.char_boxes, blt_x0 = _restore_leading_bullet(
                     ln.text, ln.char_boxes, ln.bbox, img_rgb)
+                fixes["bullet"] += ln.text != was
                 if blt_x0 < ln.bbox[0]:
                     ln.bbox = (blt_x0, ln.bbox[1], ln.bbox[2], ln.bbox[3])
+            was = ln.text
             ln.text = _pangu_spacing(ln.text).strip()
+            fixes["pangu"] += ln.text != was
+            was = ln.text
             ln.text = _fix_trailing_degree(ln.text)
+            fixes["degree"] += ln.text != was
+            was = ln.text
             ln.text = self._fix_simplified_strays(ln.text, page_slipping)
+            fixes["s2tw"] += ln.text != was
+            was = ln.text
             ln.text = _fix_confusions(ln.text)
+            fixes["bigram"] += ln.text != was
             new_text = _normalize_bullet(ln.text)
             if new_text != ln.text:
+                fixes["bullet_norm"] += 1
                 ln.text = new_text
                 ln.char_boxes = None  # 1:1 char mapping broken
 
@@ -981,13 +1033,19 @@ class OcrEngine:
                     scale = ((ln.bbox[2] - ln.bbox[0])
                              / (a.bbox[2] - a.bbox[0])) ** 2
                     ln.arc_sagitta = a.arc_sagitta * scale
+                    fixes["arc_propagated"] += 1
                     break
 
-        self._vocab_correct(lines)
-        self._confirm_simplified_strays(lines, page_slipping)
-        self._rescue_sibling_bands(img_rgb, lines, page_slipping)
+        fixes["vocab"] += self._vocab_correct(lines)
+        fixes["s2tw_page"] += self._confirm_simplified_strays(
+            lines, page_slipping)
+        fixes["band_rescue"] += self._rescue_sibling_bands(
+            img_rgb, lines, page_slipping)
 
         lines.sort(key=lambda ln: (ln.bbox[1], ln.bbox[0]))
+        # drop the zeros: a summary listing every pass that did nothing is
+        # the same wall of text the RapidOCR banner was
+        self.last_fixes = {k: int(v) for k, v in fixes.items() if v}
         return lines
 
     @staticmethod
@@ -1027,7 +1085,7 @@ class OcrEngine:
         winners = [v for v, c in scores.items() if c == best]
         return winners[0] if len(winners) == 1 else None
 
-    def _vocab_correct(self, lines) -> None:
+    def _vocab_correct(self, lines) -> int:
         """The smallest chips on dense diagram pages are too degraded for
         the rec model (p9's 資訊 at 72dpi reads as 黃訊 with score 0.66),
         but the page usually names the same tokens in a bigger, cleanly
@@ -1036,7 +1094,8 @@ class OcrEngine:
         vocab token by exactly one character."""
         vocab = self._page_vocab(lines)
         if not vocab:
-            return
+            return 0
+        fixed_n = 0
         for ln in lines:
             t = ln.text.strip()
             if (ln.score >= 0.8 or not (2 <= len(t) <= 4) or t in vocab
@@ -1050,8 +1109,10 @@ class OcrEngine:
                 else:
                     ln.char_boxes = None
                 ln.text = fixed
+                fixed_n += 1
+        return fixed_n
 
-    def _confirm_simplified_strays(self, lines, slipping: bool) -> None:
+    def _confirm_simplified_strays(self, lines, slipping: bool) -> int:
         """The mixed-script test in _fix_simplified_strays never fires
         when every CJK char of a line slips to simplified at once (p3
         'AI 执行：', p9 'LLM 合规'): the line reads as pure simplified,
@@ -1061,10 +1122,11 @@ class OcrEngine:
         Traditional reading appears verbatim in a confidently-read line
         on the same page (執行 backed by …AI 執行的自動化編譯…)."""
         if self._s2t is None:
-            return
+            return 0
         vocab = self._page_vocab(lines)
         if not vocab:
-            return
+            return 0
+        fixed_n = 0
         for ln in lines:
             as_trad = self._s2t.convert(ln.text)
             if not slipping and len(as_trad) == len(ln.text):
@@ -1097,9 +1159,11 @@ class OcrEngine:
             else:
                 ln.char_boxes = None
             ln.text = as_trad
+            fixed_n += 1
+        return fixed_n
 
     def _rescue_sibling_bands(self, img_rgb: np.ndarray, lines,
-                              slipping: bool) -> None:
+                              slipping: bool) -> int:
         """Detection misses the second line of tiny two-line chips
         entirely (p9: 資訊 found, 架構 below it invisible to det at any
         scale). Probe directly above/below each small chip-sized CJK line
@@ -1109,7 +1173,7 @@ class OcrEngine:
         and display garbage instead."""
         vocab = self._page_vocab(lines)
         if not vocab:
-            return
+            return 0
         new_lines = []
         for ln in lines:
             t = ln.text.strip()
@@ -1151,6 +1215,7 @@ class OcrEngine:
                           x1, float(band_y1 - 0.1 * h)),
                     score=float(res.scores[0])))
         lines.extend(new_lines)
+        return len(new_lines)
 
     @staticmethod
     def _overlaps(a, b, frac: float) -> bool:

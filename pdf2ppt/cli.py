@@ -166,8 +166,17 @@ def parse_pages(spec: str, page_count: int) -> list[int]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
-        sys.stdout.reconfigure(encoding="utf-8")
+    # line_buffering as well as the encoding: stdout is block-buffered when it
+    # is not a console (`pdf2ppt … > run.txt`), while the OCR engine logs to
+    # stderr unbuffered, so the captured file interleaves the two wrongly --
+    # warnings raised on page 7 land above the 'page 1' line, which is exactly
+    # the file someone reads to find out which page went wrong. One line per
+    # page makes the flush free. (The GUI is unaffected: it routes both
+    # streams through one queue.)
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
+    except (AttributeError, ValueError, OSError):
+        pass    # pythonw with no handle at all, or a stand-in stream
 
     ap = argparse.ArgumentParser(
         prog="pdf2ppt",
@@ -240,10 +249,17 @@ def main(argv: list[str] | None = None) -> int:
     if not page_indices:
         ap.error("no pages selected")
 
-    print("Loading OCR engine...")
+    # says why the first run stops here for minutes: the engine's own
+    # "Initiating download" line is one of the INFO lines we silence
+    print("Loading OCR engine... (first run downloads ~90MB of OCR models)")
     engine = OcrEngine(lang=args.lang, fast=args.fast, s2t=not args.no_s2t,
                        device=args.device)
-    print(f"Inference device: {engine.device}")
+    # Replaces the engine's own 12-line banner (silenced in OcrEngine) with
+    # the part that answers a question about the output: which rec model read
+    # the page, on what device, at what resolution.
+    print(f"OCR: PP-OCRv5 rec={'mobile (--fast)' if args.fast else 'server'}"
+          f", device={engine.device}, dpi={args.dpi}"
+          + (f", lang={args.lang}" if args.lang else ""))
 
     first = doc[page_indices[0]]
     builder = DeckBuilder(first.rect.width, first.rect.height,
@@ -252,10 +268,13 @@ def main(argv: list[str] | None = None) -> int:
     debug_dump = []
     t0 = time.time()
     for n, idx in enumerate(page_indices, 1):
+        t_page = time.time()
         page = doc[idx]
         img, png = render_page(page, args.dpi)
         px_to_slide_pt = 960.0 / img.shape[1]  # slide is fixed at 960 pt wide
         lines = engine.recognize(img, min_score=args.min_score)
+        # read it now: the next recognize() resets it
+        page_fixes = engine.last_fixes
         styles = [estimate_style(img, ln, px_to_slide_pt, bold_mode)
                   for ln in lines]
 
@@ -319,11 +338,21 @@ def main(argv: list[str] | None = None) -> int:
               f"{len(blocks)} shapes"
               + (f", {n_tiny} tiny/blurry left as image" if n_tiny else "")
               + (f", {n_unrepr} unreproducible left as image" if n_unrepr else "")
-              + (f", {len(wipes)} watermark wiped" if wipes else ""))
+              + (f", {len(wipes)} watermark wiped" if wipes else "")
+              # per page, not just a total: one line sent through the rotation
+              # rescue costs seven OCR passes, and a total of 36s says nothing
+              # about which page paid for it
+              + f", {time.time() - t_page:.1f}s")
+        # the corrections are invisible in the PPTX by design (the text just
+        # comes out right), so --debug is where they get an outlet
+        if args.debug and page_fixes:
+            print("  fixes: " + ", ".join(f"{k} {v}" for k, v
+                                          in sorted(page_fixes.items())))
 
         if args.debug:
             debug_dump.append({
                 "page": idx + 1,
+                "fixes": page_fixes,
                 "lines": [{"text": ln.text, "bbox": ln.bbox, "score": ln.score,
                            "font_pt": st.font_pt, "bold": st.bold,
                            "stroke_rel": round(st.stroke_rel, 4),

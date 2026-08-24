@@ -59,7 +59,7 @@ uv sync
 
 **不需要任何額外安裝或設定**：相依套件裡直接綁的就是 `onnxruntime-directml`（Windows 上任何支援 DirectX 12 的 GPU：Intel Arc/Iris、AMD、NVIDIA 皆可），實測 **快約 4×**（Intel Arc 140V：整份 15 頁簡報 50 秒，CPU 為 210 秒）。
 
-`--device` 預設為 `auto`，依可用性自動選用 DirectML > CUDA > CPU，執行時會印出 `Inference device: dml/cuda/cpu` 供確認；也可用 `--device dml/cuda/cpu` 強制指定。NVIDIA 的 CUDA 路徑要另外 `uv pip install onnxruntime-gpu`。
+`--device` 預設為 `auto`，依可用性自動選用 DirectML > CUDA > CPU，實際用到哪一個會印在啟動時的 `OCR: …` 那一行供確認；也可用 `--device dml/cuda/cpu` 強制指定。NVIDIA 的 CUDA 路徑要另外 `uv pip install onnxruntime-gpu`。
 
 > ⚠️ **不要改裝成 CPU 版的 `onnxruntime`**：DirectML 版是「取代」CPU 版的完整 build（同時提供 CPUExecutionProvider），裝了 CPU 版就沒有 GPU，而且**首次**執行需要一次性的驅動 shader 編譯、那次速度看起來與 CPU 差不多——所以裝錯了不會當場發現，只會一直慢 4 倍。編譯結果會由顯示驅動快取到磁碟，**第二次起**才看得到完整的加速效果。
 
@@ -94,6 +94,16 @@ uv run python pdf2ppt.py input.pdf --pages 1-5,8      # 只轉指定頁
 uv run python pdf2ppt.py input.pdf --keep-watermark   # 保留右下角的匯出浮水印
 ```
 
+執行時每頁印一行：頁碼、轉成文字的行數、形狀數、丟回原圖的行數、浮水印，以及**這一頁花了多久**（只有總時間的話看不出是哪一頁慢——一行進入旋轉救援就要跑七次 OCR）。
+
+```
+Loading OCR engine... (first run downloads ~90MB of OCR models)
+OCR: PP-OCRv5 rec=server, device=dml, dpi=200
+page 1 (1/15): 11 lines, 11 shapes, 4 tiny/blurry left as image, 1 watermark wiped, 5.5s
+page 2 (2/15): 12 lines, 12 shapes, 1 watermark wiped, 1.6s
+Saved input.pptx (15 slides, 41.7s)
+```
+
 ### 選項
 
 | 選項 | 說明 |
@@ -112,7 +122,7 @@ uv run python pdf2ppt.py input.pdf --keep-watermark   # 保留右下角的匯出
 | `--fast` | 改用 mobile 辨識模型（較快，繁中準確度較低）|
 | `--device auto/cpu/dml/cuda` | 推論裝置（預設 auto：依可用性 DirectML > CUDA > CPU）。GPU 約快 4×；首次執行需一次性 shader 編譯（較慢，之後由驅動快取）|
 | `--lang` | 指定 RapidOCR 辨識語言（預設中英混合）|
-| `--debug` | 輸出每頁 OCR 框疊圖 PNG 與樣式 JSON，供調參 |
+| `--debug` | 輸出每頁 OCR 框疊圖 PNG 與樣式 JSON，供調參；每頁另外印一行 `fixes:`，列出這一頁做過的文字修正（`pangu` 中英之間補空格、`s2tw` 簡體還原、`trailing` 行尾標點復原、`bullet` 行首圓點、`tilt_rescue` 旋轉救援…）。這些修正在輸出的簡報裡看不見（文字就是對的），所以「某一頁怪怪的」的第一步就是看那一頁動過什麼 |
 
 ### 編輯輸出的 PPTX
 
