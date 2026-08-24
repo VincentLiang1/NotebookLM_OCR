@@ -21,7 +21,30 @@ from .models import Line
 _CJK = "㐀-䶿一-鿿豈-﫿"
 _RE_CJK_TO_LAT = re.compile(f"([{_CJK}])([A-Za-z0-9])")
 _RE_LAT_TO_CJK = re.compile(f"([A-Za-z0-9])([{_CJK}])")
+_RE_HAS_CJK = re.compile(f"[{_CJK}]")
 LATIN_GAP_FACTOR = 0.33  # space if gap > this fraction of median char width
+
+# Mixed CJK/latin lines need a second, image-based test. The CTC word boxes on
+# such a line are cut on the CJK cell pitch, so a latin box is about twice the
+# width of the glyph inside it and its edges say nothing about where that glyph
+# sits: measured on 盲改CSS3次不中, the S->3 word-box gap is 4px where the real
+# blank on the page is 36px -- no gap threshold can ever reach it. The column
+# projection IS reliable there (letter spacing 11-12px against 36px for the
+# space, a 3x separation), so a blank run wide enough relative to the ink
+# height means a space.
+#
+# ⚠️ The run alone is NOT enough to decide. Measured over 1246 adjacent latin
+# pairs on the four decks, the widest false positives are all same-class pairs
+# where the letter shapes leave a hole: Mistral's a->l at 0.357, Llion's L->l
+# at 0.297, Atari's r->i at 0.247, 2017's 1->7 at 0.243 -- Mistral sits ABOVE
+# every true positive, so no single threshold separates them. What does
+# separate them is that every genuinely missing space in the corpus falls on a
+# class change (Step1 p->1, ScaleEmergence e->E, CSS3 S->3, BERTVs T->V), so
+# the run is only consulted where the characters themselves change class.
+MIXED_BLANK_FRAC = 0.25       # blank run / ink height, across a class change
+MIXED_BLANK_FRAC_CAPS = 0.30  # ... between two capitals (weaker signal: API,
+                              # GPU, RNN are all real; the highest same-case
+                              # false positive measured 0.229)
 
 RESCUE_SCORE = 0.75      # lines below this confidence get the rotation rescue
 RESCUE_ANGLES = (0, -3, 3, -6, 6, -9, 9)  # degrees, for tilted-ribbon text
@@ -87,6 +110,71 @@ def _gap_is_blank(img: np.ndarray, gx0: float, gx1: float,
     return best >= min_run
 
 
+def _mixed_gap_thresh(a: str, b: str) -> float | None:
+    """How wide a blank run has to be, relative to ink height, before this
+    latin pair counts as a word space on a mixed CJK/latin line -- or None
+    when the pair is not allowed to be split on image evidence at all.
+
+    Same-class pairs are excluded outright rather than given a high threshold:
+    they are where every measured false positive lives, and the worst of them
+    is wider than the best true positive (see MIXED_BLANK_FRAC)."""
+    if a.isdigit() != b.isdigit():
+        return MIXED_BLANK_FRAC          # letter <-> digit: CSS|3, Step|1
+    if a.isdigit():
+        return None                      # digit run: 2017 is one number
+    if a.islower() and b.isupper():
+        return MIXED_BLANK_FRAC          # camel join: Scale|Emergence
+    if a.isupper() and b.isupper():
+        return MIXED_BLANK_FRAC_CAPS     # BERT|Vs, but also API / GPU / RNN
+    return None                          # Mistral, Atari, Llion, Chainof
+
+
+def _mixed_blank_spaces(text: str, flat_chars, flat_geoms,
+                        img: np.ndarray) -> set:
+    """Indices of `flat_chars` that a blank column run says start a new word.
+
+    Only called for lines that mix CJK with latin. The search window for a
+    pair is between the two word-box CENTERS: the centers are ordered and
+    roughly right even when the edges are not, while widening the window to
+    the ink edges lets the blank BEFORE the following CJK glyph leak in (that
+    is exactly what pushed Mistral's a->l from 0.357 to 0.400 when measured)."""
+    gs = [g for g in flat_geoms if g]
+    if len(gs) < 2:
+        return set()
+    x0, x1 = int(min(g[0] for g in gs)), int(max(g[1] for g in gs))
+    y0, y1 = int(min(g[2] for g in gs)), int(max(g[3] for g in gs))
+    crop = img[max(0, y0):y1 + 1, max(0, x0):x1 + 1]
+    if crop.size == 0:
+        return set()
+    med = np.median(crop.reshape(-1, 3), axis=0)
+    ink = np.abs(crop.astype(int) - med).max(axis=2) > 60
+    h, w = crop.shape[:2]
+    blank = ink.sum(axis=0) <= max(1, round(0.05 * h))
+    rows = np.nonzero(ink.sum(axis=1) > max(1, round(0.02 * w)))[0]
+    ink_h = int(rows[-1] - rows[0] + 1) if rows.size else h
+    if ink_h <= 0:
+        return set()
+
+    out = set()
+    for k in range(1, len(flat_chars)):
+        a, b = flat_chars[k - 1], flat_chars[k]
+        p, g = flat_geoms[k - 1], flat_geoms[k]
+        if not (p and g) or not (_is_latin_alnum(a) and _is_latin_alnum(b)):
+            continue
+        thresh = _mixed_gap_thresh(a, b)
+        if thresh is None:
+            continue
+        lo = max(0, int((p[0] + p[1]) / 2) - x0)
+        hi = min(len(blank), int((g[0] + g[1]) / 2) - x0)
+        best = cur = 0
+        for bl in blank[lo:hi]:
+            cur = cur + 1 if bl else 0
+            best = max(best, cur)
+        if best >= thresh * ink_h:
+            out.add(k)
+    return out
+
+
 def _restore_latin_gaps(text: str, words, img: np.ndarray):
     """words: per-char (char, score, quad) tuples for one OCR line.
     Returns (text, char_boxes) where char_boxes is [(char, l, t, r, b)] for
@@ -126,6 +214,14 @@ def _restore_latin_gaps(text: str, words, img: np.ndarray):
             flat_chars.append(c)
             flat_geoms.append(g)
 
+    # the word boxes are only trustworthy on an all-latin line; a mixed line
+    # cuts them on the CJK pitch and needs the image instead (see
+    # _mixed_blank_spaces). Keeping the two paths apart is deliberate: every
+    # reason recorded for the gap thresholds below was measured on all-latin
+    # lines, and this change must not move them.
+    mixed = (_mixed_blank_spaces(text, flat_chars, flat_geoms, img)
+             if _RE_HAS_CJK.search(text) else set())
+
     out = []
     ci = 0
     for ch in text:
@@ -138,10 +234,11 @@ def _restore_latin_gaps(text: str, words, img: np.ndarray):
         if (out and out[-1] != " " and g and p
                 and _is_latin_alnum(flat_chars[ci - 1])
                 and _is_latin_alnum(flat_chars[ci])
-                and g[0] - p[1] > LATIN_GAP_FACTOR * med_w
-                and _gap_is_blank(img, p[1], g[0],
-                                  min(p[2], g[2]), max(p[3], g[3]),
-                                  min_run=max(4.0, 0.27 * med_w))):
+                and (ci in mixed
+                     or (g[0] - p[1] > LATIN_GAP_FACTOR * med_w
+                         and _gap_is_blank(img, p[1], g[0],
+                                           min(p[2], g[2]), max(p[3], g[3]),
+                                           min_run=max(4.0, 0.27 * med_w))))):
             out.append(" ")
         out.append(ch)
         ci += 1
