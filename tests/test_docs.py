@@ -303,6 +303,29 @@ def test_flow_chapters_say_when_to_read_them():
     assert not missing, f"這幾章沒寫「什麼時候該讀」：{missing}"
 
 
+def test_the_map_counts_match_the_chapters():
+    """§0.3 地圖的「條數」欄要等於該章實際的頂層規則數。
+
+    2026-08-24 把六章改寫成技術中立時，順手把幾條合併（例如「不可要求並排」
+    併進同列多數決那一條）、又把幾條從子條目提上來——**規則一條沒少，但地圖
+    的 25/5/23 全部變成假的**，而且是稽核時才發現的。這正是本檔開頭說的
+    「會靜默腐爛」：沒有人為了確認一個數字把整章數一遍。
+
+    ⚠️ 數的是**頂層** `- **…**` 條目，巢狀子條目不另計（地圖自己也這樣寫）。
+    合併或拆分規則時，地圖那一格要跟著改——這條測試就是逼你改的東西。"""
+    nums = _spec_numbers()
+    overview = SPEC_TEXT[nums[0]]
+    problems = []
+    for m in re.finditer(r"\|\s*`(\d{2})-[^`]+\.md`\s*\|\s*(\d+)\s*\|", overview):
+        chapter, claimed = m.group(1), int(m.group(2))
+        name = nums[int(chapter)]
+        actual = len(re.findall(r"^- \*\*", SPEC_TEXT[name], re.M))
+        if claimed != actual:
+            problems.append(f"{name}：地圖寫 {claimed} 條，實際 {actual} 條")
+    assert problems == [], ("地圖的條數與章節對不上："
+                            + "".join("\n  " + p for p in problems))
+
+
 def test_the_map_says_when_to_read_every_chapter():
     """§0.3 的文件地圖每一列都要有「什麼時候讀」。
 
