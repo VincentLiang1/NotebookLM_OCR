@@ -29,6 +29,8 @@ uv run python pdf2ppt.py "<pdf>" -o "<out>.pptx" --debug
 
 `--debug` 會另外吐 `*.debug.json`（每行的 `text`／`font_pt`／`bold`／`bg_rgb`／`text_rgb`／`est_pt`）與疊框 PNG。改動前先跑一輪存成基準，改完再跑一輪對照，**預期零差異**。
 
+⚠️ **`SOURCE.pdf` 與 `SOURCE.pptx` 已於 2026-08 由使用者刪除，救不回來**（`.gitignore` 從第一個 commit 起就擋 `*.pdf`／`*.pptx`，它們**從未進過版控**；回收桶與全機掃描也都沒有）。連帶後果：規則裡引用**早期 p-編號**的案例（p5 Git Hook 家族、p8 單一／主專案、p13 第三階段、p14 啟動【技術解法】…）**再也無法回歸測試**，只剩文字記錄——2026-08-23 那輪 code review 就因此無法驗證 `nat_close` 門檻的餘裕。⚠️ **p-編號有兩種來源**：p11–p15 那批新的（藍籌片投影、橘色橫幅、五張並排卡片、步驟徽章「2」）指的是 `guard`，不是 SOURCE.pdf。
+
 語料（磁碟上的實際路徑）：
 
 | 代稱 | 檔案 |
