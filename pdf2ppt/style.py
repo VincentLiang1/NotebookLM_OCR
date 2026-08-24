@@ -1597,6 +1597,21 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
         def text_ok(ch):
             return ch.isalnum() or ord(ch) >= 0x2E80
 
+        # ⚠️ The trim may never cut into the span the CHARACTER BOXES cover:
+        # an icon is by definition not part of the OCR text, so anything the
+        # boxes claim is text and must stay under the cover. p7 of the guard
+        # V2 deck is the counter-example the text_vivid gate above cannot
+        # catch: 規格層：44.4 is black prefix + vividly orange number, so the
+        # line's dominant text color is black (sat 1) while the walk happily
+        # ate all 275px of the number -- the cover ended at 規格層： and the
+        # raster 44.4 stayed visible under the editable one (user 2026-08-25).
+        # Falls back to the old behaviour when the boxes are gone (a text
+        # correction that breaks the 1:1 mapping clears them).
+        cb_l = cb_r = None
+        if line.char_boxes:
+            cb_l = min(float(b[1]) for b in line.char_boxes)
+            cb_r = max(float(b[3]) for b in line.char_boxes)
+
         # an icon is separated from the text by a blank gap (the column just
         # before the text resumes is ink-free); a colored first/last glyph
         # of the text itself has no such gap
@@ -1605,14 +1620,16 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
             while x <= all_c[-1] and (col_sat[x] or not col_ink[x]):
                 x += 1
             if (x - all_c[0] > 10 and all_c[-1] - x > 20
-                    and not col_ink[x - 1]):
+                    and not col_ink[x - 1]
+                    and (cb_l is None or x0 + int(x) <= cb_l)):
                 cover_x0_px = float(x0 + int(x))
         if len(all_c) and text_ok(line.text[-1]):
             x = all_c[-1]
             while x >= all_c[0] and (col_sat[x] or not col_ink[x]):
                 x -= 1
             if (all_c[-1] - x > 10 and x - all_c[0] > 20
-                    and not col_ink[x + 1]):
+                    and not col_ink[x + 1]
+                    and (cb_r is None or x0 + int(x) + 1 >= cb_r)):
                 cover_x1_px = float(x0 + int(x) + 1)
     # a leading icon (see the band trim above) is kept uncovered so the
     # raster survives and the editable text aligns to it, not the icon slot
