@@ -28,9 +28,15 @@ argparse 定義：在 cli.py 增刪旗標或改預設值時，這裡與 README �
 （_toggle_advanced）。色塊的選項曾經是主畫面上唯一的核取方塊（要拿它做 A/B），
 2026-08-24 量完之後 cli.py 的預設換成 --no-cover，這裡也就跟著收進進階區、
 反向成「輸出獨立色塊形狀」，預設不勾 —— 三方的預設值現在一致。
+
+執行紀錄：每次啟動在本檔所在資料夾底下的 logs 寫一份（檔名是啟動時間，保留
+30 天），介面日誌區看得到的東西那裡都有，轉檔失敗的 traceback 也在裡面。
+「啟動.vbs」那條路自己不落檔，它是在程式沒能正常結束時直接把攔到的訊息跳訊息
+框顯示出來。作法與取捨見 docs/dev/gui-啟動與錯誤留底.md。
 """
 from __future__ import annotations
 
+import datetime
 import io
 import os
 import json
@@ -39,6 +45,7 @@ import re
 import subprocess
 import sys
 import threading
+import time
 import traceback
 from pathlib import Path
 
@@ -60,6 +67,28 @@ CONFIG_PATH = Path.home() / ".notebooklm_pdf2ppt_gui.json"
 # 日誌視窗保留的最大行數：GUI 是長時間開著的行程，不設上限的話一整個工作階段
 # 的輸出會一直累積，每次 insert 都要重繪愈來愈大的緩衝區
 LOG_MAX_LINES = 4000
+
+# --------------------------------------------------------------------------- #
+#  執行紀錄（logs\<時間>.log）
+# --------------------------------------------------------------------------- #
+# 使用者 2026-08-24 指示「程式產生的 log 寫進 logs 目錄，參考 meeting-scribe」。
+# 從那邊照抄過來的四件事（都是已經驗證過的）：
+#   * **一次執行一個檔**：一次啟動正好等於一個檔，不必另外定義邊界，跨午夜也
+#     不會被切成兩半。
+#   * **檔頭記程式版本**：三週後拿一份 log 出來看，沒有這行就只能從訊息長相
+#     反推是哪一版跑的。
+#   * **逐行 flush**：使用者是直接關視窗收工的，留在緩衝區的會整段蒸發，而那
+#     正好是出事的那一段。
+#   * **寫檔失敗一律靜靜關掉**，不重試也不拋：紀錄檔不該有辦法讓 GUI 掛掉。
+# 差別在於這裡不經過 logging（整個專案都沒用 logging，輸出是 print 到
+# stdout/stderr），所以由 _append 這個唯一的顯示漏斗順手寫一份。
+LOG_DIR_NAME = "logs"
+LOG_KEEP_DAYS = 30
+# 目錄覆寫（測試／沙箱用）：不設就寫進本檔所在資料夾底下的 logs 目錄
+LOG_DIR_ENV = "NOTEBOOKLM_PDF2PPT_LOG_DIR"
+# 沒有換行的內容累積到這個長度就先落地：下載模型的進度條可能很久才換行，
+# 不設上限的話出事那一刻的內容還躺在緩衝區裡
+LOG_MAX_PENDING = 4096
 
 # 終端機控制碼。rapidocr 的 colorlog formatter 是以 stream=None 建構的，它的
 # _colorize() 在 stream is None 時無條件著色（根本不會問 isatty），所以下載模型
@@ -88,6 +117,117 @@ def save_config(cfg: dict) -> bool:
         return True
     except Exception:
         return False
+
+
+def log_dir() -> Path:
+    """執行紀錄要落在哪個資料夾。
+
+    釘在**本檔所在的資料夾**、不是使用者挑的專案資料夾：「啟動.vbs」就在旁邊，
+    出事時要找的人是雙擊它的那一個，而挑選器可以在同一次執行中途換掉專案位置
+    ——紀錄檔跟著跑的話，同一趟的內容會散在兩個地方。"""
+    override = os.environ.get(LOG_DIR_ENV)
+    if override:
+        return Path(override)
+    return Path(__file__).resolve().parent / LOG_DIR_NAME
+
+
+def purge_old_logs(keep_days: int = LOG_KEEP_DAYS) -> None:
+    """清掉太舊的紀錄檔。⚠️ **要在開新檔之前做**，否則剛建好的這一份會被自己
+    的規則掃到（在系統時鐘往回調過的機器上真的會發生）。"""
+    cutoff = time.time() - keep_days * 86400
+    try:
+        old = [q for q in log_dir().glob("*.log") if q.stat().st_mtime < cutoff]
+    except OSError:
+        return
+    for q in old:
+        try:
+            q.unlink()
+        except OSError:
+            pass
+
+
+def _git_sha() -> str:
+    """短 commit sha；取不到回空字串。
+
+    直接讀 `.git`、**不叫 `git` 指令**：啟動路徑不該多開一個行程，而使用者拿到
+    的可能是複製過去的資料夾（這個專案的交付方式就是複製整個資料夾），機器上
+    不見得有 git。"""
+    git = Path(__file__).resolve().parent / ".git"
+    try:
+        head = (git / "HEAD").read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+    if not head.startswith("ref: "):
+        return head[:7]          # detached HEAD：HEAD 本身就是 sha
+    ref = head[5:].strip()
+    try:
+        return (git / ref).read_text(encoding="utf-8").strip()[:7]
+    except OSError:
+        pass
+    try:                          # 鬆散檔不在，查打包過的 ref
+        packed = (git / "packed-refs").read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    for line in packed.splitlines():
+        sha, _, name = line.partition(" ")
+        if name.strip() == ref:
+            return sha[:7]
+    return ""
+
+
+def code_version() -> str:
+    """跑出這份紀錄的是哪一版的碼。**取不到就明說，不要假裝有。**
+
+    版號讀 `pyproject.toml`（它就在旁邊，一定是這一份的值），再補上 sha ——
+    版號一整段開發期間都不會動，能分辨「今天這一版」的只有 sha。"""
+    ver = ""
+    try:
+        text = (Path(__file__).resolve().parent / "pyproject.toml").read_text(
+            encoding="utf-8")
+        m = re.search(r'^\s*version\s*=\s*"([^"]+)"', text, re.M)
+        ver = m.group(1) if m else ""
+    except OSError:
+        pass
+    sha = _git_sha()
+    if ver and sha:
+        return f"{ver} ({sha})"
+    return ver or sha or "(取不到)"
+
+
+def log_header(path: Path) -> str:
+    """紀錄檔的檔頭：哪一版的碼、在什麼環境上跑的。
+
+    分析一份 log 之前一定要先知道這幾件事，而事後再問使用者就是多一趟往返。"""
+    now = datetime.datetime.now()
+    return "\n".join([
+        "=" * 72,
+        f"{APP_TITLE}  執行紀錄  開始 {now:%Y-%m-%d %H:%M:%S}",
+        f"  程式版本：{code_version()}",
+        f"  紀錄檔：{path}",
+        f"  Python：{sys.version.split()[0]}  平台：{sys.platform}",
+        "=" * 72,
+        "",
+    ])
+
+
+def open_run_log() -> tuple[Path | None, "io.TextIOBase | None"]:
+    """開這一趟的紀錄檔，回傳 (路徑, 檔案物件)。
+
+    ⚠️ **失敗一律回 (None, None)、不拋例外**：磁碟唯讀、防毒攔截、資料夾被同步
+    工具鎖住都會走到這裡，而「留不了底」絕不能升級成「打不開程式」——那正是
+    「啟動（顯示訊息）.bat」這條退路存在的情境。"""
+    purge_old_logs()
+    path = log_dir() / f"{datetime.datetime.now():%Y-%m-%d_%H%M%S}.log"
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # newline="" ：全檔統一用 LF，不要讓同一份檔案裡混著 CRLF 與 LF
+        # （Python 的 traceback 帶的本來就是 LF）
+        f = path.open("a", encoding="utf-8", newline="")
+        f.write(log_header(path))
+        f.flush()
+    except OSError:
+        return None, None
+    return path, f
 
 
 def is_project_dir(path: Path) -> bool:
@@ -191,12 +331,19 @@ class App(tk.Tk):
         # 第二輪之後這些套件的訊息就會流進一個沒人管的舊物件；共用一個實例
         # 讓那些逃逸的參考在定義上就是對的。
         self.writer = QueueWriter(self.log_queue)
-        # 啟動當下的 stderr，要留著：從「啟動.vbs」進來時它是被 cmd 重導向到
-        # 「啟動.log」的檔案 handle，是沒有黑視窗之後唯一收得到錯誤的地方。
+        # 啟動當下的 stderr，要留著：從「啟動.vbs」進來時它是 cmd 重導向到
+        # 系統暫存檔的 handle（那個檔就是 .vbs 在程式非正常結束時拿來跳訊息框
+        # 的內容），從「啟動（顯示訊息）.bat」進來時它就是主控台。
         # ⚠️ 必須存這個參考而不是每次讀 sys.stderr——轉檔期間 sys.stderr 是
         # QueueWriter（只到日誌區、關掉視窗就沒了），而錯誤最需要留底的正是
-        # 那段時間。也不可自己開檔寫：cmd 的 `>` 握著同一個檔，會撞在一起。
+        # 那段時間。
         self._boot_stderr = sys.stderr
+        # 這一趟的執行紀錄。開在 _build_ui 之前：建介面途中炸掉的話，這是唯一
+        # 收得到的地方。⚠️ 開不起來就是 (None, None)，一切照常跑（見
+        # open_run_log 的說明）。
+        self._log_lock = threading.Lock()
+        self._log_pending = ""
+        self._log_path, self._log_file = open_run_log()
         self.worker: threading.Thread | None = None
         self.running = False
         self.project_dir: Path | None = find_project_dir()
@@ -208,6 +355,10 @@ class App(tk.Tk):
         self._build_vars()
         self._build_ui()
         self._refresh_project_label()
+        # 位置要講出來：出事時使用者才知道要附哪一個檔，而不是被問「log 在哪」
+        self._append(f"執行紀錄：{self._log_path}\n" if self._log_path
+                     else "（無法建立執行紀錄檔；錯誤訊息只會留在這個日誌區，"
+                          "關掉視窗就沒了。要留底請改用「啟動（顯示訊息）.bat」。）\n")
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self.after(80, self._drain_log)
 
@@ -686,6 +837,9 @@ class App(tk.Tk):
             self._append(f"[開啟資料夾失敗] {e}\n")
 
     def _append(self, text: str) -> None:
+        # 先落地再上畫面：下面那段在 Text 丟 TclError 時會直接 return，而顯示
+        # 不出來的內容正是最該留底的那種
+        self._log_write(text)
         try:
             self.log.insert("end", _NON_BMP_RE.sub("\ufffd", text))
         except tk.TclError:
@@ -700,20 +854,85 @@ class App(tk.Tk):
 
     # ---- 錯誤留底 ----
     def _write_log(self, text: str) -> None:
-        """把錯誤寫回啟動當下的 stderr —— 從「啟動.vbs」進來時那就是
-        「啟動.log」，從「啟動（顯示訊息）.bat」進來時那就是主控台。
+        """把錯誤寫進這一趟的執行紀錄，**同時**寫回啟動當下的 stderr。
 
-        兩種入口都不必特別處理，也不必知道 log 檔在哪：重導向是啟動端的事，
-        這裡只負責把東西交到那條管子上。全程吞例外——留底失敗絕不能反過來
-        變成新的錯誤，蓋掉真正要記的那一個。"""
+        兩個落點各補一個缺口，缺一個就有一種情況看不到東西：
+
+        * 執行紀錄（`logs` 底下那一份）是事後找得回來的那一份，也是使用者要附
+          給我們看的那一份。
+        * 啟動當下的 stderr：從「啟動（顯示訊息）.bat」進來時它就是主控台
+          （使用者當場就看得到），從「啟動.vbs」進來時它是 cmd 重導向的暫存檔
+          ——程式若沒能正常結束，`.vbs` 會把那裡面的內容直接跳訊息框。**紀錄檔
+          開不起來時（磁碟唯讀、防毒攔截）它就是唯一的落點。**
+
+        全程吞例外——留底失敗絕不能反過來變成新的錯誤，蓋掉真正要記的那一個。"""
+        if not text.endswith("\n"):
+            text += "\n"
+        self._log_write(text)
         out = self._boot_stderr
         if out is None:          # pythonw 在沒有任何 handle 時 stderr 就是 None
             return
         try:
-            out.write(text if text.endswith("\n") else text + "\n")
+            out.write(text)
             out.flush()
         except Exception:
             pass
+
+    def _log_write(self, text: str) -> None:
+        """把一段輸出寫進執行紀錄檔（逐行、逐次 flush）。
+
+        ⚠️ **要上鎖**：畫面上的內容是主執行緒經由 `_append` 寫進來的，而轉檔
+        失敗的 traceback 是背景執行緒直接呼叫 `_write_log` 寫的，兩邊會撞在
+        一起——交錯的結果是兩段內容都糊掉，而那正是要留的東西。
+
+        ⚠️ **寫壞了就永久關掉這條管子**、不重試：紀錄檔不該有辦法讓 GUI 停下
+        來，而對一個寫不進去的檔每次輸出都重試一次，只會讓介面跟著卡住。"""
+        if not text or self._log_file is None:
+            return
+        with self._log_lock:
+            f = self._log_file
+            if f is None:
+                return
+            try:
+                self._log_pending += text
+                while "\n" in self._log_pending:
+                    line, self._log_pending = self._log_pending.split("\n", 1)
+                    f.write(line.rsplit("\r", 1)[-1] + "\n")
+                if "\r" in self._log_pending:
+                    # 下載模型的進度條是原地重寫（\r），整串收下來會在紀錄檔裡
+                    # 堆出上萬行，而這個檔要保持「貼得進對話」
+                    self._log_pending = self._log_pending.rsplit("\r", 1)[-1]
+                if len(self._log_pending) > LOG_MAX_PENDING:
+                    f.write(self._log_pending + "\n")
+                    self._log_pending = ""
+                # 逐次 flush：使用者是直接關視窗收工的，留在緩衝區的會整段蒸發，
+                # 而那正好是出事的那一段
+                f.flush()
+            except Exception:
+                self._log_file = None
+                try:
+                    f.close()
+                except Exception:
+                    pass
+
+    def _log_close(self) -> None:
+        """收尾：把還沒換行的殘段寫掉、蓋上結束時間。
+
+        逐次 flush 已經保證「被強制關掉也不會少東西」，這裡只讓正常關閉的那一
+        份看起來是完整的（最後一行沒有換行時，殘段本來會留在緩衝區裡）。"""
+        with self._log_lock:
+            f, self._log_file = self._log_file, None
+            if f is None:
+                return
+            try:
+                if self._log_pending.strip():
+                    f.write(self._log_pending + "\n")
+                self._log_pending = ""
+                f.write(f"---- 結束 {datetime.datetime.now():%Y-%m-%d %H:%M:%S}"
+                        f" ----\n")
+                f.close()
+            except Exception:
+                pass
 
     def report_callback_exception(self, exc, val, tb) -> None:
         """Tk 對 callback 裡漏出來的例外預設只印 stderr、不彈任何東西。
@@ -727,9 +946,10 @@ class App(tk.Tk):
         except Exception:
             pass
         try:
-            messagebox.showerror(
-                "發生未預期的錯誤",
-                f"{val}\n\n完整內容已寫進專案資料夾的「啟動.log」。")
+            # 講得出檔案位置才有用：叫使用者「去看 log」而不說在哪等於沒說
+            where = (f"完整內容已寫進：\n{self._log_path}" if self._log_path
+                     else "（執行紀錄檔建立不起來，完整內容只在下方的日誌區）")
+            messagebox.showerror("發生未預期的錯誤", f"{val}\n\n{where}")
         except Exception:
             pass
 
@@ -743,6 +963,7 @@ class App(tk.Tk):
                 "轉檔還在進行。現在關閉會中斷寫檔，"
                 "可能在輸出路徑留下一個損壞、無法開啟的 .pptx。\n\n確定要關閉嗎？"):
             return
+        self._log_close()
         self.destroy()
 
 

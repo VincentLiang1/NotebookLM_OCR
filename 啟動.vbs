@@ -1,16 +1,22 @@
-' 啟動.vbs — 不開黑視窗，雙擊就直接開圖形介面
+' 啟動.vbs —— 開起圖形介面，全程沒有黑視窗。
 '
-' 與「啟動（顯示訊息）.bat」的差別只在視窗：.bat 留一個主控台視窗顯示訊息，
-' 這一支改用 pythonw 啟動、並將主控台隱藏，所以只看得到 GUI。
+' 與「啟動（顯示訊息）.bat」的差別只在後者留一個主控台視窗顯示訊息；這一邊
+' 用 pythonw 啟動、並把主控台隱藏起來，所以只看得到 GUI。
 '
-' 既然沒有黑視窗可看，原本會印在那裡的東西（uv 的錯誤、Python 的
-' traceback）全部重導向到這一支旁邊的「啟動.log」，每次啟動覆寫。
-' GUI 自己的未預期錯誤也寫進同一份（它寫回原始 stderr，不另開檔，
-' 所以不會和這裡的重導向搶同一個檔案 handle）。
-' 轉檔過程的訊息照舊顯示在介面下方的日誌區。
+' 代價是原本會印在那個視窗的東西（uv 的錯誤、Python 在 import 期就炸的
+' traceback）沒有落點。作法：先收進系統暫存資料夾的一個暫存檔，程式沒能正常
+' 結束時「當場把內容跳訊息框顯示出來」，然後把暫存檔刪掉——專案資料夾裡不留
+' 任何 log（使用者 2026-08-24 指示「遇到錯誤就立刻顯示，不必寫檔」）。
+'
+' 程式自己的執行紀錄是另一回事：由 GUI 寫進專案底下的 logs 資料夾，一次執行
+' 一個檔、保留 30 天。這裡攔的是「GUI 還沒能力做任何事」的那一段。
 Option Explicit
 
-Dim sh, fso, here, q, target, logPath, cmd, rc, msg
+' MsgBox 大約 1024 個字元就會被截掉，而有用的部分（例外的最後幾行）在尾巴
+Const MAX_MSG = 900
+Const APP_TITLE = "NotebookLM PDF → PPT"
+
+Dim sh, fso, here, q, target, capPath, cmd, rc, out, msg
 
 Set sh  = CreateObject("WScript.Shell")
 Set fso = CreateObject("Scripting.FileSystemObject")
@@ -18,39 +24,90 @@ Set fso = CreateObject("Scripting.FileSystemObject")
 here    = fso.GetParentFolderName(WScript.ScriptFullName)
 q       = Chr(34)
 target  = here & "\pdf2ppt_gui_2.py"
-logPath = here & "\啟動.log"
+' 攔訊息用的暫存檔放系統暫存資料夾（GetSpecialFolder(2)）：專案資料夾裡不留東西
+capPath = fso.BuildPath(fso.GetSpecialFolder(2).Path, fso.GetTempName())
 
 sh.CurrentDirectory = here
 
-' 透過 cmd /c 才有重導向；WScript.Shell.Run 自己不支援 > 與 2>&1。
-' cmd /c 的引號規則：整串外層包一對引號，內層路徑照常用引號。
-cmd = "cmd /c " & q & "uv run pythonw " & q & target & q & _
-      " > " & q & logPath & q & " 2>&1" & q
+' 子行程一律用 UTF-8 輸出，攔到的訊息才解得回來（主控台預設是 cp950，中文
+' traceback 直接讀會是亂碼）。改的是本行程的環境區塊，Run 出去的子行程繼承它。
+sh.Environment("PROCESS")("PYTHONIOENCODING") = "utf-8"
 
-' 0 = 隱藏視窗（cmd 與 uv 都看不到）；True = 等它結束才拿得到結束碼
+' 透過 cmd /c 才有重導向：WScript.Shell.Run 自己不支援 > 與 2>&1。
+' 【注意】cmd /c 的引號規則：整串外層包一對引號，內層路徑照常用各自的引號。
+' 寫成兩個雙引號想跳脫是錯的——cmd 不吃那套，而專案路徑含中文與可能的空格，
+' 這一點錯了就是「雙擊沒反應」。
+cmd = "cmd /c " & q & "uv run pythonw " & q & target & q & _
+      " > " & q & capPath & q & " 2>&1" & q
+
+' 【注意】兩個參數都不可改：0 = SW_HIDE（cmd 與 uv 都看不到），True = 等它
+' 結束——不等就拿不到結束碼，也就沒辦法在失敗時跳訊息框。代價是 wscript 行程
+' 會活到 GUI 關閉為止，這是刻意的。
 On Error Resume Next
 rc = sh.Run(cmd, 0, True)
 If Err.Number <> 0 Then
     MsgBox "無法啟動程式（" & Err.Description & "）。" & vbCrLf & vbCrLf & _
            "請先確認已安裝 uv（https://docs.astral.sh/uv/），" & vbCrLf & _
-           "再雙擊「安裝.bat」建立環境。", _
-           vbCritical, "NotebookLM PDF 轉 PPT"
+           "再執行「安裝.bat」建立環境。", vbCritical, APP_TITLE
+    Cleanup fso, capPath
     WScript.Quit 1
 End If
 On Error GoTo 0
 
 If rc <> 0 Then
+    out = Captured(fso, capPath)
     msg = "圖形介面沒有正常結束（結束碼 " & rc & "）。" & vbCrLf & vbCrLf
-    If fso.FileExists(logPath) Then
-        msg = msg & "錯誤訊息已寫進：" & vbCrLf & logPath & vbCrLf & vbCrLf & _
-                    "按「是」直接開啟它。"
-        If MsgBox(msg, vbExclamation + vbYesNo, "NotebookLM PDF 轉 PPT") = vbYes Then
-            sh.Run q & logPath & q, 1, False
-        End If
+    If Len(out) > 0 Then
+        msg = msg & out
     Else
-        MsgBox msg & "連 log 都沒有產生（磁碟唯讀？防毒攔截？）。" & vbCrLf & _
-               "請改用「啟動（顯示訊息）.bat」，它會保留主控台視窗顯示錯誤內容；" & vbCrLf & _
-               "若是第一次使用，請先執行「安裝.bat」。", _
-               vbExclamation, "NotebookLM PDF 轉 PPT"
+        msg = msg & "沒有攔到任何訊息。請改用「啟動（顯示訊息）.bat」，" & _
+              "它會把主控台留著；若是第一次使用，請先執行「安裝.bat」。"
     End If
+    MsgBox msg, vbCritical, APP_TITLE
 End If
+
+Cleanup fso, capPath
+
+
+' 讀回攔到的訊息。優先用 ADODB.Stream 解 UTF-8（子行程就是用 UTF-8 寫的）；
+' 那個元件被停用時退回 FileSystemObject —— 中文會變亂碼，但 traceback 的骨架
+' 仍讀得出來，比什麼都不顯示好。
+Function Captured(fso, path)
+    Dim st, f, text
+    Captured = ""
+    If Not fso.FileExists(path) Then Exit Function
+
+    text = ""
+    On Error Resume Next
+    Set st = CreateObject("ADODB.Stream")
+    If Err.Number = 0 Then
+        st.Type = 2 : st.Charset = "utf-8" : st.Open
+        st.LoadFromFile path
+        text = st.ReadText
+        st.Close
+    End If
+    If Err.Number <> 0 Or Len(text) = 0 Then
+        Err.Clear
+        Set f = fso.OpenTextFile(path, 1)
+        If Err.Number = 0 Then
+            If Not f.AtEndOfStream Then text = f.ReadAll
+            f.Close
+        End If
+    End If
+    On Error GoTo 0
+
+    text = Trim(text)
+    If Len(text) > MAX_MSG Then
+        text = "（訊息很長，以下只顯示最後 " & MAX_MSG & " 個字）" & _
+               vbCrLf & vbCrLf & Right(text, MAX_MSG)
+    End If
+    Captured = text
+End Function
+
+
+' 暫存檔一律刪掉：它只是「把訊息端到訊息框」的通道，不是要留下來的東西。
+Sub Cleanup(fso, path)
+    On Error Resume Next
+    If fso.FileExists(path) Then fso.DeleteFile path, True
+    On Error GoTo 0
+End Sub
