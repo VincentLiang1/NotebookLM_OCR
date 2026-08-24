@@ -691,6 +691,76 @@ def resolve_device(device: str = "auto") -> str:
     return "cpu"
 
 
+ROT90_MIN_HW = 1.5  # h/w at which PP-OCR rot90's a crop before recognition
+
+
+def _gate_orientation_cls(engine) -> None:
+    """Let the 180-degree classifier speak only for crops that were rot90'd.
+
+    PP-OCR crops every detected box and, when the box is taller than it is
+    wide (h/w >= ROT90_MIN_HW in get_rotate_crop_image), turns it 90 degrees
+    before recognition -- which is exactly where the reading direction becomes
+    ambiguous, and what the 180-degree classifier is there to resolve. A box
+    that was NOT turned is a horizontal line of text on a page we rendered
+    ourselves: it cannot be upside down, so a '180' verdict on it is always
+    wrong.
+
+    It is also expensive to be wrong about, because the failure is silent:
+    the recognizer reads the flipped strip as an empty string, and RapidOCR
+    drops empty results TOGETHER WITH their boxes, so the line never reaches
+    us at all -- no low score, no drop count, nothing in the --debug dump
+    (guard V2 p7, a 1607x62 strip of body text: classified 180 at 0.978, read
+    at 0.998 the moment the flip is undone).
+
+    Measured over the five decks (1621 crops, 82 of them called 180, of which
+    only those above cls_thresh are actually flipped): gating the classifier
+    on the crop shape recovers 6 lines and loses none. Silencing the
+    classifier outright -- the obvious shortcut -- recovers the same 6 but
+    loses 3, the vertical CJK labels whose crops the rot90 really did leave
+    upside down (rlbp p12 決策依據（Decision Basis), trans p1 DECODER/2028).
+    """
+    try:
+        crop_fn = engine.crop_text_regions
+        cls_fn = engine.cls_and_rotate
+        thresh = engine.text_cls.cls_thresh
+    except AttributeError:  # engine internals moved: leave the pipeline alone
+        return
+    state: dict = {}
+
+    def crop_text_regions(img, det_boxes):
+        crops = crop_fn(img, det_boxes)
+        rotated = []
+        for box in det_boxes:
+            box = np.asarray(box, dtype=float)
+            # same measurement get_rotate_crop_image makes, int included
+            w = int(max(np.linalg.norm(box[0] - box[1]),
+                        np.linalg.norm(box[2] - box[3])))
+            h = int(max(np.linalg.norm(box[0] - box[3]),
+                        np.linalg.norm(box[1] - box[2])))
+            rotated.append(w > 0 and h / w >= ROT90_MIN_HW)
+        state["rotated"] = rotated
+        return crops
+
+    def cls_and_rotate(crops):
+        imgs, res = cls_fn(crops)
+        # popped, not read: a use_det=False call never refreshes it, and a
+        # stale list of the same length would silently mis-pair
+        rotated = state.pop("rotated", None)
+        if rotated is None or len(rotated) != len(imgs):
+            return imgs, res
+        for i, (label, conf) in enumerate(res.cls_res):
+            # conf <= thresh means the classifier said 180 but the engine
+            # did not act on it -- nothing to undo
+            if rotated[i] or "180" not in str(label) or conf <= thresh:
+                continue
+            imgs[i] = np.ascontiguousarray(imgs[i][::-1, ::-1])
+            res.cls_res[i] = ("0", conf)
+        return imgs, res
+
+    engine.crop_text_regions = crop_text_regions
+    engine.cls_and_rotate = cls_and_rotate
+
+
 class OcrEngine:
     def __init__(self, lang: str | None = None, fast: bool = False,
                  s2t: bool = True, device: str = "auto"):
@@ -724,6 +794,8 @@ class OcrEngine:
         elif self.device == "cuda":
             params["EngineConfig.onnxruntime.use_cuda"] = True
         self.engine = RapidOCR(params=params)
+        # a wide crop cannot be upside down; see the function
+        _gate_orientation_cls(self.engine)
         # Now that the models are loaded, drop the last level too. RapidOCR
         # logs one WARNING per detection that comes back empty, and the
         # rotation rescue asks it to detect inside a single line's crop seven
