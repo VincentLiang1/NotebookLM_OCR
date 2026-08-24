@@ -515,9 +515,6 @@ class App(tk.Tk):
         actions.pack(fill="x", **pad)
         self.run_btn = ttk.Button(actions, text="開始轉檔", command=self._start)
         self.run_btn.pack(side="left")
-        ttk.Button(actions, text="清除日誌",
-                   command=lambda: self.log.delete("1.0", "end")).pack(
-            side="left", padx=6)
         self.status = ttk.Label(actions, text="就緒", foreground="#0a0")
         self.status.pack(side="right")
 
