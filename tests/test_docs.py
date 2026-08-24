@@ -213,6 +213,27 @@ def test_every_cli_flag_has_a_gui_control():
     assert not missing, f"pdf2ppt_gui_2.py 沒有對應控制項的旗標：{missing}"
 
 
+def test_the_partial_exit_code_is_the_same_number_in_all_three_places():
+    """降級的離開碼在三個地方各存一份：`cli.py` 是正典，`pdf2ppt_gui_2.py` 與
+    `轉檔.bat` 都是手抄的。
+
+    不 import 的理由寫在各自的註解裡（GUI 可以在執行中途改指到另一份
+    checkout，而 `.bat` 根本沒有 Python 可用）。手抄就會漂移，而**這一種漂移
+    是沉默的**：號碼對不上時，有頁面降級的那一趟會被報成單純的「完成」，或者
+    反過來被報成「失敗」——兩種都會讓使用者做錯決定，而且畫面上不會有任何一
+    句話提示他號碼對不上。"""
+    m = re.search(r"^PARTIAL_RC = (\d+)$", CLI_PY, re.M)
+    assert m, "cli.py 的 PARTIAL_RC 不見了（改名了就要一起改這支測試）"
+    rc = m.group(1)
+    g = re.search(r"^PARTIAL_RC = (\d+)$", GUI_PY, re.M)
+    assert g and g.group(1) == rc, (
+        f"pdf2ppt_gui_2.py 的 PARTIAL_RC 是 {g and g.group(1)}，"
+        f"cli.py 是 {rc}")
+    bat = (ROOT / "轉檔.bat").read_text(encoding="cp950")
+    assert f"errorlevel {rc}" in bat, (
+        f"轉檔.bat 沒有 errorlevel {rc} 的分支，降級會被當成失敗")
+
+
 def test_rejected_paths_index_points_at_real_sections():
     """「量過而否決的路」那一章只寫「見『某某標題』」。
 

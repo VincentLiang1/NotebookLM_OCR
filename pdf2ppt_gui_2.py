@@ -61,6 +61,11 @@ APP_TITLE = "NotebookLM PDF → PPT 轉檔工具"
 ADV_SHOW_TEXT = "▸ 進階選項（頁碼、字型、DPI、除錯…）"
 ADV_HIDE_TEXT = "▾ 進階選項（收合）"
 
+# 轉檔結束代碼裡的這一個代表「檔案有了，但至少一頁降級」（cli.py 的
+# PARTIAL_RC）。⚠️ 手抄過來的常數，tests/test_docs.py 釘著兩邊一致 ——
+# 不 import 是因為 GUI 可以在執行中途改指到另一份 checkout，而那一份未必有它。
+PARTIAL_RC = 3
+
 # 記住專案位置的設定檔（存在使用者家目錄，跟著使用者走）
 CONFIG_PATH = Path.home() / ".notebooklm_pdf2ppt_gui.json"
 
@@ -805,13 +810,23 @@ class App(tk.Tk):
     def _finish(self, rc: int) -> None:
         self.progress.stop()
         try:
-            if rc == 0:
-                self.status.config(text="完成 ✓", foreground="#0a0")
+            if rc in (0, PARTIAL_RC):
+                # 有頁面降級時不能報成單純的「完成」：檔案是好的，但那幾頁
+                # 沒有可編輯文字，而頁碼只寫在日誌區最後一行的 WARNING ——
+                # 對話框正好蓋在它上面，按完「否」就再也不會有人往下看
+                part = rc == PARTIAL_RC
+                self.status.config(
+                    text="完成（有頁面降級）" if part else "完成 ✓",
+                    foreground="#c60" if part else "#0a0")
                 out = self._effective_out()
                 shown = str(out) if out else "(輸入檔同名 .pptx)"
-                self._append(f"\n✓ 轉檔完成：{shown}\n")
+                tag = "⚠ 轉檔完成，但有頁面降級" if part else "✓ 轉檔完成"
+                self._append(f"\n{tag}：{shown}\n")
+                note = ("\n\n⚠ 有幾頁沒能轉成文字，只保留了原圖"
+                        "（頁碼見下方日誌最後一行的 WARNING）。" if part else "")
                 if out is not None and messagebox.askyesno(
-                        "完成", f"轉檔完成！\n\n{shown}\n\n要開啟所在資料夾嗎？"):
+                        "完成", f"轉檔完成！\n\n{shown}{note}"
+                                f"\n\n要開啟所在資料夾嗎？"):
                     self._open_folder(out)
             else:
                 self.status.config(text=f"失敗（代碼 {rc}）", foreground="#c00")

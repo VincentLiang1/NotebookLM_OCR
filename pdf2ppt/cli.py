@@ -5,6 +5,7 @@ import argparse
 import json
 import sys
 import time
+import traceback
 from pathlib import Path
 
 import numpy as np
@@ -27,6 +28,13 @@ from .style import estimate_style
 # after it (spelled without the space because the match runs on de-spaced
 # text). Compared case-folded: the mark is set small and light, where the rec
 # model's casing is the least trustworthy part of an otherwise easy read.
+# Exit code for a run that produced a deck but had to degrade at least one
+# page. Neither 0 nor 1 is honest here: 0 makes the GUI announce plain success
+# over a page that lost its text, and 1 tells 轉檔.bat the conversion failed
+# when the file is perfectly usable. ⚠️ pdf2ppt_gui_2.py and 轉檔.bat carry
+# their own copy of this number (a test pins the GUI's to this one).
+PARTIAL_RC = 3
+
 WATERMARK_MARKS = ("notebooklm", "gemininotebook")
 WATERMARK_STRAY_MAX = 6  # chars OCR may glue on ahead of the mark
 
@@ -266,76 +274,44 @@ def main(argv: list[str] | None = None) -> int:
                           font_name=args.font, cover=not args.no_cover)
 
     debug_dump = []
+    failed: list[tuple[int, str]] = []
     t0 = time.time()
     for n, idx in enumerate(page_indices, 1):
         t_page = time.time()
         page = doc[idx]
-        img, png = render_page(page, args.dpi)
-        px_to_slide_pt = 960.0 / img.shape[1]  # slide is fixed at 960 pt wide
-        lines = engine.recognize(img, min_score=args.min_score)
-        # read it now: the next recognize() resets it
-        page_fixes = engine.last_fixes
-        styles = [estimate_style(img, ln, px_to_slide_pt, bold_mode)
-                  for ln in lines]
+        head = f"page {idx + 1} ({n}/{len(page_indices)})"
+        try:
+            img, png = render_page(page, args.dpi)
+        except Exception as e:
+            # no raster means no slide at all -- a blank stand-in would shift
+            # every page number after it without saying so
+            traceback.print_exc()
+            print(f"{head}: render failed ({type(e).__name__}), "
+                  f"page dropped from the deck")
+            failed.append((idx + 1, "dropped"))
+            continue
 
-        wipes = []
-        if not args.keep_watermark:
-            kept_lines, kept_styles = [], []
-            for ln, st in zip(lines, styles):
-                if is_watermark(ln, st, img.shape[1], img.shape[0]):
-                    wipes.append(watermark_wipe(ln, st, img))
-                else:
-                    kept_lines.append(ln)
-                    kept_styles.append(st)
-            lines, styles = kept_lines, kept_styles
+        n_before = len(builder.prs.slides)
+        try:
+            res = _convert_page(engine, builder, args, bold_mode, img, png)
+        except Exception as e:
+            # The raster is already in hand, so the page still goes into the
+            # deck -- just without editable text over it. The traceback goes
+            # out in full: a page failing on someone else's machine is exactly
+            # the case where the run log is the only evidence there will be.
+            traceback.print_exc()
+            how = _fallback_slide(builder, img, png, n_before)
+            print(f"{head}: {type(e).__name__}, left as {how}"
+                  f", {time.time() - t_page:.1f}s")
+            failed.append((idx + 1, how))
+            if args.debug:
+                debug_dump.append({"page": idx + 1,
+                                   "error": f"{type(e).__name__}: {e}"})
+            continue
 
-        # icons-as-letters, markup strikethroughs and sub/superscript
-        # formulas can't be rendered as faithful text — leave the raster
-        before_drop = lines
-        lines, styles, n_unrepr = drop_unreproducible(lines, styles, img)
-
-        n_tiny = 0
-        if not args.keep_tiny_text:
-            lines, styles, n_tiny = drop_illegible_lines(lines, styles)
-        # n_unrepr is NOT folded into n_tiny: drop_unreproducible is not
-        # controlled by --keep-tiny-text, and its lines (icons read as
-        # letters, markup strikethroughs, sub/superscript formulas) are
-        # neither tiny nor blurry — reporting them as such told users the
-        # flag they had just passed had not taken effect
-        kept_ids = {id(ln) for ln in lines}
-        dropped_lines = [ln for ln in before_drop if id(ln) not in kept_ids]
-
-        # merge detector-shattered title fragments into one line before
-        # harmonizing (p6 釐清「方言」：markdown 的規格體系)
-        lines, styles = merge_row_title_fragments(lines, styles, img)
-
-        # stacked same-card labels measured at split sizes -> one size,
-        # BEFORE harmonize_font_sizes re-groups a corrected size back up
-        # (p8 單一/主專案, p14 啟動【…】/全力建構/重啟計量)
-        harmonize_stacked_overlap_size(lines, styles)
-        # size first: wrap-mates unified into their true size leave the
-        # same-size bold cohorts cleaner (SKILL.md belongs to 自動產出's
-        # 18pt chip, not to the 16pt 步驟 headers it was born sized as)
-        harmonize_font_sizes(lines, styles)
-        harmonize_code_block_latin(lines, styles)
-        sync_clamped_twins(lines, styles)
-        propagate_column_clamp(lines, styles)
-        # parallel card stacks in one row share a size: the card whose lines
-        # are all short escapes the width clamp and snaps two steps up (p13)
-        propagate_row_clamp(lines, styles)
-        if bold_mode == "auto":
-            reeval_clamped_bold(lines, styles)
-            harmonize_bold(lines, styles)
-        # match a paragraph tail stranded by a raster line in its middle to
-        # the body line's size/weight (p13 會變成… → Alerts… line)
-        harmonize_across_dropped(lines, styles, dropped_lines)
-        clamp_row_neighbors(lines, styles, px_to_slide_pt)
-        harmonize_chip_bg(lines, styles)
-        blocks = lines_to_blocks(lines, styles, merge=args.merge_lines)
-        builder.add_slide(png, blocks, img.shape[1], img.shape[0],
-                          wipes=wipes, img=img)
-        print(f"page {idx + 1} ({n}/{len(page_indices)}): {len(lines)} lines, "
-              f"{len(blocks)} shapes"
+        lines, styles, page_fixes = res["lines"], res["styles"], res["fixes"]
+        n_tiny, n_unrepr, wipes = res["n_tiny"], res["n_unrepr"], res["wipes"]
+        print(f"{head}: {len(lines)} lines, {len(res['blocks'])} shapes"
               + (f", {n_tiny} tiny/blurry left as image" if n_tiny else "")
               + (f", {n_unrepr} unreproducible left as image" if n_unrepr else "")
               + (f", {len(wipes)} watermark wiped" if wipes else "")
@@ -366,15 +342,123 @@ def main(argv: list[str] | None = None) -> int:
             _write_debug_overlay(img, lines, out_path, idx + 1)
 
     builder.save(str(out_path))
-    print(f"Saved {out_path} ({len(page_indices)} slides, "
+    # count the slides that exist, not the pages asked for: a page whose
+    # raster could not be produced is not in the file
+    print(f"Saved {out_path} ({len(builder.prs.slides)} slides, "
           f"{time.time() - t0:.1f}s)")
+    if failed:
+        # deliberately the last line printed: 'Saved …' above reads like
+        # unqualified success, and this is the one thing the user has to know
+        # before opening the file
+        print("WARNING: " + ", ".join(f"page {q} {how}" for q, how in failed))
 
     if args.debug:
         dbg = out_path.with_suffix(".debug.json")
         dbg.write_text(json.dumps(debug_dump, ensure_ascii=False, indent=1),
                        encoding="utf-8")
         print(f"Debug data: {dbg}")
-    return 0
+    # a run where every single page failed is a failed run, whatever landed on
+    # disk; anything less still produced a deck worth opening, but it must not
+    # come back as an unqualified success either
+    if len(failed) == len(page_indices):
+        return 1
+    return PARTIAL_RC if failed else 0
+
+
+def _fallback_slide(builder, img, png, n_before: int) -> str:
+    """Carry a page whose conversion blew up as its bare raster.
+
+    Returns what the user actually ends up with on that page, for the run
+    log -- the three outcomes are not equally bad and the difference is not
+    visible from outside."""
+    if len(builder.prs.slides) > n_before:
+        # add_slide broke partway: the slide is already there holding
+        # whatever it managed to place, and adding a second one would
+        # duplicate the page rather than repair it
+        return "partial slide"
+    try:
+        builder.add_slide(png, [], img.shape[1], img.shape[0])
+    except Exception:
+        traceback.print_exc()
+        return "dropped"
+    return "image only"
+
+
+def _convert_page(engine, builder, args, bold_mode, img, png) -> dict:
+    """One rendered page -> one slide, plus the numbers the run log prints.
+
+    Lifted out of main() so that a page which blows up costs one page instead
+    of the whole run: a 15-page deck failing on page 14 used to throw away the
+    thirteen that had already worked. The caller catches around this call.
+    ⚠️ **The only thing in here that touches the deck is the add_slide at the
+    very end** -- that is what makes the fallback safe, so keep it that way.
+    """
+    px_to_slide_pt = 960.0 / img.shape[1]  # slide is fixed at 960 pt wide
+    lines = engine.recognize(img, min_score=args.min_score)
+    # read it now: the next recognize() resets it
+    page_fixes = engine.last_fixes
+    styles = [estimate_style(img, ln, px_to_slide_pt, bold_mode)
+              for ln in lines]
+
+    wipes = []
+    if not args.keep_watermark:
+        kept_lines, kept_styles = [], []
+        for ln, st in zip(lines, styles):
+            if is_watermark(ln, st, img.shape[1], img.shape[0]):
+                wipes.append(watermark_wipe(ln, st, img))
+            else:
+                kept_lines.append(ln)
+                kept_styles.append(st)
+        lines, styles = kept_lines, kept_styles
+
+    # icons-as-letters, markup strikethroughs and sub/superscript
+    # formulas can't be rendered as faithful text — leave the raster
+    before_drop = lines
+    lines, styles, n_unrepr = drop_unreproducible(lines, styles, img)
+
+    n_tiny = 0
+    if not args.keep_tiny_text:
+        lines, styles, n_tiny = drop_illegible_lines(lines, styles)
+    # n_unrepr is NOT folded into n_tiny: drop_unreproducible is not
+    # controlled by --keep-tiny-text, and its lines (icons read as
+    # letters, markup strikethroughs, sub/superscript formulas) are
+    # neither tiny nor blurry — reporting them as such told users the
+    # flag they had just passed had not taken effect
+    kept_ids = {id(ln) for ln in lines}
+    dropped_lines = [ln for ln in before_drop if id(ln) not in kept_ids]
+
+    # merge detector-shattered title fragments into one line before
+    # harmonizing (p6 釐清「方言」：markdown 的規格體系)
+    lines, styles = merge_row_title_fragments(lines, styles, img)
+
+    # stacked same-card labels measured at split sizes -> one size,
+    # BEFORE harmonize_font_sizes re-groups a corrected size back up
+    # (p8 單一/主專案, p14 啟動【…】/全力建構/重啟計量)
+    harmonize_stacked_overlap_size(lines, styles)
+    # size first: wrap-mates unified into their true size leave the
+    # same-size bold cohorts cleaner (SKILL.md belongs to 自動產出's
+    # 18pt chip, not to the 16pt 步驟 headers it was born sized as)
+    harmonize_font_sizes(lines, styles)
+    harmonize_code_block_latin(lines, styles)
+    sync_clamped_twins(lines, styles)
+    propagate_column_clamp(lines, styles)
+    # parallel card stacks in one row share a size: the card whose lines
+    # are all short escapes the width clamp and snaps two steps up (p13)
+    propagate_row_clamp(lines, styles)
+    if bold_mode == "auto":
+        reeval_clamped_bold(lines, styles)
+        harmonize_bold(lines, styles)
+    # match a paragraph tail stranded by a raster line in its middle to
+    # the body line's size/weight (p13 會變成… → Alerts… line)
+    harmonize_across_dropped(lines, styles, dropped_lines)
+    clamp_row_neighbors(lines, styles, px_to_slide_pt)
+    harmonize_chip_bg(lines, styles)
+    blocks = lines_to_blocks(lines, styles, merge=args.merge_lines)
+    builder.add_slide(png, blocks, img.shape[1], img.shape[0],
+                      wipes=wipes, img=img)
+    return {"lines": lines, "styles": styles, "blocks": blocks,
+            "wipes": wipes, "n_tiny": n_tiny, "n_unrepr": n_unrepr,
+            "fixes": page_fixes}
 
 
 def _write_debug_overlay(img, lines, out_path: Path, page_no: int) -> None:
