@@ -1,6 +1,6 @@
 ' 啟動.vbs — 不開黑視窗，雙擊就直接開圖形介面
 '
-' 與「啟動.bat」的差別只在視窗：.bat 留一個主控台視窗顯示訊息，
+' 與「啟動（顯示訊息）.bat」的差別只在視窗：.bat 留一個主控台視窗顯示訊息，
 ' 這一支改用 pythonw 啟動、並將主控台隱藏，所以只看得到 GUI。
 '
 ' 既然沒有黑視窗可看，原本會印在那裡的東西（uv 的錯誤、Python 的
@@ -48,7 +48,9 @@ If rc <> 0 Then
             sh.Run q & logPath & q, 1, False
         End If
     Else
-        MsgBox msg & "若是第一次使用，請先執行「安裝.bat」。", _
+        MsgBox msg & "連 log 都沒有產生（磁碟唯讀？防毒攔截？）。" & vbCrLf & _
+               "請改用「啟動（顯示訊息）.bat」，它會保留主控台視窗顯示錯誤內容；" & vbCrLf & _
+               "若是第一次使用，請先執行「安裝.bat」。", _
                vbExclamation, "NotebookLM PDF 轉 PPT"
     End If
 End If

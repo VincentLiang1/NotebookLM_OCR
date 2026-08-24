@@ -25,7 +25,7 @@ uv run python pdf2ppt_gui_2.py         # 圖形介面（或雙擊「啟動.vbs�
 
 自動化測試只有 `tests/test_docs.py`（文件與程式碼的一致性）與 `tests/test_docs_index.py`（指路不得斷掉、`CLAUDE.md` 字元上限，2026-08-24 隨文件分層規範加入）；**轉換品質沒有自動測試**，靠的是四份 deck 全跑加目視比對（見下方「驗證」）。
 
-⚠️ **動到 `啟動.vbs`、`啟動.bat` 或 GUI 的啟動／錯誤處理路徑之前先讀 `docs/dev/gui-啟動與錯誤留底.md`**：藏掉主控台就等於藏掉所有錯誤，所以要有東西接住（決策層級的那一句在 `docs/spec/09-執行環境與效能.md` §9.5，那一份放綁著 Windows／VBScript／Tkinter 的實作細節）。
+⚠️ **動到 `啟動.vbs`、`啟動（顯示訊息）.bat` 或 GUI 的啟動／錯誤處理路徑之前先讀 `docs/dev/gui-啟動與錯誤留底.md`**：藏掉主控台就等於藏掉所有錯誤，所以要有東西接住（決策層級的那一句在 `docs/spec/09-執行環境與效能.md` §9.5，那一份放綁著 Windows／VBScript／Tkinter 的實作細節）。
 
 ## 協作方式
 
