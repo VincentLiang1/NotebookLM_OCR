@@ -45,10 +45,23 @@ SPEC_TEXT = {p.name: p.read_text(encoding="utf-8") for p in SPEC_FILES}
 
 # 會被「常數值」與「符號指路」兩條掃到的全部文件：規則搬家之後，正典的整理版
 # 分散在這幾份，任何一份漂掉都一樣害人。
+#
 RULE_DOCS = {"CLAUDE.md": CLAUDE_MD,
              "docs/系統規格.md": (ROOT / "docs" / "系統規格.md").read_text(
                  encoding="utf-8"),
              **{f"docs/spec/{n}": t for n, t in SPEC_TEXT.items()}}
+
+# 常數值與符號指路**另外**加掃 `docs/dev/`（2026-08-24）：spec 正文改成技術中立、
+# 實作名詞集中進「附錄-現行實作對照」之後，符號指路會同時住在那一章與 `docs/dev/`。
+# 上面那份名單原本身兼二職，等於預設「符號只住在 spec」——那個預設會讓「把實作
+# 細節搬進 dev」這件對的事看起來像在拆守備。
+#
+# ⚠️ **只加掃這兩條，不加掃「死指路」那條**：`docs/dev/` 裡有刻意寫出來的**示範
+# 路徑**（平台變體的目錄、別的 repo 的範例），它們本來就不該存在。真正的檔案路徑
+# 由 `tests/test_docs_index.py` 全 repo 掃，那一條要求副檔名、不會誤咬目錄示範。
+SYMBOL_DOCS = {**RULE_DOCS,
+               **{f"docs/dev/{p.name}": p.read_text(encoding="utf-8")
+                  for p in sorted((ROOT / "docs" / "dev").glob("*.md"))}}
 
 MODULES = ["pdf2ppt.style", "pdf2ppt.blocks", "pdf2ppt.builder",
            "pdf2ppt.ocr", "pdf2ppt.cli", "pdf2ppt.models", "pdf2ppt.render"]
@@ -77,7 +90,7 @@ def _modules():
 
 def _cited_constants() -> dict[str, set[str]]:
     out: dict[str, set[str]] = {}
-    for text in RULE_DOCS.values():
+    for text in SYMBOL_DOCS.values():
         for pat in _CONST_CITED:
             for m in pat.finditer(text):
                 out.setdefault(m.group(1), set()).add(m.group(2))
@@ -157,7 +170,7 @@ def test_documented_symbols_exist_in_the_code():
     src += "\n" + GUI_PY
     problems = []
     cited = set()
-    for text in RULE_DOCS.values():
+    for text in SYMBOL_DOCS.values():
         cited |= set(re.findall(r"`(_[a-z][a-z0-9_]{3,})`", text))
     assert HISTORICAL <= cited, (
         f"白名單裡有文件已經不提的符號，該刪了：{sorted(HISTORICAL - cited)}")
