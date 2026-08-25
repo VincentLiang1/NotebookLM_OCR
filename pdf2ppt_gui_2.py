@@ -101,6 +101,15 @@ APP_ICON = PROJECT_DIR / "assets" / "icon.ico"
 # 執行中的視窗會變成兩個各自獨立的按鈕。
 APP_ID = "VincentLiang.NotebookLM.Pdf2Ppt"
 
+# 間距尺規（邏輯 px，一律再過 App.px() 換算成實體像素）。⚠️ **版面裡不要再出現
+# 別的間距數字**：2026-08-25 晚上使用者說「還是有點擠」，量出來的成因不是字太小
+# （基準字級本來就是 10pt），而是**間距的階層是反的**——每個區塊都用同一個
+# `pady=5`（實際間距 10px）pack 出去，而卡片自己的 padding 是 12px。外面的縫比
+# 裡面的窄，眼睛就分不出群，五個區塊糊成一片。
+# 用法：SP_LG＝區塊之間與卡片內距、SP_MD＝卡片裡的欄距、SP_SM＝同一群裡的行距
+# 與「區段標題貼著它管的內容」、SP_XL＝卡片內要分成兩件事時的那一道縫。
+SP_XS, SP_SM, SP_MD, SP_LG, SP_XL = 4, 8, 12, 16, 24
+
 # 選項區的收合按鈕文字。預設收起來：這五個都有合用的預設值，日常轉檔一項都不
 # 必動，攤在主畫面上只是讓「選檔 → 開始轉檔」這條主線被一排控制項擋住。
 # ⚠️ 兩個狀態的**標籤要一模一樣、只換三角形**：舊版收合時寫「進階選項（頁碼、
@@ -339,11 +348,15 @@ def apply_ui_style(root: tk.Misc, scale: float) -> tuple[str, dict]:
                  padding=(px(22), px(9)))
     # 轉檔選項／詳細訊息的收合鈕：低調一點，別跟主要動作搶注意力。整條寬 +
     # anchor="w"，讀起來像區段標題而不是一顆浮在半空中的按鈕
-    st.configure("Adv.TButton", padding=(px(10), px(6)), anchor="w")
+    # ⚠️ 內距要撐得起「這是一條區段標題」：(10,6) 時它比上下的卡片都薄，看起來
+    # 像夾在兩塊板子中間的縫，而不是可以按的東西
+    st.configure("Adv.TButton", padding=(px(SP_MD), px(SP_MD - 2)), anchor="w")
     # 次要動作（變更…、開啟簡報、開啟紀錄…）：比主要動作小一號
     st.configure("Small.TButton", padding=(px(10), px(3)))
     st.configure("Muted.TLabel", foreground=pal["muted"])
     st.configure("Status.TLabel", font=(fam, 10, "bold"))
+    # 卡片裡的小標（「輸入 PDF」）：Fluent 的 BodyStrong，不是另一級字級
+    st.configure("Section.TLabel", font=(fam, 10, "bold"))
     if mode == "dark":
         use_dark_titlebar(root)
     return fam, pal
@@ -720,8 +733,10 @@ class App(tk.Tk):
         # 讓一半的視窗是一個還沒有內容的空白日誌框（2026-08-25 量到的是 51%）。
         # 建完介面由 _fit_window() 量出實際需要的高度，之後每次展開／收合也走
         # 同一支。⚠️ minsize 的高度同樣要小：它是 _fit_window 縮不下去的地板。
-        self.geometry(f"{self.px(760)}x{self.px(420)}")
-        self.minsize(self.px(680), self.px(300))
+        # ⚠️ 寬度 760 → 880（2026-08-25 晚上）：760 之下副標題那一整句會從左邊界
+        # 頂到右邊界，長路徑也只能靠中間省略；一行字左右都貼邊本身就讀起來擠。
+        self.geometry(f"{self.px(880)}x{self.px(460)}")
+        self.minsize(self.px(760), self.px(320))
         self.configure(background=self.pal["page"])
 
         self.log_queue: "queue.Queue" = queue.Queue()
@@ -853,39 +868,57 @@ class App(tk.Tk):
     # ---- 介面 ----
     def _build_ui(self) -> None:
         p = self.px                       # 寫死的像素一律過這裡（見 px()）
-        pad = self._pad = {"padx": p(10), "pady": p(5)}
-        root = self.root_frame = ttk.Frame(self, padding=p(14))
+        # ⚠️ **區塊之間的縫要比區塊裡面的大**，否則眼睛分不出群。2026-08-25 晚
+        # 上使用者說「還是有點擠」，量出來的成因就是這條被違反了：所有區塊都用
+        # 同一個 `pady=5`（實際間距 10px）pack 出去，而卡片自己的 padding 是
+        # 12px——外面的縫比裡面的窄，五個區塊就糊成一片、每一塊都在推擠隔壁。
+        # 現在一律走 SP_* 這把尺（見模組頂端）：區塊之間 SP_LG、卡片內 SP_LG、
+        # 卡片裡的列 SP_MD、收合鈕與它底下那一區 SP_SM。
+        pad = self._pad = {"padx": 0, "pady": (0, p(SP_LG))}
+        root = self.root_frame = ttk.Frame(self, padding=p(SP_XL - 4))
         root.pack(fill="both", expand=True)
 
         # 舊版這裡還有一行 15pt 粗體大標題，寫的是與**標題列一字不差**的同一句
         # 話（連同副標吃掉 60 邏輯 px）。拿掉之後省下來的高度正好是進階區展開時
         # 超出螢幕的那個量級（2026-08-25 量到超出 41px）。
+        # ⚠️ 要給 wraplength：不給的話這一整句會從左邊界一路頂到右邊界，最小寬度
+        # 下更會把視窗撐開——一行字左右都貼邊，本身就是「擠」的來源之一。
         sub = ttk.Label(
             root,
             text="把 NotebookLM 產出的繁中 PDF 簡報 OCR 後轉成可編輯的 PowerPoint（本地離線執行）。",
-            style="Muted.TLabel",
+            style="Muted.TLabel", wraplength=p(780), justify="left",
         )
-        sub.pack(anchor="w", pady=(0, p(8)))
+        sub.pack(anchor="w", pady=(0, p(SP_LG)))
 
         # ---- 檔案區 ----
-        files = self.files_frame = ttk.LabelFrame(root, text="檔案",
-                                                  padding=p(12))
+        # ⚠️ 三種容器樣式**不要同時出現**：這裡本來是 `LabelFrame`（蝕刻邊框＋
+        # 「檔案」標題）、選項區是 `Card.TFrame`、收合鈕是扁平長條，同一畫面上
+        # 三種視覺重量輪流出現。統一成卡片之後標題也不必了——卡片裡第一行就寫著
+        # 「輸入 PDF」，再掛一個「檔案」只是多一行字。
+        files = self.files_frame = ttk.Frame(root, style="Card.TFrame",
+                                             padding=p(SP_LG))
         files.pack(fill="x", **pad)
 
-        ttk.Label(files, text="輸入 PDF：").grid(
-            row=0, column=0, sticky="w")
+        # ⚠️ 標籤在**上**、輸入框整條寬。舊版是「輸入 PDF：」與輸入框左右對擠在
+        # 同一列，於是第 0 欄的寬度由那五個字決定、輸入框被推掉一截，而它正是這
+        # 個畫面上唯一必填的東西。
+        ttk.Label(files, text="輸入 PDF", style="Section.TLabel").grid(
+            row=0, column=0, columnspan=2, sticky="w")
         self.in_entry = ttk.Entry(files, textvariable=self.in_path)
-        self.in_entry.grid(row=0, column=1, sticky="ew", padx=p(8))
+        self.in_entry.grid(row=1, column=0, sticky="ew", pady=(p(SP_SM), 0))
+        # ⚠️ 這一欄的兩顆鈕（瀏覽…／變更…）都要 `sticky="ew"`：同一欄裡一顆
+        # `w`、一顆 `w` 時欄寬由較寬的決定，另一顆的右緣就會短一截、看起來沒對齊
         ttk.Button(files, text="瀏覽…", command=self._pick_input).grid(
-            row=0, column=2)
+            row=1, column=1, sticky="ew", padx=(p(SP_SM), 0),
+            pady=(p(SP_SM), 0))
 
         # 提示與錯誤共用這一行，而且**一直都在**（只換文字不換有無），填錯路徑
         # 時版面才不會上下跳。⚠️ 路徑不對要在這裡當場說：舊版是照樣讓人按下
         # 「開始轉檔」，按了才跳一個對話框——用擋的比用告知的好
         self.hint = ttk.Label(files, style="Muted.TLabel", anchor="w",
-                              wraplength=p(600), justify="left")
-        self.hint.grid(row=1, column=0, columnspan=3, sticky="w",
-                       pady=(p(6), 0))
+                              wraplength=p(700), justify="left")
+        self.hint.grid(row=2, column=0, columnspan=2, sticky="w",
+                       pady=(p(SP_SM), 0))
 
         # 輸出：99% 的情況就是輸入檔同名的 .pptx，程式自己帶得出來。做成第二個
         # 一模一樣的空輸入欄，只會讓第一眼變成「兩個空格子，我該填哪個」——
@@ -893,14 +926,17 @@ class App(tk.Tk):
         # ⚠️ 真值仍然是 out_path（_effective_out／_build_argv 讀的是它），
         # out_show 只是縮短過的顯示字串。
         # ⚠️ 「輸出：」與路徑是**同一個標籤**：分成兩格的話，第 0 欄的寬度由
-        # 「輸入 PDF：」決定，路徑就會被推到離冒號很遠的地方
+        # 輸入那一列決定，路徑就會被推到離冒號很遠的地方。
+        # ⚠️ 與上面隔 SP_XL（不是 SP_MD）：輸入與輸出是卡片裡的**兩件事**，靠這
+        # 一道比較寬的縫分群，就不必再畫一條分隔線進來加重量。
         ttk.Label(files, textvariable=self.out_show, style="Muted.TLabel",
-                  anchor="w", wraplength=p(600)).grid(
-            row=2, column=0, columnspan=2, sticky="ew", pady=(p(6), 0))
+                  anchor="w", wraplength=p(700)).grid(
+            row=3, column=0, sticky="ew", pady=(p(SP_XL), 0))
         ttk.Button(files, text="變更…", style="Small.TButton",
                    command=self._pick_output).grid(
-            row=2, column=2, pady=(p(6), 0))
-        files.columnconfigure(1, weight=1)
+            row=3, column=1, sticky="ew", padx=(p(SP_SM), 0),
+            pady=(p(SP_XL), 0))
+        files.columnconfigure(0, weight=1)
 
         # 主畫面到這裡就結束：選項一個都不露出來（日常轉檔一項都不必動）。
         # 色塊那一項曾經留在這裡做 A/B，量完之後收進了選項區。
@@ -915,6 +951,8 @@ class App(tk.Tk):
         # 講同一件事卻散在 900px 內，而中間那條進度條連「跑到第幾頁」都不說。
         actions = self.actions_frame = ttk.Frame(root)
         actions.pack(fill="x", **pad)
+        # 這一列不是卡片（沒有底色也沒有框）：主要動作要看起來浮在版面上，
+        # 而不是又被裝進一個盒子裡
         # 主要動作鈕吃佈景的 Accent 樣式（Fluent 的藍底圓角鈕），連 hover／
         # pressed／disabled 都由佈景畫；加大字級與內距的 Run.Accent.TButton
         # 定義在 apply_ui_style
@@ -929,7 +967,7 @@ class App(tk.Tk):
         # indeterminate——後者在 Sun Valley 下會在最左邊留一小截藍色，看起來像
         # 「已經跑了 3%」或「卡住了」。轉檔一開始才切成 indeterminate。
         self.progress = ttk.Progressbar(actions, mode="determinate", value=0)
-        self.progress.grid(row=0, column=1, sticky="ew", padx=p(12))
+        self.progress.grid(row=0, column=1, sticky="ew", padx=p(SP_LG))
         self.status = ttk.Label(actions, text="就緒", style="Status.TLabel",
                                 anchor="e", foreground=self.pal["ok"])
         self.status.grid(row=0, column=2, sticky="e")
@@ -937,11 +975,13 @@ class App(tk.Tk):
         # 右欄只保留狀態字**真正量得到**的最大寬度，剩下的全歸進度條。
         # ⚠️ 這一格仍然要釘住（`minsize`）：不釘的話欄寬會跟著字串長短變，
         # 進度條的右端就會在「就緒」與「載入 OCR 引擎…」之間左右抽動。
-        actions.columnconfigure(2, minsize=self._status_width() + p(2))
+        actions.columnconfigure(2, minsize=self._status_width() + p(SP_XS))
 
         # ---- 選項區的收合按鈕 ----
         toggle_row = ttk.Frame(root)
-        toggle_row.pack(fill="x", padx=p(10), pady=(p(2), 0))
+        # ⚠️ 收合鈕是它底下那一區的**區段標題**，所以跟著它的是 SP_SM（近）、
+        # 而不是區塊之間的 SP_LG——標題離自己管的內容近、離別人遠
+        toggle_row.pack(fill="x", pady=(0, p(SP_SM)))
         self.adv_toggle = ttk.Button(toggle_row, text=CHEV_SHOW + ADV_LABEL,
                                      style="Adv.TButton",
                                      command=self._toggle_advanced)
@@ -969,14 +1009,14 @@ class App(tk.Tk):
         # 的 `Card.TFrame`（一張淡色卡片）純粹當視覺容器 —— ttk 的樣式名是可繼承
         # 的，載不到 sv_ttk 時它會自動退回 `TFrame`，不會炸（實測過）。
         opt = self.opt_frame = ttk.Frame(self.adv_slot, style="Card.TFrame",
-                                         padding=p(12))
+                                         padding=p(SP_LG))
 
         # 頁碼自己一行排在最上面：五個裡面只有它是「每次可能不一樣」的值，
         # 其餘四個是開關
-        ttk.Label(opt, text="頁碼（例 1-5,8，留空=全部）：").grid(
+        ttk.Label(opt, text="頁碼（例 1-5,8，留空＝全部）").grid(
             row=0, column=0, sticky="w")
         ttk.Entry(opt, textvariable=self.pages, width=18).grid(
-            row=0, column=1, sticky="w", padx=p(6))
+            row=0, column=1, sticky="w", padx=(p(SP_MD), 0))
 
         checks = [
             ("保留浮水印（NotebookLM／Gemini Notebook）", self.keep_watermark),
@@ -986,10 +1026,12 @@ class App(tk.Tk):
         ]
         # 一列一項：雙欄版的第 0 欄由最長的標籤決定寬度，兩欄合計會超出視窗的
         # 最小寬度，在 125%／150% 顯示縮放下右欄的選項會被擠出可見範圍
+        # ⚠️ 行距是 SP_SM 不是 2px：四個核取方塊擠成 4px 一行時，它們看起來
+        # 像一段文字而不是四個可以按的東西
         for i, (label, var) in enumerate(checks):
             ttk.Checkbutton(opt, text=label, variable=var).grid(
-                row=1 + i, column=0, columnspan=2, sticky="w", padx=p(6),
-                pady=(p(8) if i == 0 else p(2), p(2)))
+                row=1 + i, column=0, columnspan=2, sticky="w",
+                pady=(p(SP_LG) if i == 0 else p(SP_SM), 0))
 
         # ---- 結果列 ----
         # ⚠️ 取代舊版的「完成」對話框（`askyesno("要開啟所在資料夾嗎？")`）。
@@ -1005,11 +1047,11 @@ class App(tk.Tk):
         self.open_deck_btn = ttk.Button(res, text="開啟簡報",
                                         style="Small.TButton",
                                         command=self._open_deck)
-        self.open_deck_btn.grid(row=0, column=1, padx=(p(8), 0))
+        self.open_deck_btn.grid(row=0, column=1, padx=(p(SP_SM), 0))
         self.open_dir_btn = ttk.Button(res, text="開啟資料夾",
                                        style="Small.TButton",
                                        command=self._open_result_folder)
-        self.open_dir_btn.grid(row=0, column=2, padx=(p(6), 0))
+        self.open_dir_btn.grid(row=0, column=2, padx=(p(SP_SM), 0))
         res.columnconfigure(0, weight=1)
 
         # ---- 詳細訊息（預設收起來）----
@@ -1017,7 +1059,7 @@ class App(tk.Tk):
         # 視窗有 51% 是一個只有兩行字的白盒子（2026-08-25 量的）。收起來之後，
         # 「開始轉檔」會自己把它打開（見 _start）——要看的時候它就在。
         log_row = self.log_row = ttk.Frame(root)
-        log_row.pack(fill="x", padx=p(10), pady=(p(2), 0))
+        log_row.pack(fill="x", pady=(0, p(SP_SM)))
         self.log_toggle = ttk.Button(log_row, text=CHEV_SHOW + LOG_LABEL,
                                      style="Adv.TButton",
                                      command=self._toggle_log)
@@ -1027,7 +1069,7 @@ class App(tk.Tk):
         self.open_log_btn = ttk.Button(log_row, text="開啟紀錄",
                                        style="Small.TButton",
                                        command=self._open_log)
-        self.open_log_btn.pack(side="right", padx=(p(8), 0))
+        self.open_log_btn.pack(side="right", padx=(p(SP_SM), 0))
         if self._log_path is None:
             self.open_log_btn.state(["disabled"])
 
@@ -1103,7 +1145,9 @@ class App(tk.Tk):
     def _set_log_shown(self, show: bool, fit: bool = True) -> None:
         self.show_log.set(show)
         if show:
-            self.logframe.pack(fill="both", expand=True, **self._pad)
+            # ⚠️ 日誌區**不吃 `_pad` 的下緣間距**：它是最後一個區塊，root 的
+            # padding 已經給了下邊界，再加一次會在視窗底部留一條雙倍的白
+            self.logframe.pack(fill="both", expand=True, padx=0)
             self._set_advanced(False, fit=False)
         else:
             self.logframe.pack_forget()
