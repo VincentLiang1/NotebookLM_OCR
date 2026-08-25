@@ -46,9 +46,9 @@ docs/dev/windows-環境與入口.md 5.1。
 
 進度：動作列上是**同一列**的「開始轉檔／停止轉檔」鈕、進度條與狀態字（舊版散在
 三個地方：右上角的「就緒」、中段一條沒有資訊量的 indeterminate 進度條、下方日誌）。
-進度條在 cli 印出第一行 `page N (n/total)` 時從 indeterminate 換成 determinate，
-剩餘時間由**第一頁完成之後**的實測速率外推（_scan_line；模型下載與引擎載入那段
-不能算進速率）。轉檔結果不再用互動式對話框問「要開啟資料夾嗎」——那個框正好蓋住
+進度條在 cli 印出第一行 `page N (n/total)` 時從 indeterminate 換成 determinate
+（_scan_line）。⚠️ 狀態字**只報頁數、不報剩餘時間**（使用者 2026-08-25 指示刪掉
+「約剩 2 分」那一段）：頁數是量到的，剩餘時間是猜的。轉檔結果不再用互動式對話框問「要開啟資料夾嗎」——那個框正好蓋住
 日誌最後一行的降級 WARNING，改成日誌區上方一條結果列（_show_result），降級的頁碼
 直接寫在列上。
 
@@ -546,17 +546,6 @@ def _collapse_slot(slot: "ttk.Frame") -> None:
         pass
 
 
-def _fmt_eta(sec: float) -> str:
-    """剩餘時間。⚠️ **不要報到秒**：這個估計值本身的誤差就有好幾秒（每頁的
-    耗時差異很大——一行進入旋轉救援就要跑七次 OCR），寫「約剩 2 分 37 秒」是
-    在假裝有一個並不存在的精度。"""
-    if sec < 20:
-        return "快好了"
-    if sec < 90:
-        return f"約剩 {int(round(sec / 10)) * 10} 秒"
-    return f"約剩 {int(round(sec / 60))} 分"
-
-
 def _shorten_path(path: Path, budget: int = 52) -> str:
     """長路徑縮成一行放得下的樣子，中間省略。
 
@@ -761,7 +750,6 @@ class App(tk.Tk):
         self._scan_buf = ""
         self._pages_done = 0
         self._pages_total = 0
-        self._t_first_page: float | None = None
         self._determinate = False
         # 這一趟的降級頁碼（cli 最後一行的 WARNING）。⚠️ 要留到結果列上：舊版
         # 靠使用者自己去看日誌最後一行，而完成對話框正好蓋在那一行上面
@@ -917,8 +905,8 @@ class App(tk.Tk):
         # 「已經跑了 3%」或「卡住了」。轉檔一開始才切成 indeterminate。
         self.progress = ttk.Progressbar(actions, mode="determinate", value=0)
         self.progress.grid(row=0, column=1, sticky="ew", padx=p(12))
-        # ⚠️ 寬度寫死：狀態字會在「就緒」與「3/15 頁 · 約剩 2 分」之間變長變短，
-        # 不釘住的話進度條的右端會跟著左右抽動
+        # ⚠️ 寬度寫死：狀態字會在「等待選檔」「載入 OCR 引擎…」「3/15 頁」
+        # 「完成（有降級）」之間變長變短，不釘住的話進度條的右端會跟著左右抽動
         self.status = ttk.Label(actions, text="就緒", style="Status.TLabel",
                                 width=20, anchor="e",
                                 foreground=self.pal["ok"])
@@ -1457,7 +1445,6 @@ class App(tk.Tk):
         _collapse_slot(self.result_slot)
         self._scan_buf = ""
         self._pages_done = self._pages_total = 0
-        self._t_first_page = None
         self._last_warning = ""
         self._determinate = False
         self.progress.config(mode="indeterminate", value=0)
@@ -1578,7 +1565,6 @@ class App(tk.Tk):
         if not m:
             return
         done, total = int(m.group(1)), int(m.group(2))
-        now = time.monotonic()
         if not self._determinate:
             # 到這裡才知道總頁數；引擎載入那段沒有頁數可報，所以在此之前一律
             # 是不定長度進度條
@@ -1587,15 +1573,10 @@ class App(tk.Tk):
             self._determinate = True
         self.progress.config(maximum=total, value=done)
         self._pages_done, self._pages_total = done, total
-        # ⚠️ 速率要從**第一頁完成之後**才開始量：第一頁的耗時含引擎載入（首次
-        # 執行還含下載 90MB 模型），拿它外推會報出一個荒謬的剩餘時間
-        if done <= 1 or self._t_first_page is None:
-            self._t_first_page = now
-            self._set_status(f"{done}/{total} 頁", self.pal["warn"])
-            return
-        per = (now - self._t_first_page) / max(1, done - 1)
-        self._set_status(f"{done}/{total} 頁 · {_fmt_eta(per * (total - done))}",
-                         self.pal["warn"])
+        # ⚠️ **只報頁數，不報剩餘時間**（使用者 2026-08-25 指示刪掉）。頁數是
+        # 量到的事實，剩餘時間是外推出來的猜測——而這裡的每頁耗時差異很大
+        # （一行進旋轉救援就要跑七次 OCR），猜出來的數字會自己跳來跳去。
+        self._set_status(f"{done}/{total} 頁", self.pal["warn"])
 
     def _finish(self, rc: int) -> None:
         self.progress.stop()

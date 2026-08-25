@@ -261,7 +261,7 @@ def test_the_cancelled_exit_code_is_the_same_number_in_both_places():
 
 
 def test_the_gui_reads_the_words_cli_actually_prints():
-    """GUI 的進度條、剩餘時間與結果列是**解析 `cli.py` 的 stdout** 來的。
+    """GUI 的進度條與結果列是**解析 `cli.py` 的 stdout** 來的。
 
     ⚠️ 這是手抄的輸出格式，不是 API：cli 改掉那幾行的長相，GUI 不會報錯，只會
     安靜地退回「不定長度進度條 + 一句英文原文」——正是那種沒有人會發現的壞法。

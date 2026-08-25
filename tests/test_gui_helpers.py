@@ -2,7 +2,7 @@
 
 為什麼只測這幾支：整個 repo 的自動化測試守的是「文件與程式碼一致」，轉換品質
 的真值仍然是五份 deck 全跑加目視（見 `docs/dev/verification.md`）。但 2026-08-25
-把進度條、剩餘時間與結果列改成**解析 `cli.py` 的 stdout** 之後，多了一類壞法是
+把進度條與結果列改成**解析 `cli.py` 的 stdout** 之後，多了一類壞法是
 目視抓不到的：格式對不上時介面不會報錯，只會安靜地退回不定長度進度條、或把英文
 原文貼在結果列上。字面值由 `test_docs.py::test_the_gui_reads_the_words_cli_actually_prints`
 釘著，這裡補上「認出來之後講成什麼樣子」。
@@ -40,16 +40,6 @@ def test_an_unrecognised_warning_is_passed_through_untouched():
     連「是哪幾頁」都問不到——那正是這一列存在的理由。"""
     assert G._fmt_degraded("something new we have never seen") == \
         "something new we have never seen"
-
-
-def test_eta_never_pretends_to_be_precise():
-    """每頁耗時本來就差很多（一行進旋轉救援要跑七次 OCR），報到秒是假裝有精度。"""
-    assert G._fmt_eta(3) == "快好了"
-    assert G._fmt_eta(42) == "約剩 40 秒"
-    assert G._fmt_eta(170) == "約剩 3 分"
-    # 半分鐘的平手點走 Python 的 round（銀行家捨入）：150 秒是 2.5 分 → 2。
-    # 釘在這裡不是因為 2 比 3 好，是因為「哪一邊」不重要、**別再改來改去**重要
-    assert G._fmt_eta(150) == "約剩 2 分"
 
 
 def test_shortening_a_path_never_eats_the_file_name():
