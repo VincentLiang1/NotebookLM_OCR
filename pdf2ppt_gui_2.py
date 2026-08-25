@@ -363,6 +363,11 @@ def apply_ui_style(root: tk.Misc, scale: float) -> tuple[str, dict]:
     st.configure("Status.TLabel", font=(fam, 10, "bold"))
     # 卡片裡的小標（「輸入 PDF」）：Fluent 的 BodyStrong，不是另一級字級
     st.configure("Section.TLabel", font=(fam, 10, "bold"))
+    # 視窗第一句說明（副標）：粗體（使用者 2026-08-25 晚指示）。
+    # ⚠️ 樣式名**必須以 `.Muted.TLabel` 結尾**才繼承得到說明文字的前景色——ttk
+    # 是照後綴一層層往上找的（`Sub.Muted.TLabel` → `Muted.TLabel` → `TLabel`）。
+    # 取名成 `Subtitle.TLabel` 就只會繼承到 `TLabel`，顏色會掉回預設的黑。
+    st.configure("Sub.Muted.TLabel", font=(fam, 10, "bold"))
     if mode == "dark":
         use_dark_titlebar(root)
     return fam, pal
@@ -892,7 +897,7 @@ class App(tk.Tk):
         sub = ttk.Label(
             root,
             text="把 NotebookLM 產出的繁中 PDF 簡報 OCR 後轉成可編輯的 PowerPoint（本地離線執行）。",
-            style="Muted.TLabel", wraplength=p(780), justify="left",
+            style="Sub.Muted.TLabel", wraplength=p(780), justify="left",
         )
         sub.pack(anchor="w", pady=(0, p(SP_LG)))
 
