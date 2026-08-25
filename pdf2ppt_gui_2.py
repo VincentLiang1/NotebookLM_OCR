@@ -70,6 +70,11 @@ APP_TITLE = "NotebookLM PDF → PPT 轉檔工具"
 # 檔案本身由 tools/make_icon.py 產生（幾何與色票的唯一真值在那支）。
 APP_ICON = Path(__file__).resolve().parent / "assets" / "icon.ico"
 
+# 工作列用來認「這是哪個應用程式」的身分。⚠️ `tools/make_shortcut.py` 會把
+# 這個字串讀走寫進 .lnk，兩邊必須同值——不同的話，釘選到工作列的那顆與
+# 執行中的視窗會變成兩個各自獨立的按鈕。
+APP_ID = "VincentLiang.NotebookLM.Pdf2Ppt"
+
 # 進階區的收合按鈕文字。預設收起來：這些選項全部有校準過的預設值
 # （200 DPI + Microsoft YaHei 是整條管線唯一校準過的作業點），日常轉檔一項
 # 都不必動，攤在主畫面上只是讓「選檔 → 開始轉檔」這條主線被十幾個控制項擋住。
@@ -143,6 +148,27 @@ def enable_dpi_awareness() -> None:
             ctypes.windll.user32.SetProcessDPIAware()
         except Exception:
             pass                           # 沒有就算了：只是回到會鋸齒的舊行為
+
+
+def set_app_user_model_id() -> None:
+    """讓工作列用「視窗自己的圖示」，不要沿用啟動鏈上游那支執行檔的。
+
+    ⚠️ **必須在建立第一個視窗之前呼叫**（和 enable_dpi_awareness 一樣）：
+    視窗一旦建出來，工作列就已經把它歸好隊了。
+
+    症狀是使用者 2026-08-25 回報的「工作列上的圖示不是我設計的那顆」——標題列
+    那顆是對的，**工作列那顆是 wscript 的**。兩顆走的是不同的路：標題列讀視窗
+    的 `WM_SETICON`（`iconbitmap` 設的就是它），工作列則是先把視窗歸到某個
+    AppUserModelID、再用**那個身分**的圖示。行程沒有自己宣告身分時，Windows
+    會沿用啟動鏈上游的執行檔，而我們這條鏈是「捷徑 → wscript.exe → cmd → uv
+    → pythonw」，於是拿到 wscript 的圖示。宣告了就用視窗自己的。
+    """
+    if not sys.platform.startswith("win"):
+        return
+    try:
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_ID)
+    except Exception:
+        pass                               # 純外觀，失敗就回到舊行為
 
 
 def ui_font_family(root: tk.Misc) -> str:
@@ -1287,6 +1313,8 @@ class App(tk.Tk):
 def main() -> int:
     # ⚠️ 一定要在建 App（= 建 Tk）之前：Tk 只在啟動時問一次 DPI
     enable_dpi_awareness()
+    # ⚠️ 同樣要在建 Tk 之前：視窗一建出來就已經被工作列歸隊了
+    set_app_user_model_id()
     app = App()
     app.mainloop()
     return 0

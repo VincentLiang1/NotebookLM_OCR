@@ -133,6 +133,28 @@ DirectML 版是「**取代**」CPU 版的完整 build（它同時提供 `CPUExec
 
 2026-08-25 稍早有過一版**「NotebookLM 的弧 + 一張投影片」**（取自使用者提供的 `notebook-logo.svg`），同一天被這個 OCR 立意取代。留一條可重用的教訓：⚠️ **一道弧的兩隻腳只要露在方塊兩側，整張圖就會讀成一把掛鎖**（當時排 10 個變體目視，露腳的 5 個全中）。⚠️ 另外，**不可直接沿用 NotebookLM 的商標圖形**——那一版是刻意改成對稱同心、換掉色票才用的；現在這版已經完全不含那個語彙。
 
+### 工作列那顆圖示走的是另一條路（AppUserModelID）
+
+⚠️ **標題列的圖示對了，不代表工作列那顆也對**。使用者 2026-08-25 回報「工作列上的 ICON 不是我設計的」，實際看到的是 **wscript 的圖示**。兩顆的來源不同：
+
+| | 來源 |
+| --- | --- |
+| 標題列 / Alt-Tab | 視窗的 `WM_SETICON` —— `iconbitmap` 設的就是它 |
+| **工作列按鈕** | 先把視窗歸到某個 **AppUserModelID**，再用**那個身分**的圖示 |
+
+行程沒有自己宣告身分時，Windows 會沿用啟動鏈上游的執行檔，而這條鏈是「捷徑 → `wscript.exe` → `cmd` → `uv` → `pythonw`」，於是拿到 wscript 的圖示。
+
+修法有**兩半，缺一半就只修好一半**：
+
+1. **行程端**：`pdf2ppt_gui_2.py` 的 `set_app_user_model_id()` 呼叫 `SetCurrentProcessExplicitAppUserModelID(APP_ID)`。⚠️ **必須在建立第一個視窗之前**（和 `enable_dpi_awareness()` 一樣）——視窗一建出來就已經被工作列歸隊了。
+2. **捷徑端**：`.lnk` 也要寫上同一個 `PKEY_AppUserModel_ID`（`tools/make_shortcut.py` 的 `IPropertyStore` 那一段）。少了這一半，使用者把捷徑**釘到工作列**之後，釘的那顆（身分從 `wscript.exe` 推出來）與執行中的視窗（身分是我們宣告的）會變成**兩個各自獨立的按鈕**。
+
+⚠️ **那個字串只有一份**：寫在 GUI 的 `APP_ID`，`make_shortcut.py` 用正規表示式讀走（作法同 `app_name()`）。兩邊不一致就是上面那個「兩顆按鈕」的症狀，而且不會有任何錯誤訊息。
+
+⚠️ **不要找 `InitPropVariantFromString`**：那是 `propvarutil.h` 的 **inline** 函式，`propsys.dll` 沒有匯出這個符號（2026-08-25 實測 `not found`）。`_PROPVARIANT` 是自己排的，⚠️ **尾巴那個 `pad` 欄位不可省**——真正的 PROPVARIANT 是 24 bytes（x64），而 `PropVariantClear` 會把整個結構清成零，宣告短了就是寫出界。字串要用 `CoTaskMemAlloc` 配置（`PropVariantClear` 負責收），⚠️ 而 `CoTaskMemAlloc.restype` 一定要設成 `c_void_p`，否則 x64 上回傳值會被截成 32 位元。
+
+驗收方式（不要靠截圖，那會截到使用者的實機桌面而且不可靠）：`GetCurrentProcessExplicitAppUserModelID` 讀回行程那一邊，`IPropertyStore::GetValue` 讀回 `.lnk` 那一邊，兩個字串要相同。
+
 ### `.ico` 與 GUI 端
 
 `.ico` 是**自己組容器**寫出來的（`build_ico`）：Pillow 的 `sizes=` 只會把同一張圖縮放，承載不了「小尺寸換一套圖形」這件事。256 用 PNG 承載、其餘用 DIB，⚠️ DIB 的兩段點陣都是**由下往上**存、AND 遮罩每列要補齊到 4 位元組——遮罩全零（＝全部不透明）的話圓角磚在 Windows 上會露出方角。驗收方式是 `PIL.Image.open(...).ico.sizes()` 讀得回八個尺寸，加上 `tk.Tk().iconbitmap()` 真的吃得下去。

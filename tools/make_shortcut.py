@@ -53,6 +53,7 @@ ICON = Path("assets") / "icon.ico"
 DESCRIPTION = ("把 NotebookLM 的簡報 PDF 轉成可編輯的 PowerPoint"
                "（全程在這台電腦上跑，不會上傳）")
 FALLBACK_NAME = "NotebookLM PDF → PPT 轉檔工具"
+FALLBACK_APP_ID = "VincentLiang.NotebookLM.Pdf2Ppt"
 
 # Windows 的「已知資料夾」GUID（shlobj_core.h 的 FOLDERID_*）
 _DESKTOP_GUID = "{B4BFCC3A-DB2C-424C-B029-7FE99A87C641}"
@@ -63,6 +64,10 @@ _CLSCTX_INPROC_SERVER = 1
 _CLSID_SHELL_LINK = "{00021401-0000-0000-C000-000000000046}"
 _IID_ISHELL_LINK_W = "{000214F9-0000-0000-C000-000000000046}"
 _IID_IPERSIST_FILE = "{0000010B-0000-0000-C000-000000000046}"
+_IID_IPROPERTY_STORE = "{886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99}"
+# PKEY_AppUserModel_ID（propkey.h）：工作列拿來認「這是哪個應用程式」
+_PKEY_AUMID_FMTID = "{9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3}"
+_PKEY_AUMID_PID = 5
 
 # vtable 上的**順序**，不是名字——數錯一格就是呼叫到隔壁那個方法，而那多半
 # 是當場 crash 不是回錯誤碼。所以照介面宣告的順序整段抄在這裡對照：
@@ -78,6 +83,8 @@ _SET_DESCRIPTION, _SET_WORKING_DIRECTORY = 7, 9
 _SET_ARGUMENTS = 11
 _SET_ICON_LOCATION, _SET_PATH = 17, 20
 _PERSIST_SAVE = 6
+#   IPropertyStore: 3 GetCount  4 GetAt  5 GetValue  6 SetValue  7 Commit
+_PS_SET_VALUE, _PS_COMMIT = 6, 7
 
 
 class _GUID(ctypes.Structure):
@@ -87,6 +94,46 @@ class _GUID(ctypes.Structure):
         ("Data3", ctypes.c_ushort),
         ("Data4", ctypes.c_ubyte * 8),
     ]
+
+
+class _PROPERTYKEY(ctypes.Structure):
+    _fields_ = [("fmtid", _GUID), ("pid", ctypes.c_ulong)]
+
+
+class _PROPVARIANT(ctypes.Structure):
+    """只夠用來裝一個 VT_LPWSTR 的 PROPVARIANT。
+
+    ⚠️ **尾巴那個 `pad` 不可以省**：真正的 PROPVARIANT 是 24 bytes（x64）／
+    16（x86），而 `PropVariantClear` 會把整個結構清成零——宣告短了就是寫出界
+    8 個位元組。這裡刻意排成與真實大小相同（8 + 指標 + 指標）。
+    ⚠️ 也不要找 `InitPropVariantFromString`：那是 propvarutil.h 的 **inline**
+    函式，propsys.dll 沒有匯出這個符號（2026-08-25 實測 not found）。"""
+    _fields_ = [("vt", ctypes.c_ushort),
+                ("r1", ctypes.c_ushort),
+                ("r2", ctypes.c_ushort),
+                ("r3", ctypes.c_ushort),
+                ("p", c_void_p),
+                ("pad", c_void_p)]
+
+
+_VT_LPWSTR = 31
+
+
+def _propvariant_str(text: str) -> _PROPVARIANT:
+    """把字串包成 VT_LPWSTR 的 PROPVARIANT；字串用 CoTaskMemAlloc 配置，
+    才能由 `PropVariantClear` 收回去。"""
+    ole32 = ctypes.windll.ole32
+    ole32.CoTaskMemAlloc.restype = c_void_p          # ⚠️ 不設就會在 x64 被截斷
+    ole32.CoTaskMemAlloc.argtypes = [ctypes.c_size_t]
+    buf = (text + chr(0)).encode("utf-16-le")
+    mem = ole32.CoTaskMemAlloc(len(buf))
+    if not mem:
+        raise MemoryError("CoTaskMemAlloc 失敗")
+    ctypes.memmove(mem, buf, len(buf))
+    pv = _PROPVARIANT()
+    pv.vt = _VT_LPWSTR
+    pv.p = mem
+    return pv
 
 
 def _guid(text: str) -> _GUID:
@@ -108,6 +155,20 @@ def app_name() -> str:
     except Exception:
         pass
     return FALLBACK_NAME
+
+
+def app_id() -> str:
+    """工作列的身分字串，讀自 GUI 的 `APP_ID`（理由同 app_name）。
+
+    ⚠️ 這個值必須與 GUI 執行時宣告的**完全一樣**：不一樣的話，釘選到工作列
+    的那顆與執行中的視窗會被 Windows 當成兩個不同的應用程式，變成兩個按鈕。"""
+    try:
+        text = (ROOT / "pdf2ppt_gui_2.py").read_text(encoding="utf-8")
+        if m := re.search(r'^APP_ID\s*=\s*"([^"]+)"', text, re.M):
+            return m.group(1)
+    except Exception:
+        pass
+    return FALLBACK_APP_ID
 
 
 def known_folder(guid: str) -> Path | None:
@@ -196,6 +257,27 @@ def write_shortcut(dest: Path, target: Path, arguments: str, workdir: Path,
             # 不是八張不同的圖，所以固定 0（Windows 自己會挑合適的尺寸）
             _check(_call(link, _SET_ICON_LOCATION, (c_wchar_p, c_int), str(icon), 0),
                    "SetIconLocation")
+
+            # ⚠️ 要在 IPersistFile::Save **之前**寫：Commit 只改記憶體裡的
+            # 那個連結物件，真正落檔的是後面那個 Save。少了這一段，使用者
+            # 把捷徑釘到工作列之後，釘的那顆與執行中的視窗會是兩個按鈕
+            # （釘選那顆的身分是從 wscript.exe 推出來的）。
+            store_iid = _guid(_IID_IPROPERTY_STORE)
+            store = c_void_p()
+            if _call(link, _QUERY_INTERFACE, (c_void_p, c_void_p),
+                     byref(store_iid), byref(store)) == _S_OK:
+                try:
+                    key = _PROPERTYKEY(_guid(_PKEY_AUMID_FMTID), _PKEY_AUMID_PID)
+                    prop = _propvariant_str(app_id())
+                    try:
+                        _check(_call(store, _PS_SET_VALUE, (c_void_p, c_void_p),
+                                     byref(key), byref(prop)),
+                               "SetValue(AppUserModelID)")
+                        _check(_call(store, _PS_COMMIT, ()), "Commit")
+                    finally:
+                        ole32.PropVariantClear(byref(prop))
+                finally:
+                    _call(store, _RELEASE, ())
 
             persist_iid = _guid(_IID_IPERSIST_FILE)
             persist = c_void_p()
