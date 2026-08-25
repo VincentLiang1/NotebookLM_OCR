@@ -83,6 +83,9 @@ TPL_MIN_PT = 16          # template verdict is primary at/above this size
 TPL_COMPUTE_PT = 14      # compute r down to this size (demote tiebreak)
 TPL_MIN_CONTRAST = 75    # below this text/bg distance the cut is degenerate
 BOLD_R_THRESH = 0.13     # midpoint of regular max 0.09 / bold min 0.17
+STROKE_BOLD_THRESH = 0.13  # the <16pt stroke rule's cut. Numerically
+#                            equal to BOLD_R_THRESH but a different
+#                            metric — do not fold them into one name
 # the template's contrast-relative cut is calibrated for ACHROMATIC text
 # (black-on-white ~235, white-on-dark ~160); chromatic text (a green/blue
 # label) breaks it — w_obs reads thick at the lower color contrast while the
@@ -1572,7 +1575,7 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
               and not dark_chromatic):
             bold = bold_r >= BOLD_R_THRESH
         else:
-            bold = stroke_rel >= 0.13
+            bold = stroke_rel >= STROKE_BOLD_THRESH
 
     # two-tone banner: when the box runs across a sharp background step,
     # split it into per-fill cover segments and re-measure each char's

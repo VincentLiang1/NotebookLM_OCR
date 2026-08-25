@@ -1139,6 +1139,119 @@ def harmonize_bold(lines: list[Line], styles: list[Style]) -> None:
                     styles[i].bold = False
 
 
+# --- 同列並排孿生的字重一致化 -------------------------------------------
+ROW_TWIN_YOVL = 0.6      # vertical overlap needed to call two lines one row
+ROW_TWIN_H_TOL = 0.10    # ink-height spread allowed between twins
+ROW_TWIN_W_RATIO = 1.6   # width ratio ceiling (floor is its reciprocal)
+ROW_TWIN_MARGIN = 0.06   # only a verdict this close to its cut may be
+#                          overturned by its row-mates
+
+
+def _bold_confidence(st: Style) -> float:
+    """How far this line's measurement sits from the cut that decided it.
+
+    The tie-break for a row of parallel labels that came out split: a verdict
+    0.0098 from the threshold (guardV2 p13 Phase 1, r=0.1202 vs 0.13) carries
+    no information, one at 0.69 does. Compare against the metric that
+    actually decided the line — the two cuts are numerically equal but not
+    the same number."""
+    if st.bold_r is not None:
+        return abs(st.bold_r - style_mod.BOLD_R_THRESH)
+    return abs(st.stroke_rel - style_mod.STROKE_BOLD_THRESH)
+
+
+def _solo_label(lines: list[Line], i: int) -> bool:
+    """Is line i a standalone label rather than a line of some paragraph?
+
+    Uses _vert_adjacent — the same geometry that defines "consecutive lines
+    of one block" everywhere else in this file — so a heading with its body
+    directly underneath is NOT solo, and cannot be paired with the next
+    column's body text."""
+    return not any(_vert_adjacent(lines[i], lines[j])
+                   for j in range(len(lines)) if j != i)
+
+
+def _row_twin_pair(lines: list[Line], styles: list[Style],
+                   i: int, j: int) -> bool:
+    """Two standalone labels sitting side by side on one row?
+
+    Deliberately NOT gated on text colour (guardV2 p13's twins are black and
+    blue — the same reason harmonize_bold keeps colour out of its key), but
+    gated on background: same row, same fill, same size, same ink height,
+    comparable width. Both must have been decided by the SAME rule, because
+    a template r and a stroke_rel have no comparable distance-to-threshold."""
+    for k in (i, j):
+        if lines[k].angle or lines[k].arc_sagitta:
+            return False
+    a, b = lines[i], lines[j]
+    sa, sb = styles[i], styles[j]
+    if sa.font_pt != sb.font_pt:
+        return False
+    if (sa.bold_r is None) != (sb.bold_r is None):
+        return False
+    if not _same_surface(sa, sb, txt_tol=255):
+        return False
+    ov = min(a.bbox[3], b.bbox[3]) - max(a.bbox[1], b.bbox[1])
+    if ov < ROW_TWIN_YOVL * min(a.height, b.height):
+        return False
+    # genuinely side by side: any x overlap means stacked, not parallel
+    if min(a.bbox[2], b.bbox[2]) > max(a.bbox[0], b.bbox[0]):
+        return False
+    if abs(a.height - b.height) > ROW_TWIN_H_TOL * min(a.height, b.height):
+        return False
+    ratio = a.width / max(1.0, b.width)
+    return 1.0 / ROW_TWIN_W_RATIO <= ratio <= ROW_TWIN_W_RATIO
+
+
+def harmonize_row_twin_bold(lines: list[Line], styles: list[Style]) -> None:
+    """Parallel labels on one row share a weight — after the queue vote.
+
+    A row of column headings is one design element, so a split verdict inside
+    it is a measurement artefact, not a design choice: guardV2 p13's
+    `Phase 1: 粗篩 (機械化)` (black, r=0.1202) and `Phase 2:判斷 (AI 精讀)`
+    (blue, r=0.8165) are the same weight in the source, and the black one
+    missed BOLD_R_THRESH by 0.0098 — the blue one's 12px glow inflated its
+    measured stroke while the crisp black one's did not. harmonize_bold
+    cannot reach this: the page's other 18pt lines are genuine body text, so
+    the cohort majority is (correctly) not bold.
+
+    ⚠️ The measurement itself is NOT fixable — raising the ink threshold so
+    the glow stops counting was implemented and measured across all five
+    decks, and no threshold separates this deck's SemiBold headings from its
+    Regular body at 18-20pt (docs/spec/11 §11.2). Geometry can: two isolated
+    labels side by side on one row either are one element or are not, and
+    that question has an answer independent of the wobbling metric.
+
+    Majority wins; a tie goes to whichever member's measurement sits furthest
+    from its threshold (_bold_confidence)."""
+    solo = [_solo_label(lines, i) for i in range(len(lines))]
+    groups = _union_groups(
+        len(lines),
+        lambda i, j: solo[i] and solo[j] and _row_twin_pair(lines, styles, i, j))
+    for idxs in groups:
+        if len(idxs) < 2:
+            continue
+        bold_n = sum(1 for i in idxs if styles[i].bold)
+        if bold_n in (0, len(idxs)):
+            continue
+        if bold_n * 2 == len(idxs):
+            leader = max(idxs, key=lambda i: _bold_confidence(styles[i]))
+            want = styles[leader].bold
+        else:
+            want = bold_n * 2 > len(idxs)
+        # ⚠️ Only coin-flips may be overturned. When the dissenter measured
+        # far from its own cut, the split is the DESIGN, not noise: trans
+        # p11's comparison matrix heads its two columns 2017 原始設計 (grey
+        # regular, r=-0.2081) and 2025 標配設計 (black bold, r=0.6605) on
+        # purpose. The four real repairs sit 0.0092-0.0292 from their cut and
+        # that one sits 0.3381 away, so the band has ~11x of room either way.
+        dissent = [i for i in idxs if styles[i].bold != want]
+        if any(_bold_confidence(styles[i]) > ROW_TWIN_MARGIN for i in dissent):
+            continue
+        for i in dissent:
+            styles[i].bold = want
+
+
 def _belongs(a: Line, b: Line) -> bool:
     if a.angle or b.angle:  # tilted lines keep their own rotated shapes
         return False
