@@ -68,8 +68,11 @@ SYMBOL_DOCS = {**RULE_DOCS,
                **{f"docs/dev/{p.name}": p.read_text(encoding="utf-8")
                   for p in sorted((ROOT / "docs" / "dev").glob("*.md"))}}
 
+# ⚠️ `tools.make_icon` 也在名單裡：圖示的門檻（HALO、SMALL_MAX）跟管線的門檻
+# 一樣是校準結果、一樣寫進了 docs/dev，少了它那些數字就沒人守。
 MODULES = ["pdf2ppt.style", "pdf2ppt.blocks", "pdf2ppt.builder",
-           "pdf2ppt.ocr", "pdf2ppt.cli", "pdf2ppt.models", "pdf2ppt.render"]
+           "pdf2ppt.ocr", "pdf2ppt.cli", "pdf2ppt.models", "pdf2ppt.render",
+           "tools.make_icon"]
 
 # 刻意提到、但程式裡已經沒有的符號：文件談的就是「它被刪掉」這件事，名字正是
 # 那則教訓的價值所在。⚠️ 這份白名單本身就是絆索——往裡面加一個名字很便宜，而

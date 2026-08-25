@@ -64,6 +64,12 @@ from tkinter import filedialog, font as tkfont, messagebox, ttk
 
 APP_TITLE = "NotebookLM PDF → PPT 轉檔工具"
 
+# 視窗圖示。⚠️ 路徑要以**本檔所在位置**為基準而不是 cwd：從「啟動.vbs」進來
+# 時工作目錄不一定是專案根目錄，而介面上的「選擇專案資料夾…」還會把載入的
+# 程式碼換到另一份 checkout ——圖示要跟著這支 GUI 走，不跟著那個選擇走。
+# 檔案本身由 tools/make_icon.py 產生（幾何與色票的唯一真值在那支）。
+APP_ICON = Path(__file__).resolve().parent / "assets" / "icon.ico"
+
 # 進階區的收合按鈕文字。預設收起來：這些選項全部有校準過的預設值
 # （200 DPI + Microsoft YaHei 是整條管線唯一校準過的作業點），日常轉檔一項
 # 都不必動，攤在主畫面上只是讓「選檔 → 開始轉檔」這條主線被十幾個控制項擋住。
@@ -527,6 +533,7 @@ class App(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title(APP_TITLE)
+        self._apply_window_icon()
         # DPI 縮放倍率：enable_dpi_awareness() 之後這裡量到的是真實 DPI，
         # 而底下所有寫死的像素（視窗大小、padding、wraplength）都是以 96dpi
         # 為單位寫的，一律要過 px()
@@ -579,6 +586,21 @@ class App(tk.Tk):
                           "關掉視窗就沒了。要留底請改用「啟動（顯示訊息）.bat」。）\n")
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self.after(80, self._drain_log)
+
+    # ---- 外觀 ----
+    def _apply_window_icon(self) -> None:
+        """標題列、工作列與所有對話框的圖示。
+
+        ⚠️ **失敗一律吞掉**：圖示是純外觀，assets 不在（有人只複製了 .py）或
+        Tk 讀不動都不該讓整個程式起不來——那會變成「雙擊沒反應」，而
+        「啟動.vbs」把主控台藏掉了，使用者連錯誤都看不到。
+        ⚠️ `default=` 那個參數才會套到之後才建出來的 Toplevel（filedialog、
+        messagebox）；不加的話只有主視窗換得掉。"""
+        try:
+            if APP_ICON.is_file():
+                self.iconbitmap(default=str(APP_ICON))
+        except Exception:
+            pass
 
     # ---- 尺寸 ----
     def px(self, n: float) -> int:
