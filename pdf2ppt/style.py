@@ -47,6 +47,8 @@ BLUR_PX = 6
 
 RING_PX = 4            # background sampled from this ring around the bbox
 BG_MIN_SHARE = 0.55    # below this dominance the ring is not a flat background
+RING_INSIDE_MIN = 0.25  # the ring colour must fill at least this much of the
+                        # box to count as the surface the text sits on
 # --- surface walk outward from the strokes (see _surface_around_ink) ---
 HALO_SKIP_PX = 3       # anti-aliasing next to the strokes, tinted by the text
 HALO_BAND_PX = 3       # width of one sampling band
@@ -1181,7 +1183,20 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
             # 提速效果 on a gold chip, 擴展與制度重構 on green), NOT a pill —
             # keep the chip (ring) as bg and render the white outline as the
             # text, otherwise the cover becomes a white box over the chip.
-            if int(bg_cand.min()) >= 200 and int(bg_ref.min()) < 170:
+            #
+            # ...but only when the ring colour is actually THERE inside the
+            # box. Outlined text sits ON the chip, so the chip fill shows
+            # between the glyphs (>=0.295 of the box across the whole corpus,
+            # median 0.61). A box that merely OVERSHOOTS a light plate onto a
+            # darker card sees that card in the ring only through the few
+            # spilled-over rows — guardV2 p12 「陳 X 豪 X 豪」 (white plate
+            # inside a blue blueprint card) measured 0.069, guard p1 "Data
+            # Ingestion" (white label in blue line art) 0.151 — and both came
+            # out inverted: blue/grey cover with white text.
+            ring_inside = float((np.abs(inner.astype(int) - bg_ref.astype(int))
+                                 .max(axis=2) < 40).mean())
+            if (int(bg_cand.min()) >= 200 and int(bg_ref.min()) < 170
+                    and ring_inside >= RING_INSIDE_MIN):
                 text_rgb_override = tuple(int(v) for v in bg_cand)
             # a real spilled pill re-derives a bg that DIFFERS from the
             # ring (that mismatch is the whole failure mode); when the
