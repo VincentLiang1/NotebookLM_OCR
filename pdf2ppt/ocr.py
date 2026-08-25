@@ -497,6 +497,87 @@ def _find_pipe_gaps(char_boxes, img: np.ndarray) -> set:
     return hits
 
 
+# --- a detector box that bites into a neighbouring glyph ---------------
+# The detector sometimes ends a box in the middle of the NEXT box's first
+# glyph; the rec model then reads the caught sliver as a character of its
+# own (guardV2 p8: the title "L3 驗證護欄：拆穿全綠的假象" shattered into
+# two boxes and the "L3" box reached 62px into 驗, whose left component
+# came back as a standalone 馬 -- word box 25px wide against 133px for a
+# real ideograph on that line).
+#
+# The bogus glyph is nearly invisible in the output on its own, but it
+# costs a full em in the WIDTH CLAMP: "L3 馬" asks for 2.39em out of the
+# 212px of ink actually measured, so the fragment was clamped 33.6 -> 24pt
+# while the other half of the same title kept its 32.
+#
+# An ideograph is a square, so a first/last CJK character whose word box is
+# a sliver of its peers (or of its own height) is a cut component rather
+# than a glyph -- and the ink continuing past the box edge proves the glyph
+# carries on outside. Latin is deliberately out of scope: i/l/1 are
+# legitimately that narrow, so the width test has no signal there.
+SPLIT_GLYPH_W_FRAC = 0.5     # word box this much narrower than its peers
+SPLIT_GLYPH_EDGE_PX = 4      # ... and this close to the detector box edge
+SPLIT_GLYPH_PROBE = 0.35     # probe outward this fraction of the box height
+SPLIT_GLYPH_INK_COLS = 0.6   # ... needing this share of columns inked
+
+
+def _ink_runs_past(img: np.ndarray, cb, out_x0: float, out_x1: float) -> bool:
+    """Does the glyph carry on outside the detector box? The strip just past
+    the box edge is read against the background of the sliver + strip pair:
+    a cut glyph continues into it (its remaining components are right
+    there), a genuine line end opens onto flat background."""
+    _, cx0, cy0, cx1, cy1 = cb
+    top, bot = int(cy0), int(cy1) + 1
+    inside = img[top:bot, int(cx0):int(cx1) + 1]
+    outside = img[top:bot, max(0, int(out_x0)):int(out_x1) + 1]
+    if inside.size == 0 or outside.size == 0 or outside.shape[1] < 4:
+        return False
+    both = np.concatenate([inside.reshape(-1, 3), outside.reshape(-1, 3)])
+    bg = np.median(both, axis=0)
+    ink = np.abs(outside.astype(int) - bg).max(axis=2) > 60
+    return float((ink.sum(axis=0) >= 1).mean()) >= SPLIT_GLYPH_INK_COLS
+
+
+def _drop_cut_edge_glyph(text: str, char_boxes, bbox, img: np.ndarray):
+    """Drop a leading/trailing CJK character that is only the sliver of a
+    neighbouring glyph this box cut through, and pull the bbox edge back to
+    the last real character. Returns (text, char_boxes, bbox)."""
+    if not char_boxes:
+        return text, char_boxes, bbox
+    for tail in (True, False):
+        if len(char_boxes) < 2:
+            break
+        cb = char_boxes[-1] if tail else char_boxes[0]
+        ch, cx0, cy0, cx1, cy1 = cb
+        w, h = cx1 - cx0, cy1 - cy0
+        if w <= 0 or h <= 0 or not _RE_HAS_CJK.match(ch):
+            continue
+        # a real ideograph is as wide as its siblings; with none on the
+        # line its own box height is the square it should have filled
+        peers = [b[3] - b[1] for b in char_boxes
+                 if b is not cb and _RE_HAS_CJK.match(b[0]) and b[3] > b[1]]
+        if w >= SPLIT_GLYPH_W_FRAC * (median(peers) if peers else h):
+            continue
+        probe = max(8.0, SPLIT_GLYPH_PROBE * h)
+        if tail:
+            if cx1 < bbox[2] - SPLIT_GLYPH_EDGE_PX:
+                continue
+            if not _ink_runs_past(img, cb, cx1 + 1, cx1 + probe):
+                continue
+            text = text.rstrip()[:-1].rstrip()
+            char_boxes = char_boxes[:-1]
+            bbox = (bbox[0], bbox[1], char_boxes[-1][3], bbox[3])
+        else:
+            if cx0 > bbox[0] + SPLIT_GLYPH_EDGE_PX:
+                continue
+            if not _ink_runs_past(img, cb, cx0 - probe, cx0 - 1):
+                continue
+            text = text.lstrip()[1:].lstrip()
+            char_boxes = char_boxes[1:]
+            bbox = (char_boxes[0][1], bbox[1], bbox[2], bbox[3])
+    return text, char_boxes, bbox
+
+
 def _restore_pipes(text: str, char_boxes, img: np.ndarray):
     """Re-insert '|' table separators the rec model dropped. Returns
     (text, char_boxes); char_boxes is invalidated (set None) when a pipe is
@@ -1146,6 +1227,13 @@ class OcrEngine:
                         # rescue angle is a compromise fit with no baseline
                         # behind it
                         ln.angle, ln.center, ln.size = ang, center, size
+            if ln.angle == 0.0 and ln.char_boxes:
+                # before _extend_trailing: a sliver of the neighbouring
+                # glyph would otherwise anchor the line end
+                was = ln.text
+                ln.text, ln.char_boxes, ln.bbox = _drop_cut_edge_glyph(
+                    ln.text, ln.char_boxes, ln.bbox, img_rgb)
+                fixes["cut_glyph"] += ln.text != was
             if ln.angle == 0.0:
                 extended = self._extend_trailing(img_rgb, ln, vocab)
                 if extended:
