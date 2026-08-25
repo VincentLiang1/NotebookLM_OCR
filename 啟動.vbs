@@ -14,6 +14,12 @@ Option Explicit
 
 ' MsgBox 大約 1024 個字元就會被截掉，而有用的部分（例外的最後幾行）在尾巴
 Const MAX_MSG = 900
+' 這個結束碼是 GUI 用來說「失敗我自己已經跳過訊息框了，你不必再跳一次」的暗號
+' （pdf2ppt_gui_2.py 的 SELF_REPORTED_RC，tests/test_docs.py 釘著兩邊一致）。
+' 【注意】不可改成 1 或 2：那兩個是 Python 直譯器自己會回的（1＝未攔到的例外、
+' 2＝連 .py 都打不開，也就是只複製了這支 .vbs 的情況），撞上去會讓那些真正該
+' 顯示的失敗被靜靜吞掉。GUI 那邊也只在訊息框真的跳出來時才回這個值。
+Const RC_SELF_REPORTED = 78
 Const APP_TITLE = "NotebookLM PDF → PPT"
 
 Dim sh, fso, here, q, target, capPath, cmd, rc, out, msg
@@ -53,6 +59,13 @@ If Err.Number <> 0 Then
     WScript.Quit 1
 End If
 On Error GoTo 0
+
+If rc = RC_SELF_REPORTED Then
+    ' GUI 自己已經把原因說清楚了，這裡再跳一個「結束碼 78」的框只是噪音。
+    ' 安靜收工，但結束碼照樣往外傳（腳本呼叫得到的那一端仍看得出這趟失敗了）。
+    Cleanup fso, capPath
+    WScript.Quit rc
+End If
 
 If rc <> 0 Then
     out = Captured(fso, capPath)

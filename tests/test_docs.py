@@ -72,7 +72,11 @@ SYMBOL_DOCS = {**RULE_DOCS,
 # 一樣是校準結果、一樣寫進了 docs/dev，少了它那些數字就沒人守。
 MODULES = ["pdf2ppt.style", "pdf2ppt.blocks", "pdf2ppt.builder",
            "pdf2ppt.ocr", "pdf2ppt.cli", "pdf2ppt.models", "pdf2ppt.render",
-           "tools.make_icon"]
+           "tools.make_icon",
+           # GUI 也在裡面：它的 SELF_REPORTED_RC 是與「啟動.vbs」講好的暗號，
+           # CLAUDE.md 引用了那個數字。import 它只會定義常數與類別（Tk 是
+           # App() 才建的），不會開視窗。
+           "pdf2ppt_gui_2"]
 
 # 刻意提到、但程式裡已經沒有的符號：文件談的就是「它被刪掉」這件事，名字正是
 # 那則教訓的價值所在。⚠️ 這份白名單本身就是絆索——往裡面加一個名字很便宜，而
@@ -220,8 +224,8 @@ def test_the_partial_exit_code_is_the_same_number_in_all_three_places():
     """降級的離開碼在三個地方各存一份：`cli.py` 是正典，`pdf2ppt_gui_2.py` 與
     `轉檔.bat` 都是手抄的。
 
-    不 import 的理由寫在各自的註解裡（GUI 可以在執行中途改指到另一份
-    checkout，而 `.bat` 根本沒有 Python 可用）。手抄就會漂移，而**這一種漂移
+    不 import 的理由寫在各自的註解裡（GUI 不想為了一個整數把整組相依拉進啟動
+    路徑，而 `.bat` 根本沒有 Python 可用）。手抄就會漂移，而**這一種漂移
     是沉默的**：號碼對不上時，有頁面降級的那一趟會被報成單純的「完成」，或者
     反過來被報成「失敗」——兩種都會讓使用者做錯決定，而且畫面上不會有任何一
     句話提示他號碼對不上。"""
@@ -235,6 +239,27 @@ def test_the_partial_exit_code_is_the_same_number_in_all_three_places():
     bat = (ROOT / "轉檔.bat").read_text(encoding="cp950")
     assert f"errorlevel {rc}" in bat, (
         f"轉檔.bat 沒有 errorlevel {rc} 的分支，降級會被當成失敗")
+
+
+def test_the_self_reported_exit_code_matches_the_launcher():
+    """「失敗我自己已經跳過訊息框了」這個暗號存兩份：`pdf2ppt_gui_2.py` 的
+    `SELF_REPORTED_RC` 與「啟動.vbs」的 `RC_SELF_REPORTED`。
+
+    ⚠️ **這種漂移是沉默的，而且會往壞的方向倒**：號碼對不上時，好的那一半只是
+    多跳一個框（看得見）；壞的那一半是 `.vbs` 把**別人回的**結束碼當成暗號，那
+    一趟真正的失敗就一句話都不會顯示。所以順便釘住「不可以是 0/1/2」——**2 正是
+    「連 .py 都打不開」時直譯器自己回的值**（只複製了 `.vbs`、GUI 檔不在的情況），
+    而那正是最需要跳框的一次。"""
+    g = re.search(r"^SELF_REPORTED_RC = (\d+)$", GUI_PY, re.M)
+    assert g, "pdf2ppt_gui_2.py 的 SELF_REPORTED_RC 不見了（改名要一起改這支測試）"
+    rc = int(g.group(1))
+    assert rc not in (0, 1, 2), (
+        f"SELF_REPORTED_RC 不可以是 {rc}：Python 直譯器自己就會回這個值")
+    vbs = (ROOT / "啟動.vbs").read_text(encoding="cp950")
+    v = re.search(r"^Const RC_SELF_REPORTED = (\d+)$", vbs, re.M)
+    assert v and int(v.group(1)) == rc, (
+        f"啟動.vbs 的 RC_SELF_REPORTED 是 {v and v.group(1)}，"
+        f"pdf2ppt_gui_2.py 是 {rc}")
 
 
 def test_rejected_paths_index_points_at_real_sections():

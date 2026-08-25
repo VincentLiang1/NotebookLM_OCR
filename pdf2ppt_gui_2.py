@@ -302,6 +302,14 @@ def apply_ui_style(root: tk.Misc, scale: float) -> tuple[str, dict]:
 # 而那些只有按下轉檔的那一刻才需要——啟動路徑不該為一個整數付那個代價。
 PARTIAL_RC = 3
 
+# 本行程的結束碼，意思是「失敗**已經自己跳過訊息框了**，啟動端不必再跳一次」。
+# 「啟動.vbs」讀同一個數字（它的 `RC_SELF_REPORTED`），tests/test_docs.py 釘著
+# 兩邊一致。⚠️ **不可改成 1 或 2**：那兩個是直譯器自己會回的（1＝未攔到的例外、
+# **2＝連 .py 都打不開**——只複製了 .vbs 而 pdf2ppt_gui_2.py 不在時就是 2），
+# 撞上去等於讓那些真正需要顯示的失敗被靜靜吞掉。78 是 sysexits 的 EX_CONFIG
+# （「安裝／設定不對」），uv 與 Python 都不會回這個值。
+SELF_REPORTED_RC = 78
+
 # 日誌視窗保留的最大行數：GUI 是長時間開著的行程，不設上限的話一整個工作階段
 # 的輸出會一直累積，每次 insert 都要重繪愈來愈大的緩衝區
 LOG_MAX_LINES = 4000
@@ -459,17 +467,21 @@ def is_project_dir(path: Path) -> bool:
         return False
 
 
-def fail_no_project() -> None:
+def fail_no_project() -> bool:
     """PROJECT_DIR 裡沒有 pdf2ppt 套件：講清楚，然後讓行程收掉。
+
+    回傳**訊息框有沒有真的跳出來** —— 呼叫端據此決定結束碼：跳出來了就回
+    `SELF_REPORTED_RC`（「啟動.vbs」看到這個值會安靜地把行程收掉，使用者只看到
+    我們這一個框）；沒跳成功就回一般的失敗碼，讓啟動端把 stderr 那一份跳出來。
+    ⚠️ **不可以無條件回報「已說明過」**：Tk 起不來的機器上那等於什麼都沒說。
 
     ⚠️ **不要退而求其次開一個「殘廢的視窗」**（2026-08-25 使用者指示拿掉位置
     選擇時一併定的）：以前找不到套件會照常開窗、把紅字寫在專案位置那一格，等
     使用者按下轉檔才擋下來；沒有挑選器之後那條路已經無解，開窗只是把「這份
     複製品缺東西」延後到最不好懂的時機才講。
 
-    訊息要有兩個落點，因為主要入口「啟動.vbs」把主控台藏掉了：**訊息框**（不論
-    誰啟動的都看得到）＋ **stderr**（`.vbs` 在結束碼非 0 時會把攔到的內容跳出來，
-    「啟動（顯示訊息）.bat」與直接下指令則是印在主控台上）。"""
+    訊息仍然寫一份到 **stderr**：那是訊息框跳不出來時唯一的落點，「啟動（顯示
+    訊息）.bat」與直接下指令的人本來也是看那裡。"""
     msg = (f"這個資料夾裡找不到 pdf2ppt\\cli.py：\n{PROJECT_DIR}\n\n"
            "pdf2ppt_gui_2.py 必須跟 pdf2ppt 資料夾放在一起（也就是專案根目錄）。\n"
            "請把整個專案資料夾完整複製過來，再執行一次「安裝.bat」。")
@@ -488,9 +500,11 @@ def fail_no_project() -> None:
             pass
         messagebox.showerror("找不到 pdf2ppt 套件", msg)
         root.destroy()
+        return True
     except Exception:
-        # 連 Tk 都起不來（沒有桌面工作階段之類）；stderr 那一份已經寫出去了
-        pass
+        # 連 Tk 都起不來（沒有桌面工作階段之類）；stderr 那一份已經寫出去了，
+        # 回 False 讓啟動端接手顯示
+        return False
 
 
 # --font 只設定輸出的 <a:ea> 東亞字型；style.py 的 _measure_em() 一律以
@@ -1238,10 +1252,11 @@ def main() -> int:
     # ⚠️ 同樣要在建 Tk 之前：視窗一建出來就已經被工作列歸隊了
     set_app_user_model_id()
     # 沒有 pdf2ppt 套件就別開窗：介面上每一個控制項都只是在為那一次呼叫收集
-    # 參數，缺了它整支程式沒有任何一件事做得成（使用者 2026-08-25 指示）
+    # 參數，缺了它整支程式沒有任何一件事做得成（使用者 2026-08-25 指示）。
+    # 結束碼分兩種：訊息框跳出來了就回 SELF_REPORTED_RC（啟動端安靜收工，
+    # 使用者只看到一個框），跳不出來才回 1 讓啟動端把 stderr 那份顯示出來。
     if not is_project_dir(PROJECT_DIR):
-        fail_no_project()
-        return 2
+        return SELF_REPORTED_RC if fail_no_project() else 1
     app = App()
     app.mainloop()
     return 0

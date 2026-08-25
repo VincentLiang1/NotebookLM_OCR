@@ -81,7 +81,8 @@ DirectML 版是「**取代**」CPU 版的完整 build（它同時提供 `CPUExec
 
 - `PROJECT_DIR = Path(__file__).resolve().parent`，模組層級一個常數，**沒有第二個候選**。`APP_ICON`、`log_dir()`、`_git_sha()`、版號讀的 `pyproject.toml` 全部改成從它出發（本來各自寫一次 `Path(__file__).resolve().parent`）。
 - 驗證放在 `main()`、**在 `App()` 之前**：`is_project_dir(PROJECT_DIR)` 不過就呼叫 `fail_no_project()` 然後 `return 2`，視窗完全不建。
-- `fail_no_project()` 的訊息有兩個落點：`messagebox.showerror`（自己起一個 withdraw 掉的 `tk.Tk()`，因為此刻還沒有主視窗）＋ `sys.stderr`。⚠️ 兩個都要：對話框是給雙擊「啟動.vbs」的人看的（那條路沒有主控台，但**結束碼非 0 時 `.vbs` 會把攔到的 stderr 再跳一次**，所以那邊的人會看到兩個框——這是刻意的，第二個是啟動端在誠實回報結束碼）；stderr 是給「啟動（顯示訊息）.bat」與直接下指令的人看的。⚠️ `tk.Tk()` 起不來也要吞掉例外，否則錯誤訊息本身變成 traceback。
+- `fail_no_project()` 的訊息有兩個落點：`messagebox.showerror`（自己起一個 withdraw 掉的 `tk.Tk()`，因為此刻還沒有主視窗）＋ `sys.stderr`。對話框是給雙擊「啟動.vbs」的人看的（那條路沒有主控台）；stderr 是給「啟動（顯示訊息）.bat」、直接下指令，**以及對話框跳不出來時**的人看的。⚠️ `tk.Tk()` 起不來也要吞掉例外，否則錯誤訊息本身變成 traceback。
+- ⚠️ **只讓使用者看到一個框**（使用者 2026-08-25 追加指示）：`.vbs` 本來在結束碼非 0 時會把攔到的 stderr 再跳一次，於是同一件事說兩遍。改法是一個雙方講好的暗號——`fail_no_project()` **回傳訊息框有沒有真的跳出來**，`main()` 據此回 `SELF_REPORTED_RC`(78) 或 1；`.vbs` 收到 78 就 `Cleanup` 後 `WScript.Quit rc`，安靜收工但結束碼照傳。⚠️ **暗號不可以是 1 或 2**：`1` 是未攔到的例外，**`2` 是直譯器連 `.py` 都打不開**（只複製了 `.vbs`、GUI 檔不在的情況）——撞上去就會把那次最需要跳框的失敗靜靜吞掉。78 是 sysexits 的 `EX_CONFIG`，uv 與 Python 都不會回。⚠️ **也不可以無條件回 78**：Tk 起不來的機器上那等於什麼都沒說，所以「跳不出來就回 1」那一半是這條規則的另一半。兩個常數由 `tests/test_docs.py::test_the_self_reported_exit_code_matches_the_launcher` 釘著。
 - **跟著刪掉的殘骸**（位置固定之後它們在定義上不會再被用到）：`~/.notebooklm_pdf2ppt_gui.json` 這個設定檔與 `load_config()`／`save_config()`（它只存過 `project_dir` 一個鍵，連同 `import json` 一起沒了）、`find_project_dir()` 的三段 fallback、`App.project_dir`／`App.loaded_from`、`_refresh_project_label()`／`_pick_project()`、`_run_conversion()` 裡「換過資料夾就把 `sys.modules` 裡的 `pdf2ppt` 清掉」那一段，以及 `_start()` 開頭的位置檢查。⚠️ **`_run_conversion()` 的 `ModuleNotFoundError` 分流要留著**：`pdf2ppt` 自己不見了（啟動後才被搬走）與缺相依套件（沒跑 `uv sync`）的處方不同。
 - 版面連帶：主畫面第一個區塊從「專案位置」變成「檔案」，多出來的高度落給日誌區（`geometry` 的 760×640 沒有跟著改）。
 

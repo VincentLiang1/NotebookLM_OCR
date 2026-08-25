@@ -40,7 +40,13 @@ rc = sh.Run(cmd, 0, True)
 
 `Run(cmd, 0, True)` 的兩個參數都不可改：`0` 是 `SW_HIDE`（cmd 與 uv 都看不到），`True` 是等它結束——**不等就拿不到結束碼**，也就沒辦法在失敗時跳訊息框。代價是 `wscript` 行程會活到 GUI 關閉為止，這是刻意的。
 
-結束碼非 0 時把暫存檔讀回來、**內容直接放進 `MsgBox`**，然後刪檔。三個實作上的坑：
+結束碼非 0 時把暫存檔讀回來、**內容直接放進 `MsgBox`**，然後刪檔。
+
+⚠️ **有一個結束碼是例外**：`.vbs` 的 `RC_SELF_REPORTED` 常數（值就是 GUI 那邊的 `SELF_REPORTED_RC`(78)）代表「GUI 自己已經跳過訊息框了」（2026-08-25 使用者指示「讓 .vbs 把它當成已說明過，跳過那個框」）。收到它就 `Cleanup` 後 `WScript.Quit rc`：安靜收工、結束碼照傳。目前唯一會回這個值的是「同層找不到 `pdf2ppt` 套件」（`fail_no_project()`），而且**只在訊息框真的跳出來時才回**——Tk 起不來就回 1，讓這裡接手顯示。
+
+⚠️ **暗號不可以是 1 或 2**：`1` 是未攔到的例外，**`2` 是直譯器連 `.py` 都打不開**（只複製了 `.vbs`、GUI 檔不在的情況）——撞上去等於把那次最需要跳框的失敗靜靜吞掉。78 是 sysexits 的 `EX_CONFIG`，uv 與 Python 都不會回。兩邊的常數由 `tests/test_docs.py::test_the_self_reported_exit_code_matches_the_launcher` 釘著。
+
+三個實作上的坑：
 
 - ⚠️ **子行程必須被指定成 UTF-8 輸出**（`sh.Environment("PROCESS")("PYTHONIOENCODING") = "utf-8"`，改的是本行程的環境區塊、`Run` 出去的子行程繼承它）。不設的話 Python 會照系統 codepage（cp950）寫，而**讀回來的那一端是照 UTF-8 解的**，中文 traceback 會整段變成亂碼——正好是最需要看懂的那一段。
 - ⚠️ **讀檔要用 `ADODB.Stream` 指定 `Charset = "utf-8"`**，`FileSystemObject.OpenTextFile` 只會照系統 codepage 解。ADODB 被停用的機器（少見但存在）退回 FSO：中文變亂碼，但 traceback 的骨架仍讀得出來，比什麼都不顯示好。
@@ -103,6 +109,11 @@ Tkinter 對 callback 裡漏出來的例外，預設行為是 `report_callback_ex
 
 - **整條攔截鏈跑過一次**：拿一個「寫中文 traceback 到 stderr 再 `sys.exit(3)`」的假目標跑同一份 `.vbs`（`MsgBox` 換成 `WScript.Echo`、用 `cscript` 跑），結束碼 3 被接到、UTF-8 的中文 traceback 原樣還原。**正常結束的那一路完全安靜、暫存資料夾裡也沒有殘留 `.tmp`**。
 - **雙擊 `.vbs` 的完整路徑跑過**：GUI 起來、`logs` 自動建好、檔頭帶著版號與 sha；用 `CloseMainWindow()` 正常關閉時收到「結束」那一行（強制砍掉則沒有，但逐次 flush 保證前面的內容不會少）。
+
+**2026-08-25（`RC_SELF_REPORTED`）**
+
+- **兩個分支各跑一次**（同樣的假目標手法：`MsgBox` 換 `WScript.Echo`、`cscript` 跑）：假目標 `sys.exit(78)` → `.vbs` **一個字都沒印、自己的結束碼是 78**；假目標 `sys.exit(1)` → 照舊跳框，UTF-8 的中文訊息原樣還原。兩趟的暫存檔都刪乾淨了。
+- **GUI 那一半也分兩個分支量過**：空資料夾裡跑 `main()` 得 `rc=78`（訊息框跳出來一次）；把 `tk.Tk` 換成會丟例外的假物件再跑一次得 `rc=1`（stderr 那一份仍完整）。
 
 ## 編碼
 
