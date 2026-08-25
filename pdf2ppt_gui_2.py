@@ -269,6 +269,23 @@ def preferred_theme_mode() -> str:
         return "light"
 
 
+def window_handle(root: tk.Misc) -> int:
+    """視窗真正的 top-level HWND（拿不到回 0）。
+
+    ⚠️ **`winfo_id()` 不是它**：那是 Tk 自己那個**子**視窗，DWM 與工作列都不認
+    —— 要往上取一層才是工作列上那顆按鈕對應的視窗。
+
+    ⚠️ **`restype` 一定要設**：`ctypes.windll` 的預設回傳型別是 `c_int`（32 位
+    元），而 64 位元 Windows 的 HWND 是指標寬。值小的時候看起來完全正常，一旦
+    某次配到高位元有值的 handle 就會被**靜默截斷**成另一個視窗的號碼——那種
+    bug 只會偶爾發生一次，查起來毫無線索。
+    """
+    user32 = ctypes.windll.user32
+    user32.GetParent.restype = ctypes.c_void_p
+    user32.GetParent.argtypes = [ctypes.c_void_p]
+    return user32.GetParent(root.winfo_id()) or 0
+
+
 def use_dark_titlebar(root: tk.Misc) -> None:
     """把視窗標題列也換成深色（Windows 10 20H1+ 的 DWM 屬性）。
 
@@ -277,9 +294,175 @@ def use_dark_titlebar(root: tk.Misc) -> None:
         return
     try:
         root.update_idletasks()          # 先讓 HWND 真的存在
-        hwnd = ctypes.windll.user32.GetParent(root.winfo_id())
         ctypes.windll.dwmapi.DwmSetWindowAttribute(
-            hwnd, 20, ctypes.byref(ctypes.c_int(1)), ctypes.sizeof(ctypes.c_int))
+            ctypes.c_void_p(window_handle(root)), 20,
+            ctypes.byref(ctypes.c_int(1)), ctypes.sizeof(ctypes.c_int))
+    except Exception:
+        pass
+
+
+# --------------------------------------------------------------------------- #
+#  工作列：使用者切走之後，唯一還看得見的東西
+# --------------------------------------------------------------------------- #
+# ⚠️ 這一整段的存在理由是「**使用者不會盯著這個視窗看**」：一份三十頁的簡報要
+# 跑好幾分鐘，人會切去做別的事，而那一刻視窗裡的進度條、狀態字、結果列**全部
+# 看不見了**。Windows 對這件事有兩個原生答案，這裡兩個都用——轉檔中把工作列
+# 按鈕本身畫成進度條，收工時閃那顆按鈕。
+#
+# ⚠️ **絕對不要改成把視窗搶到前景**（`focus_force`／`deiconify`／`-topmost`）：
+# 使用者這時正在別的視窗打字，搶焦點會把他的按鍵吃掉。而且 Windows 本來就有
+# 前景鎖擋著，擋下來的結果**還是閃工作列**——差別只在系統選的閃法比我們吵。
+#
+# 全段沿用本檔既有的原則（見 `set_app_user_model_id`）：**純外觀，任何一步失敗
+# 就安靜回到舊行為**，不可以讓轉檔本身跟著倒。
+
+# ITaskbarList3（shell32 內建，Win7 起）。⚠️ vtable 的位置是介面定義的一部分、
+# 不會變動：IUnknown 佔 0-2、ITaskbarList 佔 3-7、ITaskbarList2 佔 8，
+# ITaskbarList3 自己的方法從 9 開始算。
+_CLSID_TASKBARLIST = "{56FDF344-FD6D-11D0-958A-006097C9A090}"
+_IID_ITASKBARLIST3 = "{EA1AFB91-9E28-4B86-90E9-9E9F8A5EEFAF}"
+_VT_HRINIT = 3
+_VT_SETPROGRESSVALUE = 9
+_VT_SETPROGRESSSTATE = 10
+# TBPFLAG（shellapi.h）。⚠️ 這是**位元旗標**不是序號，別自己重排。
+TBPF_NOPROGRESS = 0x0
+TBPF_INDETERMINATE = 0x1
+TBPF_NORMAL = 0x2
+TBPF_ERROR = 0x4
+TBPF_PAUSED = 0x8
+
+# FlashWindowEx 的旗標。只閃**工作列按鈕**（TRAY），不閃標題列（CAPTION）：
+# 視窗如果只是被蓋住一半，標題列閃起來很吵而且沒有多給任何資訊。
+# TIMERNOFG＝一直閃到使用者把視窗切到前景為止，不必自己算次數。
+FLASHW_TRAY = 0x2
+FLASHW_TIMERNOFG = 0xC
+
+_taskbar_ptr: ctypes.c_void_p | None = None
+_taskbar_dead = False        # 建過一次失敗就不再重試（每頁都重試一次會很吵）
+
+
+class _GUID(ctypes.Structure):
+    _fields_ = [("Data1", ctypes.c_uint32), ("Data2", ctypes.c_uint16),
+                ("Data3", ctypes.c_uint16), ("Data4", ctypes.c_ubyte * 8)]
+
+
+class _FLASHWINFO(ctypes.Structure):
+    _fields_ = [("cbSize", ctypes.c_uint), ("hwnd", ctypes.c_void_p),
+                ("dwFlags", ctypes.c_uint), ("uCount", ctypes.c_uint),
+                ("dwTimeout", ctypes.c_uint)]
+
+
+def _com_call(ptr: ctypes.c_void_p, index: int, *argtypes):
+    """取 COM 物件 vtable 上第 `index` 個方法，回傳可直接呼叫的函式。
+
+    呼叫慣例是 `fn(ptr, 其餘參數…)` —— COM 的 this 指標要自己帶。"""
+    vtbl = ctypes.cast(ptr, ctypes.POINTER(ctypes.c_void_p)).contents.value
+    slot = ctypes.cast(vtbl, ctypes.POINTER(ctypes.c_void_p))[index]
+    return ctypes.WINFUNCTYPE(
+        ctypes.c_long, ctypes.c_void_p, *argtypes)(slot)
+
+
+def _taskbar() -> ctypes.c_void_p | None:
+    """取得 ITaskbarList3（第一次呼叫時建立並 `HrInit`）。失敗一律回 None。
+
+    ⚠️ **只能在主執行緒呼叫**：COM 物件綁在建立它的 apartment 上，而
+    `CoInitialize` 給的是 STA。本檔所有呼叫點（`_start`／`_scan_line`／
+    `_finish`）都在 Tk 的主執行緒上，背景工作執行緒不可以碰它。"""
+    global _taskbar_ptr, _taskbar_dead
+    if _taskbar_ptr is not None or _taskbar_dead:
+        return _taskbar_ptr
+    try:
+        ole32 = ctypes.windll.ole32
+        # 已經初始化過會回 S_FALSE(1)，那不是錯誤，不必也不該去 CoUninitialize
+        ole32.CoInitialize(None)
+        clsid, iid = _GUID(), _GUID()
+        if ole32.CLSIDFromString(_CLSID_TASKBARLIST, ctypes.byref(clsid)) < 0:
+            raise OSError("CLSIDFromString")
+        if ole32.IIDFromString(_IID_ITASKBARLIST3, ctypes.byref(iid)) < 0:
+            raise OSError("IIDFromString")
+        ptr = ctypes.c_void_p()
+        hr = ole32.CoCreateInstance(
+            ctypes.byref(clsid), None, 1,          # CLSCTX_INPROC_SERVER
+            ctypes.byref(iid), ctypes.byref(ptr))
+        if hr < 0 or not ptr:
+            raise OSError(f"CoCreateInstance hr=0x{hr & 0xFFFFFFFF:08X}")
+        if _com_call(ptr, _VT_HRINIT)(ptr) < 0:
+            raise OSError("HrInit")
+        _taskbar_ptr = ptr
+    except Exception:
+        _taskbar_dead = True             # 純外觀：這台機器沒有就算了
+    return _taskbar_ptr
+
+
+def taskbar_progress(root: tk.Misc, done: int, total: int) -> None:
+    """把工作列按鈕畫成進度條。`total <= 0` 代表「還不知道總量」（跑馬燈）。
+
+    對應視窗裡那條 `ttk.Progressbar` 的兩個階段：載入引擎時沒有頁數可報，用
+    indeterminate；收到第一行 `page N (n/total)` 之後才有分母。"""
+    if not sys.platform.startswith("win"):
+        return
+    try:
+        tb = _taskbar()
+        hwnd = window_handle(root)
+        if tb is None or not hwnd:
+            return
+        state = TBPF_NORMAL if total > 0 else TBPF_INDETERMINATE
+        _com_call(tb, _VT_SETPROGRESSSTATE, ctypes.c_void_p, ctypes.c_int)(
+            tb, hwnd, state)
+        if total > 0:
+            _com_call(tb, _VT_SETPROGRESSVALUE, ctypes.c_void_p,
+                      ctypes.c_ulonglong, ctypes.c_ulonglong)(
+                tb, hwnd, done, total)
+    except Exception:
+        pass
+
+
+def taskbar_finish(root: tk.Misc, state: str) -> None:
+    """收工時的工作列狀態：`ok` 清掉、`warn` 留黃的、`error` 留紅的。
+
+    ⚠️ **有降級與失敗要「留在那裡」**，不是清掉：那條顏色正是給「還沒切回來的
+    人」看的——工作列上一眼就知道這趟不是乾淨完成，不必先切回視窗才發現。
+    下一趟 `_start()` 會把它蓋掉，關掉視窗也就沒了。
+
+    ⚠️ **`ERROR`／`PAUSED` 要先有長度才看得到顏色**：那兩個狀態只換色、不動
+    數值，前一刻若停在 0% 就等於畫了一條看不見的紅線。所以先推到滿格再換色。"""
+    if not sys.platform.startswith("win"):
+        return
+    try:
+        tb = _taskbar()
+        hwnd = window_handle(root)
+        if tb is None or not hwnd:
+            return
+        flag = {"warn": TBPF_PAUSED, "error": TBPF_ERROR}.get(
+            state, TBPF_NOPROGRESS)
+        if flag != TBPF_NOPROGRESS:
+            _com_call(tb, _VT_SETPROGRESSVALUE, ctypes.c_void_p,
+                      ctypes.c_ulonglong, ctypes.c_ulonglong)(tb, hwnd, 1, 1)
+        _com_call(tb, _VT_SETPROGRESSSTATE, ctypes.c_void_p, ctypes.c_int)(
+            tb, hwnd, flag)
+    except Exception:
+        pass
+
+
+def flash_taskbar(root: tk.Misc) -> None:
+    """閃工作列按鈕，直到使用者把視窗切回前景。
+
+    ⚠️ **視窗已經在前景就什麼都不做**：人就坐在這個畫面前面，結果列已經把話
+    講完了，再閃一次只是噪音（而且前景視窗閃自己在 Windows 上根本看不出來）。
+    """
+    if not sys.platform.startswith("win"):
+        return
+    try:
+        hwnd = window_handle(root)
+        if not hwnd:
+            return
+        user32 = ctypes.windll.user32
+        user32.GetForegroundWindow.restype = ctypes.c_void_p
+        if user32.GetForegroundWindow() == hwnd:
+            return
+        info = _FLASHWINFO(ctypes.sizeof(_FLASHWINFO), hwnd,
+                           FLASHW_TRAY | FLASHW_TIMERNOFG, 0, 0)
+        user32.FlashWindowEx(ctypes.byref(info))
     except Exception:
         pass
 
@@ -1515,6 +1698,10 @@ class App(tk.Tk):
         # 不定長度進度條不帶任何資訊，12ms（83Hz）只是白白讓主執行緒重繪；
         # 用 ttk 的預設節奏即可
         self.progress.start()
+        # 工作列跟著視窗裡那條走（見 taskbar_progress）。⚠️ 這裡要**主動設一次**
+        # 而不是等第一頁：載入引擎那段可能要幾十秒，切走的人在那之前需要看到
+        # 「它已經開始了」。上一趟若留著黃／紅，這一下也一併蓋掉。
+        taskbar_progress(self, 0, 0)
         # 執行模式：收起選項區、把日誌打開（見 _set_advanced 上面那段說明）
         self._set_advanced(False, fit=False)
         self._set_log_shown(True)
@@ -1637,6 +1824,7 @@ class App(tk.Tk):
             self._determinate = True
         self.progress.config(maximum=total, value=done)
         self._pages_done, self._pages_total = done, total
+        taskbar_progress(self, done, total)   # 切走的人看的是這一條
         # ⚠️ **只報頁數，不報剩餘時間**（使用者 2026-08-25 指示刪掉）。頁數是
         # 量到的事實，剩餘時間是外推出來的猜測——而這裡的每頁耗時差異很大
         # （一行進旋轉救援就要跑七次 OCR），猜出來的數字會自己跳來跳去。
@@ -1644,6 +1832,9 @@ class App(tk.Tk):
 
     def _finish(self, rc: int) -> None:
         self.progress.stop()
+        # 工作列的收場與「要不要閃」。⚠️ 預設值是最壞的那個，而且是刻意的：
+        # 底下任何一步炸掉都代表這趟不是乾淨完成，工作列就該留一條紅的。
+        outcome, notify = "error", True
         try:
             out = self._effective_out()
             if rc in (0, PARTIAL_RC):
@@ -1651,6 +1842,7 @@ class App(tk.Tk):
                 # 沒有可編輯文字。⚠️ 頁碼要**寫在結果列上**：舊版是把它留在日誌
                 # 最後一行的 WARNING，而完成對話框正好蓋在那一行上面
                 part = rc == PARTIAL_RC
+                outcome = "warn" if part else "ok"
                 if self._determinate:
                     self.progress.config(value=self.progress["maximum"])
                 self._set_status("完成（有降級）" if part else "完成 ✓",
@@ -1665,6 +1857,9 @@ class App(tk.Tk):
                     + f"：{out.name if out else ''}{note}",
                     self.pal["warn"] if part else self.pal["ok"], out)
             elif rc == CANCELLED_RC:
+                # ⚠️ 停止**不閃、也不留顏色**：這是使用者自己剛按下去的，人就在
+                # 螢幕前面，通知他一件他自己做的事只是噪音。
+                outcome, notify = "ok", False
                 self._set_status("已停止", self.pal["muted"])
                 self._append("\n■ 已停止（沒有產生檔案）\n")
                 self._show_result("■  已停止 —— 沒有產生檔案",
@@ -1676,6 +1871,11 @@ class App(tk.Tk):
                                   self.pal["err"], None)
                 self._set_log_shown(True)
         finally:
+            # 工作列：先定色，再決定要不要叫人。⚠️ 兩件事都要在 `_finish` 裡做完
+            # ——這是整趟轉檔唯一保證會走到的收尾點（停止與失敗也走這裡）。
+            taskbar_finish(self, outcome)
+            if notify:
+                flash_taskbar(self)      # 已經在前景的話它自己會不做事
             # ⚠️ **順序有意義**：`_refresh_input_state()` 要趁 `running` 還是 True
             # 時呼叫。它結尾會把狀態字寫成「就緒」，而那一步是用 `not self.running`
             # 擋住的——先把旗標放掉再呼叫，剛剛寫上去的「完成 ✓」／「已停止」／
