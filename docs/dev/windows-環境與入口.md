@@ -216,6 +216,8 @@ GUI 端在 `pdf2ppt_gui_2.py` 的 `App._apply_window_icon()`。⚠️ 兩個點�
 
 動作列現在是**同一列**的〔開始／停止鈕〕〔進度條〕〔狀態字〕。舊版是右上角一個「就緒」、版面中段一條 indeterminate 進度條、最下面一大塊日誌——三個東西講同一件事卻散在 900px 內。
 
+⚠️ **狀態字那一欄的寬度要釘住，但要用量的不要用猜的**（使用者 2026-08-25 截圖圈出進度條右邊那塊空白）。釘住是必要的：不釘的話欄寬會跟著字串長短變，進度條的右端就在「就緒」與「載入 OCR 引擎…」之間左右抽動。但**以字元數寫死（`width=20`）在中英混排的狀態字上一定不準**——Tk 的 `width` 單位是該字型 `0` 的寬度，而表意字約兩倍寬、`…` 又不到一倍，只能往寬的猜。改成拿 `STATUS_SAMPLES` 實際去 `measure()`（`_status_width`）再設 `columnconfigure(minsize=…)`：實測保留 240px → 149px，**進度條多拿 91 實體 px**，而十個狀態字下進度條寬度全部是 677，一格都不抖。⚠️ 新增狀態字時要一併加進那份名單，否則那一個會把欄位撐開、進度條當場縮一截。
+
 `_scan_line()` 認三種行（`_PAGE_RE`／`_WARN_PREFIX`／`_LOADING_PREFIX`，`tests/test_docs.py::test_the_gui_reads_the_words_cli_actually_prints` 釘著兩邊的字面值）：
 
 - `page 7 (3/15)` → 切成 determinate、更新頁數。⚠️ **在此之前一定是 indeterminate**：載入引擎（首次還要下載 90MB 模型）那段沒有頁數可報，畫一條會動的假進度是騙人的。

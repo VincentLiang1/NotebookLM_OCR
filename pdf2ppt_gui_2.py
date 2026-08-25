@@ -111,6 +111,18 @@ RUN_TEXT = "▶  開始轉檔"
 STOP_TEXT = "■  停止轉檔"
 STOPPING_TEXT = "停止中…"
 
+# 狀態字會出現的**所有**長相。用途是量出右欄要保留多寬——⚠️ 這一格的寬度必須
+# 釘住（不然「就緒」換成「載入 OCR 引擎…」時進度條的右端會跟著左右抽動），但
+# **要用量的、不要用猜的**：2026-08-25 一開始寫死 `width=20` 個字元，結果進度條
+# 右邊留了一塊永遠用不到的空白（使用者截圖圈出來的就是它）。
+# ⚠️ 新增狀態字時要一併加進這份名單，否則那一個會把欄位撐開、進度條當場縮一截。
+STATUS_SAMPLES = ("等待選檔", "就緒", "準備中…", "載入 OCR 引擎…",
+                  # 頁數：三位數是這個工具實務上的上限（NotebookLM 的簡報頁數
+                  # 遠小於此），寬度取最寬的數字字形
+                  "888/888 頁",
+                  "完成 ✓", "完成（有降級）", "已停止", "停止中…",
+                  "失敗（代碼 78）")
+
 # --------------------------------------------------------------------------- #
 #  外觀（字型、DPI、佈景）
 # --------------------------------------------------------------------------- #
@@ -786,6 +798,25 @@ class App(tk.Tk):
             pass
 
     # ---- 尺寸 ----
+    def _status_width(self) -> int:
+        """狀態字那一格要保留多少像素：拿 `STATUS_SAMPLES` 實際去量。
+
+        ⚠️ **要用量的**。以字元數寫死（`width=20`）在中英混排的狀態字上一定不
+        準——Tk 的 `width` 單位是該字型 `0` 的寬度，而「載入 OCR 引擎…」裡的
+        表意字約兩倍寬、`…` 又不到一倍，於是只能往寬的猜；猜出來的餘裕就是進度
+        條右邊那塊永遠用不到的空白。
+
+        字型從樣式查（`Status.TLabel` 的 `font`），⚠️ 不要在這裡重寫一次
+        `(family, 10, "bold")`——那份定義在 `apply_ui_style`，抄過來就會漂。
+        查不到就退回 `TkDefaultFont`：量得不準頂多是餘裕不理想，不該讓介面開不
+        起來。"""
+        try:
+            spec = ttk.Style(self).lookup("Status.TLabel", "font")
+            fnt = tkfont.Font(self, font=spec or "TkDefaultFont")
+            return max(fnt.measure(t) for t in STATUS_SAMPLES)
+        except tk.TclError:
+            return self.px(150)
+
     def px(self, n: float) -> int:
         """把「以 96dpi 為單位寫的像素」換成這台機器上的實體像素。
 
@@ -905,13 +936,14 @@ class App(tk.Tk):
         # 「已經跑了 3%」或「卡住了」。轉檔一開始才切成 indeterminate。
         self.progress = ttk.Progressbar(actions, mode="determinate", value=0)
         self.progress.grid(row=0, column=1, sticky="ew", padx=p(12))
-        # ⚠️ 寬度寫死：狀態字會在「等待選檔」「載入 OCR 引擎…」「3/15 頁」
-        # 「完成（有降級）」之間變長變短，不釘住的話進度條的右端會跟著左右抽動
         self.status = ttk.Label(actions, text="就緒", style="Status.TLabel",
-                                width=20, anchor="e",
-                                foreground=self.pal["ok"])
+                                anchor="e", foreground=self.pal["ok"])
         self.status.grid(row=0, column=2, sticky="e")
         actions.columnconfigure(1, weight=1)
+        # 右欄只保留狀態字**真正量得到**的最大寬度，剩下的全歸進度條。
+        # ⚠️ 這一格仍然要釘住（`minsize`）：不釘的話欄寬會跟著字串長短變，
+        # 進度條的右端就會在「就緒」與「載入 OCR 引擎…」之間左右抽動。
+        actions.columnconfigure(2, minsize=self._status_width() + p(2))
 
         # ---- 進階區的收合按鈕 ----
         toggle_row = ttk.Frame(root)
