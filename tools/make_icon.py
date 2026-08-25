@@ -9,22 +9,29 @@
 
 設計
 ----
-藍色圓角磚，上面一張 16:9 的白色投影片（橘色標題列 + 兩行內文），投影片**後面**
-升起三道同心弧。弧是 NotebookLM 的語彙、投影片是本工具的產物，合起來就是這支
-程式做的事：NotebookLM 的簡報進來、可編輯的 PPT 出去。
+立意是 **OCR 的定義本身：把光學影像認成字元**（使用者 2026-08-25 指示改用這個
+立意）。藍色圓角磚，中間四個白色**取景角**框住一個白色的「文」——取景角是辨識
+的通用符號、在 16px 也認得出來，而框住的東西是**一個繁體字**：這個專案整套是
+為繁中調的（PP-OCRv5 server 辨識模型、s2tw、頁面詞彙校正），不是拉丁字母。
 
-⚠️ **不可直接沿用 NotebookLM 的商標圖形**（原稿是三道共用左緣、半徑遞減的
-拱，色票 #3186FF / #4FA0FF / #76BBFF→#A9A8FF）。這裡刻意改成**對稱同心**、
-換掉色票、並把它放進「投影片」這個本專案自己的主體裡。
+「文」怎麼畫
+-----------
+⚠️ **不是憑感覺畫的，是從 msyhbd.ttc 的「文」量出來的**：把真字形縮進字身框
+(160,138)-(352,362)、逐列取墨水游程中心當骨架，撇捺做三次貝茲最小平方擬合
+（殘差 3px）。量出來的數字：橫在 y 173..203（厚 31、近滿寬），撇捺從橫的正
+下方 y=204 出發，**交叉點在 y≈291**。
 
-⚠️ **卡片必須比弧寬，弧腳要整個藏在卡片後面**：弧腳只要露在卡片兩側，整個
-圖示就會讀成一把**掛鎖**（2026-08-25 排過 10 個變體目視，露腳的 5 個全中）。
-同理，卡片外圍要留一圈 `HALO` 寬的磚色縫——白弧碰到白卡片會糊成同一塊。
+⚠️ **這三個數字錯了就會變成「女」**（使用者 2026-08-25 當場指出第一版就是）：
+文與女的差別**不在撇捺的形狀**，而在——**①** 文有點、女沒有；**②** 文的橫在
+撇捺**之上、不穿過它們**，女的橫**穿過**撇捺；**③** 文的交叉點在下段約 59%
+（y≈291／字身 138..362），女的交叉點在橫**之上**。第一版把橫畫在 210、交叉點
+落在 313（77%），三條全踩，於是整個字讀成「女」。
 
-⚠️ **16–32 px 另有一版簡化圖形**（`icon-small.svg`：單弧、筆畫加粗、卡片只留
-標題列）。滿版那個的弧縫是 14/512，換算下來 32 px 只剩 0.9 px，三道弧會糊成
-一片雜訊——2026-08-25 兩版並排放大目視比過，分界就在 32 px。.ico 裡的小尺寸
-一律取簡化版，這是它存在的唯一理由。
+⚠️ **點與橫之間要留得開**：點的圓端加上橫的半筆寬很容易吃掉那道縫，黏起來
+就少了判別特徵 ①。
+
+⚠️ **16–32 px 另有一版簡化圖形**（`icon-small.svg`：取景角臂變短、筆畫全部加
+粗）。滿版那版的筆畫是 30/512，換算下來 16 px 只剩 0.9 px，整個字會斷掉。
 
 ⚠️ **全部用平塗、不用漸層**：小尺寸看不出漸層，而 mupdf 的 SVG 轉檔對
 `url(#…)` 填色的支援不完整（實測 radialGradient 會整塊變黑）。
@@ -43,50 +50,44 @@ ASSETS = ROOT / "assets"
 
 # 色票。藍色刻意與 NotebookLM 原稿的 #3186FF 錯開
 TILE = "#2B7CF6"        # 磚底
-ARC_MID = "#9FCBFF"     # 磚上的第二道弧
-ARC_IN = "#D8E9FF"      # 磚上的第三道弧
-ORANGE = "#F2610C"      # 投影片的標題列
-LINE = "#C9D6E8"        # 投影片的內文列，兼無底版的卡片外框
-MARK_ARCS = ("#2B7CF6", "#5AA6FF", "#8FC5FF")   # 無底版的三道弧
+INK = "#FFFFFF"         # 磚上的取景角與字
+MARK_INK = "#2B7CF6"    # 無底版的取景角與字（白的在白底上看不見）
 
 TILE_RADIUS = 112       # 512 見方的圓角，約 22%
-HALO = 18               # 卡片外圍那圈縫的寬度
 # .ico 收哪些尺寸；≤ SMALL_MAX 的用簡化圖形
 ICO_SIZES = (16, 20, 24, 32, 48, 64, 128, 256)
 SMALL_MAX = 32
 
-
-def _arch(cx: int, cy: int, r: int, w: int, foot_y: int, color: str) -> str:
-    """半圓弧 + 直腳，端點圓角。腳會被卡片蓋掉，所以只要夠長就好。"""
-    x0, x1 = cx - r, cx + r
-    return (f'<path d="M{x0} {foot_y} L{x0} {cy} A{r} {r} 0 0 1 {x1} {cy} L{x1} {foot_y}" '
-            f'fill="none" stroke="{color}" stroke-width="{w}" stroke-linecap="round"/>')
-
-
-def _fan(cx: int, cy: int, r_out: int, w: int, gap: int, foot_y: int,
-         colors: tuple[str, ...]) -> str:
-    return "\n".join(_arch(cx, cy, r_out - i * (w + gap), w, foot_y, c)
-                     for i, c in enumerate(colors))
+# 「文」的骨架，量自 msyhbd.ttc（見模組 docstring）。(d, 筆寬鍵)
+WEN_SKELETON = (
+    ("M249 150 L257 172", "dot"),                        # 點
+    ("M178 188 L332 188", "bar"),                        # 橫
+    ("M303 204 C295 274 213 302 181 359", "dia"),        # 撇
+    ("M208 204 C216 275 298 302 329 359", "dia"),        # 捺
+)
+WEN_INK_CENTER = 255    # 骨架加上圓端之後的墨水中心，縮放要繞著它
 
 
-def _card(cx: int, bottom: int, w: int, halo_color: str, halo: int,
-          lines: bool, rx: int) -> str:
-    """16:9 白色投影片。halo 是外圍那圈把卡片與後面的弧分開的縫。"""
-    h = round(w * 9 / 16)
-    x, y = cx - w // 2, bottom - h
-    s = (f'<rect x="{x - halo}" y="{y - halo}" width="{w + 2 * halo}" '
-         f'height="{h + 2 * halo}" rx="{rx + halo}" fill="{halo_color}"/>\n')
-    s += f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="{rx}" fill="#FFFFFF"/>'
-    pad = round(w * 0.09)
-    bar_h = round(h * 0.15)
-    s += (f'\n<rect x="{x + pad}" y="{y + round(h * 0.19)}" width="{round(w * 0.42)}" '
-          f'height="{bar_h}" rx="{bar_h // 2}" fill="{ORANGE}"/>')
-    if lines:
-        lh = round(h * 0.09)
-        for i, frac in enumerate((0.68, 0.48)):
-            s += (f'\n<rect x="{x + pad}" y="{y + round(h * (0.50 + 0.19 * i))}" '
-                  f'width="{round(w * frac)}" height="{lh}" rx="{lh // 2}" fill="{LINE}"/>')
-    return s
+def _corners(x0: int, y0: int, x1: int, y1: int, arm: int, w: int, color: str) -> str:
+    """四個取景角（L 形）。線端與轉角都是圓的，跟字的圓端一致。"""
+    paths = [f"M{x0} {y0 + arm} L{x0} {y0} L{x0 + arm} {y0}",
+             f"M{x1 - arm} {y0} L{x1} {y0} L{x1} {y0 + arm}",
+             f"M{x1} {y1 - arm} L{x1} {y1} L{x1 - arm} {y1}",
+             f"M{x0 + arm} {y1} L{x0} {y1} L{x0} {y1 - arm}"]
+    return "\n".join(
+        f'<path d="{d}" stroke="{color}" stroke-width="{w}" stroke-linecap="round" '
+        f'stroke-linejoin="round" fill="none"/>' for d in paths)
+
+
+def _wen(color: str, widths: dict[str, int], scale: float = 1.0) -> str:
+    """「文」的四筆。widths 是 {dot, bar, dia} 三種筆寬。"""
+    body = "\n".join(
+        f'<path d="{d}" stroke="{color}" stroke-width="{widths[key]}" '
+        f'stroke-linecap="round" fill="none"/>' for d, key in WEN_SKELETON)
+    if scale == 1.0:
+        return body
+    off = WEN_INK_CENTER * (1 - scale)
+    return f'<g transform="translate({off:.1f} {off:.1f}) scale({scale})">\n{body}\n</g>'
 
 
 def _svg(body: str) -> str:
@@ -99,21 +100,15 @@ def build_svgs() -> dict[str, Path]:
     ASSETS.mkdir(exist_ok=True)
     tile = f'<rect width="512" height="512" rx="{TILE_RADIUS}" fill="{TILE}"/>'
     out = {
-        # 主圖示：三道弧 + 投影片
-        "icon": _svg(
-            tile + "\n"
-            + _fan(256, 254, 150, 32, 14, 300, ("#FFFFFF", ARC_MID, ARC_IN)) + "\n"
-            + _card(256, 430, 344, TILE, HALO, lines=True, rx=20)),
-        # 小尺寸：單弧加粗、卡片只留標題列
-        "icon-small": _svg(
-            tile + "\n"
-            + _arch(256, 246, 112, 58, 300, "#FFFFFF") + "\n"
-            + _card(256, 428, 328, TILE, 26, lines=False, rx=24)),
-        # 無底扁平版：給 README、文件與淺色介面用。沒有磚色可以拿來當縫，
-        # 改用卡片外框色，弧則要換成藍階（白弧在白底上看不見）
-        "icon-mark": _svg(
-            _fan(256, 254, 150, 32, 14, 300, MARK_ARCS) + "\n"
-            + _card(256, 430, 344, LINE, 10, lines=True, rx=20)),
+        # 主圖示
+        "icon": _svg(tile + "\n" + _corners(96, 96, 416, 416, 96, 32, INK)
+                     + "\n" + _wen(INK, {"dot": 28, "bar": 30, "dia": 30}, 0.90)),
+        # 小尺寸：取景角臂短一點、筆畫全部加粗
+        "icon-small": _svg(tile + "\n" + _corners(92, 92, 420, 420, 80, 44, INK)
+                           + "\n" + _wen(INK, {"dot": 44, "bar": 46, "dia": 46}, 0.88)),
+        # 無底扁平版：給 README、文件與淺色介面用
+        "icon-mark": _svg(_corners(72, 72, 440, 440, 108, 36, MARK_INK)
+                          + "\n" + _wen(MARK_INK, {"dot": 30, "bar": 32, "dia": 32})),
     }
     paths = {}
     for name, text in out.items():
