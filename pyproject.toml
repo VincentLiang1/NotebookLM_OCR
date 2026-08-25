@@ -24,6 +24,10 @@ dependencies = [
     # 純 Tcl + PNG、MIT、約 100KB，命令列完全用不到它 —— 但 GUI 少了它只會
     # 回到系統原生長相（apply_ui_style 有 fallback），不會開不起來。
     "sv-ttk>=2.6",
+    # 圖形介面的「把 PDF 拖進視窗」。純 Python 包裝 + 附帶的 tkdnd 二進位，
+    # MIT。⚠️ 少了它 GUI 照樣開得起來（enable_file_drop 回 False，提示文字
+    # 改口只講「瀏覽…」），命令列完全用不到它。
+    "tkinterdnd2>=0.4",
 ]
 
 [dependency-groups]

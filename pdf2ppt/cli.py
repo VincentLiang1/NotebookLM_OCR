@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import threading
 import time
 import traceback
 from pathlib import Path
@@ -35,6 +36,12 @@ from .style import estimate_style
 # perfectly usable. ⚠️ pdf2ppt_gui_2.py carries its own copy of this number
 # (a test pins it to this one).
 PARTIAL_RC = 3
+
+# Exit code for a run the caller asked to stop (only the GUI can: the CLI never
+# passes a `cancel` event). Not 0 -- nothing was written; not 1 -- nothing went
+# wrong. ⚠️ pdf2ppt_gui_2.py carries its own copy of this number (a test pins
+# it to this one).
+CANCELLED_RC = 4
 
 WATERMARK_MARKS = ("notebooklm", "gemininotebook")
 WATERMARK_STRAY_MAX = 6  # chars OCR may glue on ahead of the mark
@@ -174,7 +181,15 @@ def parse_pages(spec: str, page_count: int) -> list[int]:
     return [i for i in indices if 0 <= i < page_count]
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None,
+         cancel: "threading.Event | None" = None) -> int:
+    # `cancel` is how the GUI stops a long run. It is checked once per page,
+    # at the top of the loop: a page in flight is left alone because the OCR
+    # engine call is a single opaque C-level call anyway -- there is nothing
+    # to check inside it, and killing the thread mid-save is exactly the
+    # corrupted-.pptx case the GUI's close handler already warns about. So the
+    # honest promise to the user is "stops after the page it is on", and the
+    # GUI says that in as many words.
     # line_buffering as well as the encoding: stdout is block-buffered when it
     # is not a console (`pdf2ppt … > run.txt`), while the OCR engine logs to
     # stderr unbuffered, so the captured file interleaves the two wrongly --
@@ -278,6 +293,13 @@ def main(argv: list[str] | None = None) -> int:
     failed: list[tuple[int, str]] = []
     t0 = time.time()
     for n, idx in enumerate(page_indices, 1):
+        if cancel is not None and cancel.is_set():
+            # Nothing is written: a deck missing its second half is worse than
+            # no deck, because it looks like a finished file. Said on stdout
+            # so the run log carries the reason the output is absent.
+            print(f"Cancelled by user after {n - 1}/{len(page_indices)} pages;"
+                  " no file written.")
+            return CANCELLED_RC
         t_page = time.time()
         page = doc[idx]
         head = f"page {idx + 1} ({n}/{len(page_indices)})"

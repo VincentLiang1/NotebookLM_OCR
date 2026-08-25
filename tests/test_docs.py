@@ -83,7 +83,10 @@ MODULES = ["pdf2ppt.style", "pdf2ppt.blocks", "pdf2ppt.builder",
 # 每加一個就少守一個符號，所以加之前先問「這真的是歷史記述，還是我剛改壞的
 # 指路？」
 #   _dilate：2026-08-23 被不繞回的 _grow 取代，零呼叫者卻留了半天
-HISTORICAL = {"_dilate"}
+#   _restore_height_after_collapse：2026-08-25 併進 _fit_window。文件記的是
+#     「為什麼從『減法還原』走到『每次重量 reqheight』」，那段沿革的價值正在
+#     於舊名字——沒有它，讀者無法把 docs/dev §5 第 3 點與 git 歷史對起來
+HISTORICAL = {"_dilate", "_restore_height_after_collapse"}
 
 # 文件引用常數的四種寫法：`NAME`=V、`NAME`(V)、`NAME`（V）、`NAME = V`
 _CONST_CITED = [
@@ -237,6 +240,46 @@ def test_the_partial_exit_code_is_the_same_number_in_both_places():
     assert g and g.group(1) == rc, (
         f"pdf2ppt_gui_2.py 的 PARTIAL_RC 是 {g and g.group(1)}，"
         f"cli.py 是 {rc}")
+
+
+def test_the_cancelled_exit_code_is_the_same_number_in_both_places():
+    """「使用者按了停止」的離開碼同樣存兩份（`cli.py` 是正典、GUI 手抄）。
+
+    漂移的後果和 `PARTIAL_RC` 同一種、而且同樣沉默：號碼對不上時，使用者按下
+    停止會看到一個「失敗（代碼 4）」的紅字結果列，而那一趟其實完全照他說的做。
+    順便釘住它不可以撞上 0（沒有檔案卻報成功）、1（他自己的決定被報成失敗），
+    以及 PARTIAL_RC。"""
+    m = re.search(r"^CANCELLED_RC = (\d+)$", CLI_PY, re.M)
+    assert m, "cli.py 的 CANCELLED_RC 不見了（改名了就要一起改這支測試）"
+    rc = int(m.group(1))
+    part = re.search(r"^PARTIAL_RC = (\d+)$", CLI_PY, re.M)
+    assert rc not in (0, 1, int(part.group(1)) if part else -1), (
+        f"CANCELLED_RC 不可以是 {rc}：那是別的結果已經佔用的號碼")
+    g = re.search(r"^CANCELLED_RC = (\d+)$", GUI_PY, re.M)
+    assert g and int(g.group(1)) == rc, (
+        f"pdf2ppt_gui_2.py 的 CANCELLED_RC 是 {g and g.group(1)}，cli.py 是 {rc}")
+
+
+def test_the_gui_reads_the_words_cli_actually_prints():
+    """GUI 的進度條、剩餘時間與結果列是**解析 `cli.py` 的 stdout** 來的。
+
+    ⚠️ 這是手抄的輸出格式，不是 API：cli 改掉那幾行的長相，GUI 不會報錯，只會
+    安靜地退回「不定長度進度條 + 一句英文原文」——正是那種沒有人會發現的壞法。
+    所以把兩邊的字面值釘在一起。"""
+    # 每頁一行的 head：`page 7 (3/15): …`
+    assert 'head = f"page {idx + 1} ({n}/{len(page_indices)})"' in CLI_PY, (
+        "cli.py 每頁那一行的格式變了，pdf2ppt_gui_2.py 的 _PAGE_RE 要跟著改")
+    for literal, where in (('"WARNING: "', "_WARN_PREFIX"),
+                           ('"Loading OCR engine', "_LOADING_PREFIX")):
+        assert literal.strip('"') in CLI_PY, (
+            f"cli.py 不再印 {literal}，GUI 的 {where} 就沒有東西可以認")
+    # 降級的三種下場（_fallback_slide 的回傳值 + render 失敗那條）
+    for how in ("dropped", "image only", "partial slide"):
+        assert f'"{how}"' in CLI_PY, (
+            f"cli.py 不再回 {how!r}，GUI 的 _DEGRADE_ZH 要跟著改")
+        assert f'"{how}"' in GUI_PY, (
+            f"pdf2ppt_gui_2.py 的 _DEGRADE_ZH 少了 {how!r}，"
+            "那一種降級會以英文原文顯示在結果列上")
 
 
 def test_the_self_reported_exit_code_matches_the_launcher():

@@ -33,11 +33,24 @@ docs/dev/windows-環境與入口.md 5.1。
 
 版面：主畫面只留輸入／輸出檔，其餘選項全部收在預設收合的「進階選項」區
 （_toggle_advanced）。主線的終點「開始轉檔」排在檔案區正下方、收合按鈕**之上**
-（使用者 2026-08-25 指示），展開的兩區插在收合按鈕與進度條之間；展開時借走的
-視窗高度在收合時原樣還回去（_restore_height_after_collapse）。
+（使用者 2026-08-25 指示），展開的兩區插在收合按鈕正下方的 adv_slot 裡。
 色塊的選項曾經是主畫面上唯一的核取方塊（要拿它做 A/B），
 2026-08-24 量完之後 cli.py 的預設換成 --no-cover，這裡也就跟著收進進階區、
 反向成「輸出獨立色塊形狀」，預設不勾 —— 三方的預設值現在一致。
+
+⚠️ 進階區與日誌區是**手風琴**（_set_advanced／_set_log_shown）：展開進階就收
+日誌、按下轉檔就收進階並展開日誌。理由是量出來的——1143x1006 的視窗展開進階區
+後 reqheight 是 953 邏輯 px，而本機工作區只有 912（1080p@125% 更只有約 810），
+兩區同時攤開必定有一截在螢幕外。高度一律由 _fit_window() 統一決定：量 reqheight、
+鉗進所在螢幕的工作區、必要時把視窗往上移；使用者自己拉過視窗之後就只長不縮。
+
+進度：動作列上是**同一列**的「開始轉檔／停止轉檔」鈕、進度條與狀態字（舊版散在
+三個地方：右上角的「就緒」、中段一條沒有資訊量的 indeterminate 進度條、下方日誌）。
+進度條在 cli 印出第一行 `page N (n/total)` 時從 indeterminate 換成 determinate，
+剩餘時間由**第一頁完成之後**的實測速率外推（_scan_line；模型下載與引擎載入那段
+不能算進速率）。轉檔結果不再用互動式對話框問「要開啟資料夾嗎」——那個框正好蓋住
+日誌最後一行的降級 WARNING，改成日誌區上方一條結果列（_show_result），降級的頁碼
+直接寫在列上。
 
 執行紀錄：每次啟動在本檔所在資料夾底下的 logs 寫一份（檔名是啟動時間＋pid，
 保留 30 天），介面日誌區看得到的東西那裡都有，轉檔失敗的 traceback 也在裡面。
@@ -82,8 +95,21 @@ APP_ID = "VincentLiang.NotebookLM.Pdf2Ppt"
 # 進階區的收合按鈕文字。預設收起來：這些選項全部有校準過的預設值
 # （200 DPI + Microsoft YaHei 是整條管線唯一校準過的作業點），日常轉檔一項
 # 都不必動，攤在主畫面上只是讓「選檔 → 開始轉檔」這條主線被十幾個控制項擋住。
-ADV_SHOW_TEXT = "▸ 進階選項（頁碼、字型、DPI、除錯…）"
-ADV_HIDE_TEXT = "▾ 進階選項（收合）"
+# ⚠️ 兩個狀態的**標籤要一模一樣、只換三角形**：舊版收合時寫「進階選項（頁碼、
+# 字型、DPI、除錯…）」、展開後整句換成「進階選項（收合）」，同一顆鈕在兩個狀態
+# 講的是兩件事（一個講內容、一個講動作），而它的寬度又是寫死的 34 字，於是右半
+# 邊永遠空著。現在是整條寬、只有三角形會翻。
+ADV_LABEL = "進階選項（頁碼、字型、DPI、除錯…）"
+LOG_LABEL = "詳細訊息（每頁的處理結果與錯誤）"
+# ⚠️ 三角形一律用 ▸／▾ 這一對（同一個字族、同寬）：▶／▼ 在 Microsoft JhengHei UI
+# 下是全形，換狀態時整行文字會左右跳一格。
+CHEV_SHOW, CHEV_HIDE = "▸  ", "▾  "
+
+# 主要動作鈕的兩個狀態。⚠️ 同一顆鈕**兼任停止**，不是另外擺一顆：多一顆常駐的
+# 「停止」在閒置時是永遠灰著的死按鈕，而轉檔中才長出來會讓整列的控制項左右位移。
+RUN_TEXT = "▶  開始轉檔"
+STOP_TEXT = "■  停止轉檔"
+STOPPING_TEXT = "停止中…"
 
 # --------------------------------------------------------------------------- #
 #  外觀（字型、DPI、佈景）
@@ -117,6 +143,7 @@ PALETTES = {
         "log_bg": "#ffffff",
         "log_fg": "#1f2328",
         "log_sel": "#cfe3fb",
+        "border": "#d8dce1",   # 日誌框的細框線
     },
     "dark": {
         "page": "#1c1c1c",
@@ -127,6 +154,7 @@ PALETTES = {
         "log_bg": "#202020",
         "log_fg": "#e6e6e6",
         "log_sel": "#2d4f76",
+        "border": "#3a3a3a",   # 日誌框的細框線
     },
 }
 
@@ -287,9 +315,11 @@ def apply_ui_style(root: tk.Misc, scale: float) -> tuple[str, dict]:
     # ⚠️ 樣式名要以 .Accent.TButton 結尾才繼承得到那組圖片元件
     st.configure("Run.Accent.TButton", font=(fam, 12, "bold"),
                  padding=(px(22), px(9)))
-    # 進階選項的收合鈕：低調一點，別跟主要動作搶注意力
+    # 進階選項／詳細訊息的收合鈕：低調一點，別跟主要動作搶注意力。整條寬 +
+    # anchor="w"，讀起來像區段標題而不是一顆浮在半空中的按鈕
     st.configure("Adv.TButton", padding=(px(10), px(6)), anchor="w")
-    st.configure("Title.TLabel", font=(fam, 15, "bold"))
+    # 次要動作（變更…、開啟簡報、開啟紀錄…）：比主要動作小一號
+    st.configure("Small.TButton", padding=(px(10), px(3)))
     st.configure("Muted.TLabel", foreground=pal["muted"])
     st.configure("Status.TLabel", font=(fam, 10, "bold"))
     if mode == "dark":
@@ -301,6 +331,11 @@ def apply_ui_style(root: tk.Misc, scale: float) -> tuple[str, dict]:
 # 不 import 是因為 cli.py 會把整組相依（numpy／pymupdf／python-pptx…）拉進來，
 # 而那些只有按下轉檔的那一刻才需要——啟動路徑不該為一個整數付那個代價。
 PARTIAL_RC = 3
+
+# 「使用者按了停止」。同樣是手抄 cli.py 的（`CANCELLED_RC`，測試釘著兩邊一致）。
+# ⚠️ 不可以跟 0／1 共用：0 會讓結果列報成「完成」而磁碟上根本沒有檔案，1 會把
+# 使用者自己的決定報成失敗、還附一個沒有意義的代碼。
+CANCELLED_RC = 4
 
 # 本行程的結束碼，意思是「失敗**已經自己跳過訊息框了**，啟動端不必再跳一次」。
 # 「啟動.vbs」讀同一個數字（它的 `RC_SELF_REPORTED`），tests/test_docs.py 釘著
@@ -343,6 +378,24 @@ _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 # Tk 8.6 無法處理 BMP 以外的字元（路徑或 traceback 裡的 emoji 會讓 insert 丟
 # TclError），先換成替代字元，避免一個字毀掉整個日誌輸出
 _NON_BMP_RE = re.compile(r"[^\u0000-\uffff]")
+
+
+# cli.py 每處理完一頁就印一行 `page 7 (3/15): 24 lines, …`。⚠️ 這是**手抄的輸出
+# 格式**，不是 API：cli.py 改掉 head 的長相，這裡只會靜靜地退回不定長度進度條
+# （不會報錯，也不會少東西——那一行照樣進日誌區），所以格式對不上時的症狀是
+# 「進度條不動」而不是「壞掉」。同一趟輸出裡另外兩行也認得：
+#   `WARNING: page 3 dropped, …`  → 降級的頁碼，要寫在結果列上（見 _show_result）
+#   `Loading OCR engine...`       → 首次執行會卡在這裡好幾分鐘下載模型
+_PAGE_RE = re.compile(r"^page \d+ \((\d+)/(\d+)\)")
+# 降級的三種下場，同樣是手抄 cli.py 的（`_fallback_slide` 的三個回傳值 +
+# render 失敗那條的 "dropped"）。⚠️ 認不得就把原句照登，不要把訊息吃掉——
+# 使用者看得懂英文總比看到一句「有頁面降級」卻不知道是哪幾頁好。
+_DEGRADE_RE = re.compile(r"page (\d+) (dropped|image only|partial slide)")
+_DEGRADE_ZH = {"dropped": "整頁沒能產生",
+               "image only": "只保留原圖、沒有可編輯文字",
+               "partial slide": "只轉出了一部分"}
+_WARN_PREFIX = "WARNING: "
+_LOADING_PREFIX = "Loading OCR engine"
 
 
 def log_dir() -> Path:
@@ -459,6 +512,98 @@ def open_run_log() -> tuple[Path | None, "io.TextIOBase | None"]:
     return path, f
 
 
+def _fmt_degraded(warning: str) -> str:
+    """把 cli 的 `page 3 dropped, page 7 image only` 講成人話。
+
+    同一種下場的頁碼併在一起講：一份 30 頁的簡報降級 12 頁時，逐頁列出來會長
+    到結果列放不下，而使用者要判斷的是「哪幾頁要自己補」。"""
+    hits = _DEGRADE_RE.findall(warning)
+    if not hits:
+        return warning
+    groups: dict[str, list[str]] = {}
+    for page, how in hits:
+        groups.setdefault(how, []).append(page)
+    return "；".join(f"第 {'、'.join(pages)} 頁{_DEGRADE_ZH[how]}"
+                     for how, pages in groups.items())
+
+
+def _collapse_slot(slot: "ttk.Frame") -> None:
+    """把一個「已經沒有東西在裡面」的容器縮回零高度。
+
+    ⚠️ **Tk 的坑，而且是靜默的**：容器**最後一個** slave 被 `pack_forget()` 掉
+    之後，容器自己的 requested size **不會**跟著回到 1x1 —— geometry manager 只
+    在「還有 slave 可以算」的時候才更新它，於是空掉的槽把上一次的高度永久留在
+    版面上。2026-08-25 實測：收合進階區之後畫面正中央留下一塊 667px 的空白，
+    而 `pack_slaves()` 是空的、子控制項也確實 `winfo_ismapped()==0`——版面看起來
+    壞掉，但每一個「這東西在不在」的檢查都說沒事。
+
+    沒有 slave 的時候 `configure(height=1)` 說得算；下一次 pack 進 slave，
+    propagation 會自己接手把它算回去（實測 1 → 58 → 1 → 58）。"""
+    try:
+        if not slot.pack_slaves():
+            slot.configure(height=1)
+    except tk.TclError:
+        pass
+
+
+def _fmt_eta(sec: float) -> str:
+    """剩餘時間。⚠️ **不要報到秒**：這個估計值本身的誤差就有好幾秒（每頁的
+    耗時差異很大——一行進入旋轉救援就要跑七次 OCR），寫「約剩 2 分 37 秒」是
+    在假裝有一個並不存在的精度。"""
+    if sec < 20:
+        return "快好了"
+    if sec < 90:
+        return f"約剩 {int(round(sec / 10)) * 10} 秒"
+    return f"約剩 {int(round(sec / 60))} 分"
+
+
+def _shorten_path(path: Path, budget: int = 52) -> str:
+    """長路徑縮成一行放得下的樣子，中間省略。
+
+    ⚠️ **檔名不可以被省略掉**：使用者要在這一行確認的就是「會存成哪個檔」，
+    砍尾巴等於把唯一有用的部分砍掉。所以是從中間挖，前面留碟符、後面整段留。"""
+    text = str(path)
+    if len(text) <= budget:
+        return text
+    name = path.name
+    head = max(0, budget - len(name) - 4)
+    return f"{text[:head]}…\\{name}" if head else f"…\\{name}"
+
+
+def enable_file_drop(widgets, on_paths) -> bool:
+    """讓這些控制項接得住從檔案總管拖進來的檔案，回傳有沒有接上。
+
+    ⚠️ **接不上也必須照常開得起來**（和 sv_ttk 同一條原則）：`tkinterdnd2` 沒裝、
+    它附的 tkdnd 二進位檔在這台機器上載不起來（架構不合、資安軟體擋 .dll）都會
+    走到 except，介面只是回到「只能按瀏覽…」而已。
+
+    ⚠️ **不要為了拖放把基底類別換成 `TkinterDnD.Tk`**：它的 `__init__` 在載不到
+    tkdnd 時直接 raise，那等於用一個純加分的功能換掉整支程式開得起來的保證。
+    改成自己呼叫 `_require()`（同一支函式，它就是 `TkinterDnD.Tk` 內部用的那個）
+    再註冊**子控制項** —— ⚠️ `tkinter.Tk` 不是 `BaseWidget` 的子類，而
+    tkinterdnd2 是把方法掛在 `BaseWidget` 上的，所以根視窗本身沒有
+    `drop_target_register`，要拿它底下的 Frame 來註冊。
+
+    ⚠️ 多註冊幾個控制項：tkdnd 是找游標底下那個視窗、再往上找有註冊的祖先，
+    最外層的 Frame 理論上罩得住全部，但輸入欄與檔案框是使用者真正會瞄準的地方，
+    多註冊一次的成本是零。"""
+    try:
+        from tkinterdnd2 import TkinterDnD, DND_FILES
+    except Exception:
+        return False
+    ok = False
+    for i, w in enumerate(widgets):
+        try:
+            if i == 0:
+                TkinterDnD._require(w)     # 一個直譯器只需要載一次
+            w.drop_target_register(DND_FILES)
+            w.dnd_bind("<<Drop>>", on_paths)
+            ok = True
+        except Exception:
+            continue
+    return ok
+
+
 def is_project_dir(path: Path) -> bool:
     """一個合格的專案根目錄：底下有 pdf2ppt 套件（pdf2ppt/cli.py）。"""
     try:
@@ -571,8 +716,12 @@ class App(tk.Tk):
         # 為單位寫的，一律要過 px()
         self.ui_scale = self.winfo_fpixels("1i") / 96.0
         self.ui_font, self.pal = apply_ui_style(self, self.ui_scale)
-        self.geometry(f"{self.px(760)}x{self.px(640)}")
-        self.minsize(self.px(680), self.px(540))
+        # ⚠️ 高度**不寫死**：閒置時的畫面只有「檔案 + 開始轉檔」，寫死 640 等於
+        # 讓一半的視窗是一個還沒有內容的空白日誌框（2026-08-25 量到的是 51%）。
+        # 建完介面由 _fit_window() 量出實際需要的高度，之後每次展開／收合也走
+        # 同一支。⚠️ minsize 的高度同樣要小：它是 _fit_window 縮不下去的地板。
+        self.geometry(f"{self.px(760)}x{self.px(420)}")
+        self.minsize(self.px(680), self.px(300))
         self.configure(background=self.pal["page"])
 
         self.log_queue: "queue.Queue" = queue.Queue()
@@ -599,21 +748,39 @@ class App(tk.Tk):
         self._log_path, self._log_file = open_run_log()
         self.worker: threading.Thread | None = None
         self.running = False
+        # 「使用者按了停止」。⚠️ 是 Event 不是 bool：設旗標的是主執行緒、讀的是
+        # 背景執行緒裡的 cli.main()，而 Event 是這件事唯一不必自己想記憶體可見性
+        # 的作法。每趟開始前 clear()，不要每趟新建一個——新建的那個 cli 拿不到。
+        self._cancel = threading.Event()
         # 我們上次自動帶出來的輸出路徑；使用者改過就不再自動跟著換
         self._auto_out = ""
-        # 展開進階區時「借走」的視窗高度：撐開前量到的高度與撐開後量到的高度，
-        # 收合時要照原樣還回去（見 _restore_height_after_collapse）
-        self._adv_prev_height: int | None = None
-        self._adv_grown_height: int | None = None
+        # _fit_window() 上次自己設定的高度。用來分辨「這個高度是我設的」與
+        # 「使用者自己拉的」——後者只長不縮（見 _fit_window）
+        self._auto_h: int | None = None
+        # 進度追蹤（由 _scan_line 從 cli 的輸出解析出來）
+        self._scan_buf = ""
+        self._pages_done = 0
+        self._pages_total = 0
+        self._t_first_page: float | None = None
+        self._determinate = False
+        # 這一趟的降級頁碼（cli 最後一行的 WARNING）。⚠️ 要留到結果列上：舊版
+        # 靠使用者自己去看日誌最後一行，而完成對話框正好蓋在那一行上面
+        self._last_warning = ""
+        # 結果列上那兩顆鈕要開的檔（沒有產出時是 None，兩顆鈕會收起來）
+        self._result_path: Path | None = None
 
         self._build_vars()
         self._build_ui()
-        # 位置要講出來：出事時使用者才知道要附哪一個檔，而不是被問「log 在哪」
-        self._append(f"執行紀錄：{self._log_path}\n" if self._log_path
+        # 位置要講出來：出事時使用者才知道要附哪一個檔，而不是被問「log 在哪」。
+        # ⚠️ 只印檔名：完整路徑在這個寬度下會折成兩行，而且旁邊就有「開啟紀錄」
+        # 那顆鈕。完整路徑寫進紀錄檔自己的檔頭（log_header），那份才是要附出去的
+        self._append(f"執行紀錄：{self._log_path.name}\n" if self._log_path
                      else "（無法建立執行紀錄檔；錯誤訊息只會留在這個日誌區，"
                           "關掉視窗就沒了。要留底請從終端機執行 uv run python pdf2ppt_gui_2.py。）\n")
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self.after(80, self._drain_log)
+        self._refresh_input_state()
+        self._fit_window()
 
     # ---- 外觀 ----
     def _apply_window_icon(self) -> None:
@@ -663,42 +830,63 @@ class App(tk.Tk):
         self.merge_lines = tk.BooleanVar(value=False)
         self.debug = tk.BooleanVar(value=False)
 
-        # 進階區是否展開（不寫進設定檔：每次開起來都回到最單純的畫面）
+        # 進階區／日誌區是否展開（不寫進設定檔：每次開起來都回到最單純的畫面）
         self.show_advanced = tk.BooleanVar(value=False)
+        self.show_log = tk.BooleanVar(value=False)
+        # 畫面上顯示的輸出路徑（縮短過的）。輸出欄本身已經不是輸入框了，
+        # 真值仍然是 out_path，這一個只負責好看
+        self.out_show = tk.StringVar()
 
     # ---- 介面 ----
     def _build_ui(self) -> None:
         p = self.px                       # 寫死的像素一律過這裡（見 px()）
         pad = self._pad = {"padx": p(10), "pady": p(5)}
-        root = ttk.Frame(self, padding=p(14))
+        root = self.root_frame = ttk.Frame(self, padding=p(14))
         root.pack(fill="both", expand=True)
 
-        title = ttk.Label(root, text=APP_TITLE, style="Title.TLabel")
-        title.pack(anchor="w")
+        # 舊版這裡還有一行 15pt 粗體大標題，寫的是與**標題列一字不差**的同一句
+        # 話（連同副標吃掉 60 邏輯 px）。拿掉之後省下來的高度正好是進階區展開時
+        # 超出螢幕的那個量級（2026-08-25 量到超出 41px）。
         sub = ttk.Label(
             root,
             text="把 NotebookLM 產出的繁中 PDF 簡報 OCR 後轉成可編輯的 PowerPoint（本地離線執行）。",
             style="Muted.TLabel",
         )
-        sub.pack(anchor="w", pady=(0, p(10)))
+        sub.pack(anchor="w", pady=(0, p(8)))
 
         # ---- 檔案區 ----
-        files = ttk.LabelFrame(root, text="檔案", padding=p(12))
+        files = self.files_frame = ttk.LabelFrame(root, text="檔案",
+                                                  padding=p(12))
         files.pack(fill="x", **pad)
 
         ttk.Label(files, text="輸入 PDF：").grid(
             row=0, column=0, sticky="w")
-        ttk.Entry(files, textvariable=self.in_path).grid(
-            row=0, column=1, sticky="ew", padx=p(8))
+        self.in_entry = ttk.Entry(files, textvariable=self.in_path)
+        self.in_entry.grid(row=0, column=1, sticky="ew", padx=p(8))
         ttk.Button(files, text="瀏覽…", command=self._pick_input).grid(
             row=0, column=2)
 
-        ttk.Label(files, text="輸出 PPTX：").grid(
-            row=1, column=0, sticky="w", pady=(p(8), 0))
-        ttk.Entry(files, textvariable=self.out_path).grid(
-            row=1, column=1, sticky="ew", padx=p(8), pady=(p(8), 0))
-        ttk.Button(files, text="另存…", command=self._pick_output).grid(
-            row=1, column=2, pady=(p(8), 0))
+        # 提示與錯誤共用這一行，而且**一直都在**（只換文字不換有無），填錯路徑
+        # 時版面才不會上下跳。⚠️ 路徑不對要在這裡當場說：舊版是照樣讓人按下
+        # 「開始轉檔」，按了才跳一個對話框——用擋的比用告知的好
+        self.hint = ttk.Label(files, style="Muted.TLabel", anchor="w",
+                              wraplength=p(600), justify="left")
+        self.hint.grid(row=1, column=0, columnspan=3, sticky="w",
+                       pady=(p(6), 0))
+
+        # 輸出：99% 的情況就是輸入檔同名的 .pptx，程式自己帶得出來。做成第二個
+        # 一模一樣的空輸入欄，只會讓第一眼變成「兩個空格子，我該填哪個」——
+        # 降成一行說明加一顆小鈕，主畫面就只剩一件事要做。
+        # ⚠️ 真值仍然是 out_path（_effective_out／_build_argv 讀的是它），
+        # out_show 只是縮短過的顯示字串。
+        # ⚠️ 「輸出：」與路徑是**同一個標籤**：分成兩格的話，第 0 欄的寬度由
+        # 「輸入 PDF：」決定，路徑就會被推到離冒號很遠的地方
+        ttk.Label(files, textvariable=self.out_show, style="Muted.TLabel",
+                  anchor="w", wraplength=p(600)).grid(
+            row=2, column=0, columnspan=2, sticky="ew", pady=(p(6), 0))
+        ttk.Button(files, text="變更…", style="Small.TButton",
+                   command=self._pick_output).grid(
+            row=2, column=2, pady=(p(6), 0))
         files.columnconfigure(1, weight=1)
 
         # 主畫面到這裡就結束：選項一個都不露出來（日常轉檔一項都不必動）。
@@ -708,80 +896,117 @@ class App(tk.Tk):
         # 位置緊接在檔案區底下、排在進階選項的收合按鈕**之前**（使用者
         # 2026-08-25 指示）：主線是「選檔 → 按下去」，把它排在收合按鈕後面等於
         # 讓主線的終點被一個日常不必碰的東西隔開，展開進階區時還會被推到很下面。
+        #
+        # ⚠️ 進度回饋三件事（動作、進度條、狀態字）**同一列**：舊版是右上角一個
+        # 「就緒」、版面中段一條 indeterminate 進度條、最下面一大塊日誌，三個東西
+        # 講同一件事卻散在 900px 內，而中間那條進度條連「跑到第幾頁」都不說。
         actions = self.actions_frame = ttk.Frame(root)
         actions.pack(fill="x", **pad)
         # 主要動作鈕吃佈景的 Accent 樣式（Fluent 的藍底圓角鈕），連 hover／
         # pressed／disabled 都由佈景畫；加大字級與內距的 Run.Accent.TButton
         # 定義在 apply_ui_style
-        self.run_btn = ttk.Button(actions, text="▶  開始轉檔",
+        self.run_btn = ttk.Button(actions, text=RUN_TEXT,
                                   style="Run.Accent.TButton",
-                                  command=self._start)
-        self.run_btn.pack(side="left")
+                                  command=self._on_run_clicked)
+        self.run_btn.grid(row=0, column=0, sticky="w")
+        # ⚠️ 開場一定是 indeterminate：載入引擎（首次還要下載約 90MB 模型）那段
+        # 根本沒有頁數可報，畫一條會動的假進度是騙人的。收到第一行
+        # `page N (n/total)` 才換成 determinate（見 _scan_line）。
+        # ⚠️ 閒置時是 **determinate 且 value=0**（一條空的槽），不是停住的
+        # indeterminate——後者在 Sun Valley 下會在最左邊留一小截藍色，看起來像
+        # 「已經跑了 3%」或「卡住了」。轉檔一開始才切成 indeterminate。
+        self.progress = ttk.Progressbar(actions, mode="determinate", value=0)
+        self.progress.grid(row=0, column=1, sticky="ew", padx=p(12))
+        # ⚠️ 寬度寫死：狀態字會在「就緒」與「3/15 頁 · 約剩 2 分」之間變長變短，
+        # 不釘住的話進度條的右端會跟著左右抽動
         self.status = ttk.Label(actions, text="就緒", style="Status.TLabel",
+                                width=20, anchor="e",
                                 foreground=self.pal["ok"])
-        self.status.pack(side="right", pady=p(4))
+        self.status.grid(row=0, column=2, sticky="e")
+        actions.columnconfigure(1, weight=1)
 
         # ---- 進階區的收合按鈕 ----
-        # 底下兩區建好但不 pack，按下去才用 before=progress 插回原位（也就是
-        # 這顆按鈕的正下方）
         toggle_row = ttk.Frame(root)
-        toggle_row.pack(fill="x", padx=8, pady=(2, 0))
-        self.adv_toggle = ttk.Button(toggle_row, text=ADV_SHOW_TEXT,
-                                     width=34, style="Adv.TButton",
+        toggle_row.pack(fill="x", padx=p(10), pady=(p(2), 0))
+        self.adv_toggle = ttk.Button(toggle_row, text=CHEV_SHOW + ADV_LABEL,
+                                     style="Adv.TButton",
                                      command=self._toggle_advanced)
-        self.adv_toggle.pack(side="left")
+        # 整條寬：舊版是寫死 34 字寬的一顆鈕，右半邊永遠空著，看起來像一個
+        # 停用的輸入框而不是可以按的區段標題
+        self.adv_toggle.pack(fill="x")
+        # 展開的兩區插進這個空槽（就在收合按鈕正下方）。⚠️ 用空槽、不要用
+        # `before=某個控制項`：結果列與日誌區都會來來去去，`before` 的目標一旦
+        # 被 pack_forget 掉，pack 會安靜地把展開的區塊丟到整個視窗的最下面。
+        self.adv_slot = ttk.Frame(root)
+        self.adv_slot.pack(fill="x")
 
         # ---- 常用選項 ----
-        opt = self.opt_frame = ttk.LabelFrame(root, text="常用選項", padding=10)
+        # ⚠️ 這一區有**分層**，不是四個等重的格子：最常用的「頁碼」自己一行排在
+        # 最上面；「渲染 DPI」與「最低信心分數」是校準值（200 DPI 是整條管線唯一
+        # 校準過的作業點），排在分隔線與那句警告底下——舊版把它們跟頁碼平起平坐，
+        # 看起來就像四個一樣該調的東西。
+        opt = self.opt_frame = ttk.LabelFrame(self.adv_slot, text="常用選項",
+                                              padding=p(10))
 
         ttk.Label(opt, text="頁碼（例 1-5,8，留空=全部）：").grid(
             row=0, column=0, sticky="w")
         ttk.Entry(opt, textvariable=self.pages, width=18).grid(
-            row=0, column=1, sticky="w", padx=6)
+            row=0, column=1, sticky="w", padx=p(6))
 
-        ttk.Label(opt, text="中文字型：").grid(row=0, column=2, sticky="e")
+        ttk.Label(opt, text="中文字型：").grid(row=1, column=0, sticky="w",
+                                              pady=(p(8), 0))
         ttk.Combobox(opt, textvariable=self.font, values=FONT_CHOICES,
-                     width=20).grid(row=0, column=3, sticky="w", padx=6)
+                     width=20).grid(row=1, column=1, sticky="w", padx=p(6),
+                                    pady=(p(8), 0))
 
-        ttk.Label(opt, text="推論裝置：").grid(row=1, column=0, sticky="w", pady=(8, 0))
-        ttk.Combobox(opt, textvariable=self.device,
-                     values=["auto", "cpu", "dml", "cuda"], width=8,
-                     state="readonly").grid(row=1, column=1, sticky="w",
-                                            padx=6, pady=(8, 0))
-
-        ttk.Label(opt, text="粗體模式：").grid(row=1, column=2, sticky="e", pady=(8, 0))
+        ttk.Label(opt, text="粗體模式：").grid(row=1, column=2, sticky="e",
+                                              pady=(p(8), 0))
         ttk.Combobox(opt, textvariable=self.bold_mode,
                      values=["auto", "never", "always"], width=10,
                      state="readonly").grid(row=1, column=3, sticky="w",
-                                            padx=6, pady=(8, 0))
+                                            padx=p(6), pady=(p(8), 0))
 
-        ttk.Label(opt, text="渲染 DPI：").grid(row=2, column=0, sticky="w", pady=(8, 0))
+        ttk.Label(opt, text="推論裝置：").grid(row=2, column=0, sticky="w",
+                                              pady=(p(8), 0))
+        ttk.Combobox(opt, textvariable=self.device,
+                     values=["auto", "cpu", "dml", "cuda"], width=8,
+                     state="readonly").grid(row=2, column=1, sticky="w",
+                                            padx=p(6), pady=(p(8), 0))
+
+        ttk.Label(opt, text="辨識語言（留空=中英）：").grid(
+            row=2, column=2, sticky="e", pady=(p(8), 0))
+        ttk.Entry(opt, textvariable=self.lang, width=12).grid(
+            row=2, column=3, sticky="w", padx=p(6), pady=(p(8), 0))
+
+        ttk.Separator(opt, orient="horizontal").grid(
+            row=3, column=0, columnspan=4, sticky="ew", pady=(p(10), 0))
+        ttk.Label(
+            opt,
+            text="以下兩項與「中文字型」是校準值，非必要不要動：字級／粗體／色塊的"
+                 "判別門檻全部以 200 DPI ＋ Microsoft YaHei 字寬校準過，改了會讓"
+                 "排版估算失準。",
+            style="Muted.TLabel", wraplength=p(620), justify="left").grid(
+            row=4, column=0, columnspan=4, sticky="w", pady=(p(6), 0))
+
+        ttk.Label(opt, text="渲染 DPI：").grid(row=5, column=0, sticky="w",
+                                               pady=(p(6), 0))
         # 遞增值必須讓 200 落在序列上：整條管線的門檻（TPL_SIGMA、
         # MIN_INK_ROW_PX、8px 字墨切群、COVER_PAD_PX…）都是 200dpi 的絕對像素，
         # 原本的 from_=72/increment=20 序列是 72,92,…,192,212，永遠踩不到 200，
         # 使用者只要按一下箭頭就再也回不到唯一校準過的作業點
         ttk.Spinbox(opt, from_=100, to=600, increment=25, textvariable=self.dpi,
-                    width=8).grid(row=2, column=1, sticky="w", padx=6, pady=(8, 0))
+                    width=8).grid(row=5, column=1, sticky="w", padx=p(6),
+                                  pady=(p(6), 0))
 
-        ttk.Label(opt, text="最低信心分數：").grid(row=2, column=2, sticky="e", pady=(8, 0))
+        ttk.Label(opt, text="最低信心分數：").grid(row=5, column=2, sticky="e",
+                                                  pady=(p(6), 0))
         ttk.Spinbox(opt, from_=0.0, to=1.0, increment=0.05, format="%.2f",
                     textvariable=self.min_score, width=8).grid(
-            row=2, column=3, sticky="w", padx=6, pady=(8, 0))
-
-        ttk.Label(opt, text="辨識語言（留空=中英）：").grid(
-            row=3, column=0, sticky="w", pady=(8, 0))
-        ttk.Entry(opt, textvariable=self.lang, width=18).grid(
-            row=3, column=1, sticky="w", padx=6, pady=(8, 0))
-
-        ttk.Label(
-            opt,
-            text="註：字級／粗體／色塊的判別門檻都以 200 DPI + Microsoft YaHei 字寬校準，"
-                 "改這兩項會讓排版估算失準。",
-            style="Muted.TLabel", wraplength=p(680), justify="left").grid(
-            row=4, column=0, columnspan=4, sticky="w", pady=(8, 0))
+            row=5, column=3, sticky="w", padx=p(6), pady=(p(6), 0))
 
         # ---- 進階開關 ----
-        adv = self.adv_frame = ttk.LabelFrame(root, text="進階開關", padding=10)
+        adv = self.adv_frame = ttk.LabelFrame(self.adv_slot, text="進階開關",
+                                              padding=p(10))
         checks = [
             ("使用快速模型（mobile，較快但繁中較不準）", self.fast),
             ("保留浮水印（NotebookLM／Gemini Notebook）", self.keep_watermark),
@@ -795,19 +1020,59 @@ class App(tk.Tk):
         # 最小寬度，在 125%／150% 顯示縮放下右欄的選項會被擠出可見範圍
         for i, (label, var) in enumerate(checks):
             ttk.Checkbutton(adv, text=label, variable=var).grid(
-                row=i, column=0, sticky="w", padx=6, pady=2)
+                row=i, column=0, sticky="w", padx=p(6), pady=p(2))
 
-        self.progress = ttk.Progressbar(root, mode="indeterminate")
-        self.progress.pack(fill="x", **pad)
+        # ---- 結果列 ----
+        # ⚠️ 取代舊版的「完成」對話框（`askyesno("要開啟所在資料夾嗎？")`）。
+        # 那個框有一個當時就寫在註解裡的毛病：它正好蓋在日誌最後一行的降級
+        # WARNING 上面，而按完「否」就再也不會有人往下看——於是「有幾頁沒轉成
+        # 文字」這件最該知道的事被一個問句擋掉了。現在頁碼直接寫在這一列上。
+        self.result_slot = ttk.Frame(root)
+        self.result_slot.pack(fill="x")
+        res = self.result_row = ttk.Frame(self.result_slot)
+        self.result_lbl = ttk.Label(res, anchor="w", wraplength=p(560),
+                                    justify="left", style="Status.TLabel")
+        self.result_lbl.grid(row=0, column=0, sticky="ew")
+        self.open_deck_btn = ttk.Button(res, text="開啟簡報",
+                                        style="Small.TButton",
+                                        command=self._open_deck)
+        self.open_deck_btn.grid(row=0, column=1, padx=(p(8), 0))
+        self.open_dir_btn = ttk.Button(res, text="開啟資料夾",
+                                       style="Small.TButton",
+                                       command=self._open_result_folder)
+        self.open_dir_btn.grid(row=0, column=2, padx=(p(6), 0))
+        res.columnconfigure(0, weight=1)
+
+        # ---- 詳細訊息（預設收起來）----
+        # ⚠️ 舊版這一區是**開著**的，而且是唯一 expand=True 的東西：閒置時整個
+        # 視窗有 51% 是一個只有兩行字的白盒子（2026-08-25 量的）。收起來之後，
+        # 「開始轉檔」會自己把它打開（見 _start）——要看的時候它就在。
+        log_row = self.log_row = ttk.Frame(root)
+        log_row.pack(fill="x", padx=p(10), pady=(p(2), 0))
+        self.log_toggle = ttk.Button(log_row, text=CHEV_SHOW + LOG_LABEL,
+                                     style="Adv.TButton",
+                                     command=self._toggle_log)
+        self.log_toggle.pack(side="left", fill="x", expand=True)
+        # 紀錄檔的完整路徑不再印在日誌區裡（在這個寬度下會折成兩行），改成一顆
+        # 按鈕。⚠️ 開不起來紀錄檔時它要是灰的，不是按了沒反應
+        self.open_log_btn = ttk.Button(log_row, text="開啟紀錄",
+                                       style="Small.TButton",
+                                       command=self._open_log)
+        self.open_log_btn.pack(side="right", padx=(p(8), 0))
+        if self._log_path is None:
+            self.open_log_btn.state(["disabled"])
 
         # ---- 日誌 ----
-        logframe = ttk.LabelFrame(root, text="進度", padding=6)
-        logframe.pack(fill="both", expand=True, **pad)
+        # ⚠️ 永遠 pack 在最後（不帶 before=）：它是唯一 expand=True 的區塊，也就是
+        # _fit_window 鉗高度時唯一縮得動的那一個
+        logframe = self.logframe = ttk.Frame(root)
         # tk.Text 是 classic 控制項，佈景挑不動它 —— 顏色要自己餵
-        self.log = tk.Text(logframe, height=12, wrap="word",
+        self.log = tk.Text(logframe, height=10, wrap="word",
                            font=(self.ui_font, 10),
                            relief="flat", borderwidth=0,
-                           highlightthickness=0,
+                           highlightthickness=p(1),
+                           highlightbackground=self.pal["border"],
+                           highlightcolor=self.pal["border"],
                            padx=p(8), pady=p(6),
                            background=self.pal["log_bg"],
                            foreground=self.pal["log_fg"],
@@ -819,76 +1084,255 @@ class App(tk.Tk):
         sb.pack(side="right", fill="y")
         self.log.config(yscrollcommand=sb.set)
         self._append("提示：首次轉檔會自動下載 OCR 模型（約數十 MB），"
-                     "期間畫面只會顯示進度條，請耐心等候。\n")
+                     "期間進度條不會報頁數，請耐心等候。\n")
 
-    # ---- 進階區收合 ----
+        # 結果列與日誌區預設都不在畫面上
+        self.result_row.pack_forget()
+        _collapse_slot(self.result_slot)
+        # 拖放：接得上就把提示換成拖放版（_refresh_input_state 讀這個旗標）
+        self.dnd_ok = enable_file_drop(
+            (root, files, self.in_entry), self._on_files_dropped)
+        # 貼上路徑。⚠️ 綁在視窗上，所以輸入欄自己的貼上也會叫到這裡——焦點
+        # 在任何輸入類控制項上時要原封不動放行，否則使用者在頁碼欄貼一段文字
+        # 會變成「整條路徑被換掉」
+        self.bind_all("<Control-v>", self._on_paste_path)
+        self.bind_all("<Control-V>", self._on_paste_path)
+        # 選好檔就能按 Enter 開跑（焦點在輸入欄時最自然的下一個動作）
+        self.bind("<Return>", lambda e: self._on_run_clicked())
+        # 輸入路徑一改（打字、拖放、貼上、瀏覽…）就重新驗證並帶出輸出檔名
+        self.in_path.trace_add("write", lambda *a: self._refresh_input_state())
+        self.out_path.trace_add("write", lambda *a: self._refresh_out_show())
+
+    # ---- 手風琴：進階區與日誌區 ----
+    # ⚠️ 兩區**不同時攤開**（2026-08-25 量出來的）：舊版展開進階區之後
+    # `winfo_reqheight()` 是 953 邏輯 px，而本機（2560×1440@150%）的工作區只有
+    # 912，1080p@125% 的筆電更只有約 810——也就是說「展開」這個動作本身就會把
+    # 日誌區與進度條推到工作列底下。分成兩個模式之後兩邊都塞得進去：
+    #   設定模式：展開進階 → 收日誌（在調參數，不是在看跑）
+    #   執行模式：按下轉檔 → 收進階、展開日誌（在看跑，不是在調參數）
     def _toggle_advanced(self) -> None:
-        show = not self.show_advanced.get()
+        self._set_advanced(not self.show_advanced.get())
+
+    def _toggle_log(self) -> None:
+        self._set_log_shown(not self.show_log.get())
+
+    def _set_advanced(self, show: bool, fit: bool = True) -> None:
+        if show == self.show_advanced.get() and not fit:
+            return
         self.show_advanced.set(show)
         if show:
-            self.opt_frame.pack(fill="x", before=self.progress, **self._pad)
-            self.adv_frame.pack(fill="x", before=self.progress, **self._pad)
-            self.adv_toggle.config(text=ADV_HIDE_TEXT)
-            # 視窗高度是啟動時就寫死的，展開後的內容塞不進去時 pack 只能去壓
-            # 唯一 expand=True 的日誌區（它沒有捲軸可退，只會被壓成幾像素），
-            # 所以不夠高就把視窗撐開。
-            self.update_idletasks()
-            need = self.winfo_reqheight()
-            cur = self.winfo_height()
-            if need > cur:
-                # 撐開前後的高度都要記下來，收合時照原樣還回去
-                self._adv_prev_height = cur
-                self.geometry(f"{self.winfo_width()}x{need}")
-                self.update_idletasks()
-                self._adv_grown_height = self.winfo_height()
+            self.opt_frame.pack(fill="x", **self._pad)
+            self.adv_frame.pack(fill="x", **self._pad)
+            self._set_log_shown(False, fit=False)
         else:
             self.opt_frame.pack_forget()
             self.adv_frame.pack_forget()
-            self.adv_toggle.config(text=ADV_SHOW_TEXT)
-            self._restore_height_after_collapse()
+            _collapse_slot(self.adv_slot)
+        self.adv_toggle.config(
+            text=(CHEV_HIDE if show else CHEV_SHOW) + ADV_LABEL)
+        if fit:
+            self._fit_window()
 
-    def _restore_height_after_collapse(self) -> None:
-        """收合進階區之後，把展開時借走的視窗高度還回去。
+    def _set_log_shown(self, show: bool, fit: bool = True) -> None:
+        self.show_log.set(show)
+        if show:
+            self.logframe.pack(fill="both", expand=True, **self._pad)
+            self._set_advanced(False, fit=False)
+        else:
+            self.logframe.pack_forget()
+        self.log_toggle.config(
+            text=(CHEV_HIDE if show else CHEV_SHOW) + LOG_LABEL)
+        if fit:
+            self._fit_window()
 
-        不還的話，多出來的空間會**全部**歸給唯一 `expand=True` 的日誌區（pack
-        的行為），收合後的畫面比展開前還高一大截，使用者得自己去拉視窗才回得
-        到原樣（2026-08-25 使用者回報）。
+    def _work_area(self) -> tuple[int, int] | None:
+        """這個視窗所在螢幕的工作區上下緣（實體像素），取不到回 None。
 
-        ⚠️ **還原的目標是展開前實際量到的高度**，不是「現在的高度減掉展開時
-        加的量」——視窗管理員可能把我們要的高度夾掉一截（工作區高度、螢幕邊
-        界），減法會把夾掉的那幾像素永久留在視窗上，展開／收合幾次就愈長愈高。
+        ⚠️ 要問**視窗所在的那一個**螢幕，不是主螢幕：接了外接螢幕的機器上，主
+        螢幕的工作區高度跟視窗實際待的地方可以差好幾百像素，而這個值是拿來決定
+        「視窗最高能多高」的。"""
+        if not sys.platform.startswith("win"):
+            return None
+        try:
+            class RECT(ctypes.Structure):
+                _fields_ = [("left", ctypes.c_long), ("top", ctypes.c_long),
+                            ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
 
-        使用者在展開期間自己拉過視窗就整個不動：那是他要的尺寸，不是我們借的。
-        """
-        prev, grown = self._adv_prev_height, self._adv_grown_height
-        self._adv_prev_height = self._adv_grown_height = None
-        if prev is None:
-            return                       # 展開時根本沒撐開過，沒有東西要還
+            class MONITORINFO(ctypes.Structure):
+                _fields_ = [("cbSize", ctypes.c_ulong), ("rcMonitor", RECT),
+                            ("rcWork", RECT), ("dwFlags", ctypes.c_ulong)]
+
+            hwnd = ctypes.windll.user32.GetParent(self.winfo_id()) or self.winfo_id()
+            mon = ctypes.windll.user32.MonitorFromWindow(hwnd, 2)  # NEAREST
+            info = MONITORINFO()
+            info.cbSize = ctypes.sizeof(MONITORINFO)
+            if not ctypes.windll.user32.GetMonitorInfoW(mon,
+                                                        ctypes.byref(info)):
+                return None
+            return info.rcWork.top, info.rcWork.bottom
+        except Exception:
+            return None
+
+    def _fit_window(self) -> None:
+        """把視窗高度調成剛好裝得下現在的內容，並鉗進所在螢幕的工作區。
+
+        展開、收合、開始轉檔全部走這一支——舊版是三個地方各自算高度，其中
+        「收合時把借走的高度還回去」還得記兩個數字（撐開前、撐開後）才躲得掉
+        「視窗管理員把要求的高度夾掉一截」的坑。改成每次都重新量 `reqheight`
+        就沒有那個坑了：算式裡沒有減法，也就沒有累積誤差。
+
+        ⚠️ **鉗進工作區**是這支存在的主要理由：`reqheight` 可以超過螢幕（實測
+        展開進階區時 953 > 912），而 Tk 會照著設，多出來的部分直接落到工作列
+        底下——最下面那一塊（結果列、日誌區）就這樣消失了。鉗完還要檢查視窗
+        底端有沒有掉出工作區，是的話把整個視窗往上移。
+
+        ⚠️ **使用者自己拉過視窗就只長不縮**：我們上次設的高度記在 `_auto_h`，
+        對不上就代表中間有人動過手，那是他要的尺寸，不是我們借的。"""
         self.update_idletasks()
         cur = self.winfo_height()
-        if grown is not None and abs(cur - grown) > 8:
-            return                       # 展開期間被手動調過，尊重使用者的尺寸
-        # 收合後的內容仍需要的高度是下限：視窗管理員會拒絕比 reqheight 更小的
-        # 要求，硬要只會得到一個跟畫面對不上的 geometry 字串
-        target = max(prev, self.winfo_reqheight())
-        if target < cur:
+        need = self.winfo_reqheight()
+        user_sized = self._auto_h is not None and abs(cur - self._auto_h) > 8
+        target = need
+        work = self._work_area()
+        if work is not None:
+            top, bottom = work
+            # 標題列與外框：視窗外緣到內容區頂端的距離
+            chrome = max(0, self.winfo_rooty() - self.winfo_y())
+            target = min(target, (bottom - top) - chrome - self.px(16))
+        if user_sized and target <= cur:
+            return                       # 使用者要的尺寸，不要縮回去
+        if target != cur:
             self.geometry(f"{self.winfo_width()}x{target}")
+            self.update_idletasks()
+        self._auto_h = self.winfo_height()
+        # 長高之後底端可能掉到工作區外（視窗本來就靠近螢幕下緣）
+        if work is not None:
+            top, bottom = work
+            chrome = max(0, self.winfo_rooty() - self.winfo_y())
+            outer = self._auto_h + chrome + self.px(8)
+            if self.winfo_y() + outer > bottom:
+                self.geometry(f"+{self.winfo_x()}+{max(top, bottom - outer)}")
 
     # ---- 檔案挑選 ----
     def _pick_input(self) -> None:
         p = filedialog.askopenfilename(
             title="選擇輸入 PDF",
             filetypes=[("PDF 檔", "*.pdf"), ("所有檔案", "*.*")])
-        if not p:
+        if p:
+            # 輸出檔名、驗證、提示文字全部由 in_path 的 trace 接手
+            # （_refresh_input_state）——打字、拖放、貼上走的是同一條路
+            self.in_path.set(p)
+
+    def _on_files_dropped(self, event) -> None:
+        """檔案總管拖進來的檔案。⚠️ 一次可以拖一疊，我們只吃第一個。
+
+        `event.data` 是 **Tcl 的 list 字面值**（`{C:/有 空白/a.pdf} C:/b.pdf`），
+        不是用空白切就好的字串——含空白的路徑會被大括號包起來。用直譯器自己的
+        `splitlist` 拆，那是唯一不會拆錯的作法。"""
+        try:
+            paths = [q for q in self.tk.splitlist(event.data) if q]
+        except Exception:
+            paths = []
+        pdfs = [q for q in paths if q.lower().endswith(".pdf")]
+        if not pdfs:
+            if paths:
+                # 拖了東西進來卻沒有 PDF：不要無聲無息，那看起來就像拖放壞了
+                self._set_hint(f"拖進來的不是 PDF：{Path(paths[0]).name}", err=True)
             return
-        self.in_path.set(p)
-        # 換了輸入檔就跟著換輸出檔。只在「輸出欄是空的」時才自動帶會讓輸出
-        # 永遠釘在第一份 PDF 上，第二次轉檔就把第一份的成果直接蓋掉（而且沒走
-        # 另存對話框，覆寫確認永遠不會出現）；只要欄位還是我們上次填的值就更新
+        self.in_path.set(pdfs[0])
+
+    def _on_paste_path(self, event):
+        """Ctrl+V 貼上一條路徑。
+
+        ⚠️ **焦點在輸入類控制項上時一律放行**（回 None 讓 Tk 走預設的貼上）：
+        這個綁定掛在整個視窗上，不擋掉的話，使用者在「頁碼」欄貼一段文字會變成
+        「輸入 PDF 被換掉」——而且他貼的那一段還是照樣進了頁碼欄，兩件事同時
+        發生，看起來就像程式在亂跳。"""
+        w = self.focus_get()
+        if isinstance(w, (ttk.Entry, tk.Entry, ttk.Spinbox, tk.Spinbox,
+                          tk.Text, ttk.Combobox)):
+            return None
+        try:
+            text = self.clipboard_get().strip().strip('"')
+        except Exception:
+            return None
+        if text.lower().endswith(".pdf") and Path(text).is_file():
+            self.in_path.set(text)
+            return "break"
+        return None
+
+    # ---- 輸入狀態：提示、輸出檔名、按鈕能不能按 ----
+    def _set_hint(self, text: str, err: bool = False) -> None:
+        self.hint.config(text=text,
+                         foreground=self.pal["err"] if err else self.pal["muted"])
+
+    def _refresh_input_state(self) -> None:
+        """輸入路徑變了：驗證、帶出輸出檔名、決定「開始轉檔」能不能按。
+
+        ⚠️ **用擋的、不要用告知的**：舊版無論欄位是空的還是路徑不存在都讓人
+        按得下去，按了才跳一個對話框說「請先選擇輸入 PDF 檔」。錯誤在按下去
+        之前就已經看得出來，就不該等到按下去才講。"""
+        raw = self.in_path.get().strip().strip('"')
+        drop = "，或把 PDF 直接拖進這個視窗" if getattr(self, "dnd_ok", False) else ""
+        ok = False
+        if not raw:
+            self._set_hint(f"請先選擇要轉檔的 PDF{drop}。")
+        else:
+            try:
+                ok = Path(raw).expanduser().is_file()
+            except OSError:
+                ok = False
+            if not ok:
+                self._set_hint(f"找不到這個檔案：{raw}", err=True)
+            elif not raw.lower().endswith(".pdf"):
+                # 擋不到但要說：副檔名不對通常是選錯檔，而 OCR 一跑就是好幾分鐘
+                self._set_hint("這個檔看起來不是 PDF，轉檔可能會失敗。")
+                ok = True
+            else:
+                # 選好了就不必再講拖放：那句提示是給「還沒有檔案」的人看的
+                self._set_hint("已選好檔案，按「開始轉檔」即可（也可以直接按 Enter）。")
+        self._sync_auto_out(raw if ok else "")
+        self._refresh_run_button()
+        # 狀態字要跟按鈕講同一件事：沒有檔案時按鈕是灰的，右邊卻寫著綠色的
+        # 「就緒」，兩者互相打臉。⚠️ 轉檔中／剛跑完的狀態不可以被蓋掉
+        if not self.running:
+            self._set_status("就緒" if ok else "等待選檔",
+                             self.pal["ok"] if ok else self.pal["muted"])
+
+    def _sync_auto_out(self, src: str) -> None:
+        """輸入檔換了就跟著換輸出檔。
+
+        只在「輸出欄是空的」時才自動帶，會讓輸出永遠釘在第一份 PDF 上，第二次
+        轉檔就把第一份的成果直接蓋掉（而且沒走另存對話框，覆寫確認永遠不會
+        出現）；所以只要欄位還是**我們上次填的值**就更新。"""
         cur = self.out_path.get().strip()
-        if not cur or cur == self._auto_out:
-            self._auto_out = str(Path(p).with_suffix(".pptx"))
-            self.out_path.set(self._auto_out)
+        if cur and cur != self._auto_out:
+            return                       # 使用者自己改過，不要動它
+        self._auto_out = str(Path(src).with_suffix(".pptx")) if src else ""
+        self.out_path.set(self._auto_out)
+
+    def _refresh_out_show(self) -> None:
+        out = self._effective_out()
+        if out is None:
+            self.out_show.set("輸出：（選好 PDF 之後自動命名）")
+            return
+        src = self.in_path.get().strip().strip('"')
+        same_dir = False
+        try:
+            same_dir = bool(src) and Path(src).expanduser().resolve().parent == out.parent
+        except OSError:
+            pass
+        self.out_show.set(f"輸出：{out.name}（與來源同資料夾）" if same_dir
+                          else f"輸出：{_shorten_path(out)}")
+
+    def _refresh_run_button(self) -> None:
+        if self.running:
+            return                       # 轉檔中那顆鈕是「停止」，永遠可以按
+        try:
+            ok = Path(self.in_path.get().strip().strip('"')).expanduser().is_file()
+        except OSError:
+            ok = False
+        self.run_btn.state(["!disabled"] if ok else ["disabled"])
 
     def _pick_output(self) -> None:
         init = self._effective_out() or Path("output.pptx")
@@ -956,13 +1400,37 @@ class App(tk.Tk):
         return argv
 
     # ---- 啟動轉檔 ----
-    def _set_run_enabled(self, enabled: bool) -> None:
-        """開始轉檔鈕的鎖／解鎖。
+    def _on_run_clicked(self) -> None:
+        """同一顆鈕的兩個身分：閒置時是「開始轉檔」，轉檔中是「停止轉檔」。"""
+        if self.running:
+            self._request_cancel()
+            return
+        # ⚠️ 鍵盤那條路也要吃這道閘門：Enter 綁在整個視窗上，不擋的話「按鈕是
+        # 灰的但 Enter 照樣跑得動」，而跑進去之後擋人的又變回那個對話框
+        if "disabled" in self.run_btn.state():
+            return
+        self._start()
 
-        ⚠️ 底色要跟著換：它是 tk.Button，`state="disabled"` 只會換文字顏色，
-        鮮豔的底色照舊留在畫面上，轉檔期間看起來仍像可以按（ttk.Button 的
-        disabled 是整顆變灰，換過來就沒有這回事了）。"""
-        self.run_btn.state(["!disabled"] if enabled else ["disabled"])
+    def _request_cancel(self) -> None:
+        """使用者按了停止。
+
+        ⚠️ **不跳確認對話框**：這顆鈕上面白紙黑字寫著「停止轉檔」，再問一次
+        「你確定嗎」只是把剛剛移除的那種摩擦換個地方裝回來。
+
+        ⚠️ **停不了「當下這一頁」**，要講清楚：cli 的旗標是每頁檢查一次的
+        （見 `pdf2ppt/cli.py` 的 main()），而一頁的 OCR 是一次進不去的呼叫。
+        所以按下去之後畫面要顯示「停止中…」而不是假裝已經停了——不然使用者會
+        以為按鈕壞掉，再去關視窗，那才是真的會留下半截 .pptx 的路。"""
+        if not self.running or self._cancel.is_set():
+            return
+        self._cancel.set()
+        self.run_btn.config(text=STOPPING_TEXT)
+        self.run_btn.state(["disabled"])
+        self._set_status("停止中…", self.pal["warn"])
+        self._append("\n[停止] 已要求停止；目前這一頁跑完就會收工，不會產生檔案。\n")
+
+    def _set_status(self, text: str, color: str) -> None:
+        self.status.config(text=text, foreground=color)
 
     def _start(self) -> None:
         # 專案位置不必在這裡再驗一次：main() 在開窗之前就擋掉了不合格的資料夾
@@ -980,11 +1448,25 @@ class App(tk.Tk):
             return
 
         self.running = True
-        self._set_run_enabled(False)
-        self.status.config(text="轉檔中…", foreground=self.pal["warn"])
+        self._cancel.clear()             # ⚠️ 沿用同一個 Event，不要新建
+        self.run_btn.config(text=STOP_TEXT)
+        self.run_btn.state(["!disabled"])
+        self._set_status("準備中…", self.pal["warn"])
+        # 上一趟的結果留在畫面上會被當成這一趟的
+        self.result_row.pack_forget()
+        _collapse_slot(self.result_slot)
+        self._scan_buf = ""
+        self._pages_done = self._pages_total = 0
+        self._t_first_page = None
+        self._last_warning = ""
+        self._determinate = False
+        self.progress.config(mode="indeterminate", value=0)
         # 不定長度進度條不帶任何資訊，12ms（83Hz）只是白白讓主執行緒重繪；
         # 用 ttk 的預設節奏即可
         self.progress.start()
+        # 執行模式：收起進階區、把日誌打開（見 _set_advanced 上面那段說明）
+        self._set_advanced(False, fit=False)
+        self._set_log_shown(True)
         self._append("\n" + "=" * 60 + "\n")
         self._append("執行： pdf2ppt " + " ".join(
             f'"{a}"' if " " in a else a for a in argv) + "\n")
@@ -1019,7 +1501,7 @@ class App(tk.Tk):
                     f"缺少相依套件 {e.name}。\n"
                     f"請在 {proj} 執行：uv sync（或雙擊「安裝.bat」）\n"
                     f"原始錯誤：{e}") from e
-            rc = main(argv)
+            rc = main(argv, cancel=self._cancel)
         except SystemExit as e:        # argparse 在參數錯誤時會 raise 這個
             rc = int(e.code) if isinstance(e.code, int) else 1
         except Exception:
@@ -1055,7 +1537,9 @@ class App(tk.Tk):
                 pass
             if chunks:
                 # 一次 tick 只 insert / 捲動一次，而不是每個 chunk 一次
-                self._append("".join(chunks))
+                text = "".join(chunks)
+                self._scan_stream(text)
+                self._append(text)
             if done is not None:
                 # _finish 會開 modal 對話框（會跑巢狀事件迴圈），不能在 drain
                 # 迴圈中間呼叫
@@ -1069,36 +1553,135 @@ class App(tk.Tk):
             # 有「該重啟時沒重啟」的死角。
             self.after(80 if self.running else 500, self._drain_log)
 
+    # ---- 把 cli 的輸出讀成進度 ----
+    def _scan_stream(self, text: str) -> None:
+        """從這一批輸出裡撈出進度、降級頁碼與「正在載入引擎」。
+
+        ⚠️ 要有跨批次的行緩衝：queue 裡的一塊不保證切在換行上，`page 7 (3/15)`
+        很可能被切成兩半（模型下載那段更是每幾十毫秒就來一塊）。"""
+        self._scan_buf += text
+        while "\n" in self._scan_buf:
+            line, self._scan_buf = self._scan_buf.split("\n", 1)
+            # 下載進度條是用 \r 原地重寫的，只有最後一段才是完整的一行
+            self._scan_line(line.rsplit("\r", 1)[-1].strip())
+        if len(self._scan_buf) > 4096:   # 一直沒換行（進度條），不要無限長大
+            self._scan_buf = self._scan_buf[-1024:]
+
+    def _scan_line(self, line: str) -> None:
+        if line.startswith(_WARN_PREFIX):
+            self._last_warning = line[len(_WARN_PREFIX):].strip()
+            return
+        if line.startswith(_LOADING_PREFIX):
+            self._set_status("載入 OCR 引擎…", self.pal["warn"])
+            return
+        m = _PAGE_RE.match(line)
+        if not m:
+            return
+        done, total = int(m.group(1)), int(m.group(2))
+        now = time.monotonic()
+        if not self._determinate:
+            # 到這裡才知道總頁數；引擎載入那段沒有頁數可報，所以在此之前一律
+            # 是不定長度進度條
+            self.progress.stop()
+            self.progress.config(mode="determinate", maximum=total, value=done)
+            self._determinate = True
+        self.progress.config(maximum=total, value=done)
+        self._pages_done, self._pages_total = done, total
+        # ⚠️ 速率要從**第一頁完成之後**才開始量：第一頁的耗時含引擎載入（首次
+        # 執行還含下載 90MB 模型），拿它外推會報出一個荒謬的剩餘時間
+        if done <= 1 or self._t_first_page is None:
+            self._t_first_page = now
+            self._set_status(f"{done}/{total} 頁", self.pal["warn"])
+            return
+        per = (now - self._t_first_page) / max(1, done - 1)
+        self._set_status(f"{done}/{total} 頁 · {_fmt_eta(per * (total - done))}",
+                         self.pal["warn"])
+
     def _finish(self, rc: int) -> None:
         self.progress.stop()
         try:
+            out = self._effective_out()
             if rc in (0, PARTIAL_RC):
                 # 有頁面降級時不能報成單純的「完成」：檔案是好的，但那幾頁
-                # 沒有可編輯文字，而頁碼只寫在日誌區最後一行的 WARNING ——
-                # 對話框正好蓋在它上面，按完「否」就再也不會有人往下看
+                # 沒有可編輯文字。⚠️ 頁碼要**寫在結果列上**：舊版是把它留在日誌
+                # 最後一行的 WARNING，而完成對話框正好蓋在那一行上面
                 part = rc == PARTIAL_RC
-                self.status.config(
-                    text="完成（有頁面降級）" if part else "完成 ✓",
-                    foreground=self.pal["warn"] if part else self.pal["ok"])
-                out = self._effective_out()
+                if self._determinate:
+                    self.progress.config(value=self.progress["maximum"])
+                self._set_status("完成（有降級）" if part else "完成 ✓",
+                                 self.pal["warn"] if part else self.pal["ok"])
                 shown = str(out) if out else "(輸入檔同名 .pptx)"
                 tag = "⚠ 轉檔完成，但有頁面降級" if part else "✓ 轉檔完成"
                 self._append(f"\n{tag}：{shown}\n")
-                note = ("\n\n⚠ 有幾頁沒能轉成文字，只保留了原圖"
-                        "（頁碼見下方日誌最後一行的 WARNING）。" if part else "")
-                if out is not None and messagebox.askyesno(
-                        "完成", f"轉檔完成！\n\n{shown}{note}"
-                                f"\n\n要開啟所在資料夾嗎？"):
-                    self._open_folder(out)
+                note = (f"；{_fmt_degraded(self._last_warning)}"
+                        if part and self._last_warning else "")
+                self._show_result(
+                    ("⚠  完成，但有頁面沒轉成文字" if part else "✓  轉檔完成")
+                    + f"：{out.name if out else ''}{note}",
+                    self.pal["warn"] if part else self.pal["ok"], out)
+            elif rc == CANCELLED_RC:
+                self._set_status("已停止", self.pal["muted"])
+                self._append("\n■ 已停止（沒有產生檔案）\n")
+                self._show_result("■  已停止 —— 沒有產生檔案",
+                                  self.pal["muted"], None)
             else:
-                self.status.config(text=f"失敗（代碼 {rc}）",
-                                   foreground=self.pal["err"])
+                self._set_status(f"失敗（代碼 {rc}）", self.pal["err"])
                 self._append(f"\n✗ 轉檔失敗（return code = {rc}）\n")
+                self._show_result(f"✗  轉檔失敗（代碼 {rc}）—— 詳細訊息在下方",
+                                  self.pal["err"], None)
+                self._set_log_shown(True)
         finally:
-            # 對話框關掉之後才解鎖，否則使用者可以在完成對話框還開著時按下
-            # 「開始轉檔」，第二輪的日誌會整段看不到
             self.running = False
-            self._set_run_enabled(True)
+            self.progress.config(mode="determinate" if self._determinate
+                                 else "indeterminate")
+            self.run_btn.config(text=RUN_TEXT)
+            self._refresh_run_button()
+            self._fit_window()
+
+    def _show_result(self, text: str, color: str, out: Path | None) -> None:
+        """轉檔結果長在日誌區上方的一條列上，不再彈對話框。
+
+        ⚠️ 這一列取代的是 `askyesno("完成", "…要開啟所在資料夾嗎？")`。互動式
+        對話框在這裡有三個問題：它蓋住剛印出來的降級 WARNING、它逼使用者現在
+        就回答一個「等一下再說」也完全合理的問題，而且答「否」之後那個檔案的
+        路徑就再也沒有一個看得到的入口。"""
+        self.result_lbl.config(text=text, foreground=color)
+        has_file = out is not None and out.is_file()
+        for btn in (self.open_deck_btn, self.open_dir_btn):
+            btn.grid() if has_file else btn.grid_remove()
+        self._result_path = out if has_file else None
+        self.result_row.pack(fill="x", **self._pad)
+
+    def _open_deck(self) -> None:
+        path = getattr(self, "_result_path", None)
+        if path is None:
+            return
+        try:
+            if sys.platform.startswith("win"):
+                os.startfile(str(path))  # type: ignore[attr-defined]
+            else:
+                opener = "open" if sys.platform == "darwin" else "xdg-open"
+                subprocess.run([opener, str(path)], check=False)
+        except Exception as e:
+            self._append(f"[開啟簡報失敗] {e}\n")
+
+    def _open_result_folder(self) -> None:
+        path = getattr(self, "_result_path", None)
+        if path is not None:
+            self._open_folder(path)
+
+    def _open_log(self) -> None:
+        """開這一趟的執行紀錄。⚠️ 邊寫邊開是正常用法（逐次 flush），不必等結束。"""
+        if self._log_path is None:
+            return
+        try:
+            if sys.platform.startswith("win"):
+                os.startfile(str(self._log_path))  # type: ignore[attr-defined]
+            else:
+                opener = "open" if sys.platform == "darwin" else "xdg-open"
+                subprocess.run([opener, str(self._log_path)], check=False)
+        except Exception as e:
+            self._append(f"[開啟紀錄失敗] {e}\n")
 
     def _open_folder(self, path: Path) -> None:
         # 一定要收到真正的路徑：以前這裡吃的是顯示用字串，輸出欄留空時會拿
