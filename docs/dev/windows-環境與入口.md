@@ -75,6 +75,16 @@ DirectML 版是「**取代**」CPU 版的完整 build（它同時提供 `CPUExec
 2. **主要動作按鈕要明顯**：藍底白字的實心鈕。⚠️ 這一項當天做了兩版——先用 `tk.Button` 自己塗色（因為 Windows 的 vista 佈景把 `ttk.Button` 的底交給原生主題畫，`style.configure(background=…)` 完全沒有效果），換上 Sun Valley 佈景之後改成佈景自己的 **`Accent.TButton`**（`Run.Accent.TButton` 只加大字級與內距）。⚠️ 樣式名**必須以 `.Accent.TButton` 結尾**才繼承得到那組圖片元件；`_set_run_enabled` 也因此瘦成一行 `state()`，hover／pressed／disabled 全部由佈景畫。
 3. **收合要把高度還回去**（`_restore_height_after_collapse`）。原本是「只長不縮」，理由寫在程式註解裡：視窗管理員可能把我們要的高度夾掉一截，「還原成展開前的高度」會失效。⚠️ 那個顧慮只對**減法**成立（現在的高度減掉展開時加的量，會把被夾掉的那幾像素永久留下、按幾次愈長愈高）；改成**記下展開前實際量到的高度**再還原就沒事，實測 620 → 941 → 620，第二輪仍是 620。另外記下撐開後量到的高度，使用者展開期間自己拉過視窗（差 >8px）就整個不動——那是他要的尺寸，不是我們借的。
 
+### 沒有「選擇專案資料夾…」這件事了（2026-08-25）
+
+使用者當天指示「UI 上有專案位置的選擇，這個請拿掉，預設目錄下應該就有，如果預設目錄讀不到，就出現錯誤訊息，程式不啟動」。決策層的理由寫在 `docs/spec/09-執行環境與效能.md` §9.7，這裡記形狀與**一起清掉的殘骸**：
+
+- `PROJECT_DIR = Path(__file__).resolve().parent`，模組層級一個常數，**沒有第二個候選**。`APP_ICON`、`log_dir()`、`_git_sha()`、版號讀的 `pyproject.toml` 全部改成從它出發（本來各自寫一次 `Path(__file__).resolve().parent`）。
+- 驗證放在 `main()`、**在 `App()` 之前**：`is_project_dir(PROJECT_DIR)` 不過就呼叫 `fail_no_project()` 然後 `return 2`，視窗完全不建。
+- `fail_no_project()` 的訊息有兩個落點：`messagebox.showerror`（自己起一個 withdraw 掉的 `tk.Tk()`，因為此刻還沒有主視窗）＋ `sys.stderr`。⚠️ 兩個都要：對話框是給雙擊「啟動.vbs」的人看的（那條路沒有主控台，但**結束碼非 0 時 `.vbs` 會把攔到的 stderr 再跳一次**，所以那邊的人會看到兩個框——這是刻意的，第二個是啟動端在誠實回報結束碼）；stderr 是給「啟動（顯示訊息）.bat」與直接下指令的人看的。⚠️ `tk.Tk()` 起不來也要吞掉例外，否則錯誤訊息本身變成 traceback。
+- **跟著刪掉的殘骸**（位置固定之後它們在定義上不會再被用到）：`~/.notebooklm_pdf2ppt_gui.json` 這個設定檔與 `load_config()`／`save_config()`（它只存過 `project_dir` 一個鍵，連同 `import json` 一起沒了）、`find_project_dir()` 的三段 fallback、`App.project_dir`／`App.loaded_from`、`_refresh_project_label()`／`_pick_project()`、`_run_conversion()` 裡「換過資料夾就把 `sys.modules` 裡的 `pdf2ppt` 清掉」那一段，以及 `_start()` 開頭的位置檢查。⚠️ **`_run_conversion()` 的 `ModuleNotFoundError` 分流要留著**：`pdf2ppt` 自己不見了（啟動後才被搬走）與缺相依套件（沒跑 `uv sync`）的處方不同。
+- 版面連帶：主畫面第一個區塊從「專案位置」變成「檔案」，多出來的高度落給日誌區（`geometry` 的 760×640 沒有跟著改）。
+
 ## 5.1 外觀：DPI、字型、佈景（2026-08-25）
 
 使用者當天回報「UI 字體有鋸齒狀」、要求介面全部改用 **Microsoft JhengHei UI**，並問「有沒有其他 Theme 可以選」、能不能改成 [WinUI 3](https://learn.microsoft.com/zh-tw/windows/apps/winui/winui3/)。三件事分開處理：
@@ -159,7 +169,7 @@ DirectML 版是「**取代**」CPU 版的完整 build（它同時提供 `CPUExec
 
 `.ico` 是**自己組容器**寫出來的（`build_ico`）：Pillow 的 `sizes=` 只會把同一張圖縮放，承載不了「小尺寸換一套圖形」這件事。256 用 PNG 承載、其餘用 DIB，⚠️ DIB 的兩段點陣都是**由下往上**存、AND 遮罩每列要補齊到 4 位元組——遮罩全零（＝全部不透明）的話圓角磚在 Windows 上會露出方角。驗收方式是 `PIL.Image.open(...).ico.sizes()` 讀得回八個尺寸，加上 `tk.Tk().iconbitmap()` 真的吃得下去。
 
-GUI 端在 `pdf2ppt_gui_2.py` 的 `App._apply_window_icon()`。⚠️ 兩個點：路徑以 `Path(__file__)` 為基準而不是 cwd（`啟動.vbs` 進來時工作目錄不一定對，而介面上的「選擇專案資料夾…」還會把載入的程式碼換到另一份 checkout——圖示要跟著這支 GUI 走）；失敗一律吞掉（圖示是純外觀，`assets` 不在就讓它沒有圖示，不該讓程式開不起來——`啟動.vbs` 藏著主控台，那會變成「雙擊沒反應」）。`iconbitmap(default=…)` 的 `default=` 不能省，少了它 filedialog／messagebox 那些之後才建的 Toplevel 換不到。
+GUI 端在 `pdf2ppt_gui_2.py` 的 `App._apply_window_icon()`。⚠️ 兩個點：路徑以 `PROJECT_DIR`（＝`Path(__file__)` 所在資料夾）為基準而不是 cwd（`啟動.vbs`／捷徑進來時工作目錄不一定對）；失敗一律吞掉（圖示是純外觀，`assets` 不在就讓它沒有圖示，不該讓程式開不起來——`啟動.vbs` 藏著主控台，那會變成「雙擊沒反應」）。`iconbitmap(default=…)` 的 `default=` 不能省，少了它 filedialog／messagebox 那些之後才建的 Toplevel 換不到。
 
 ## 5.3 桌面與「開始」功能表的捷徑（2026-08-25）
 

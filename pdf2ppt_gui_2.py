@@ -15,8 +15,10 @@ NotebookLM PDF → PPT  桌面轉檔工具（圖形介面）
 2. 在專案根目錄執行：
        python pdf2ppt_gui_2.py
 
-   本檔已隨專案一起存放在根目錄，通常不需要另外指定專案位置；若要用它去驅動
-   另一份 checkout，按介面上的「選擇專案資料夾…」即可（會即時換載入的程式碼）。
+   本檔隨專案一起存放在根目錄、pdf2ppt 套件就在旁邊，載入的程式碼**永遠**是
+   本檔所在資料夾的那一份（PROJECT_DIR）：介面上沒有位置選擇（使用者
+   2026-08-25 指示）。同一層看不到 pdf2ppt/cli.py 就跳訊息框、視窗不開 ——
+   那代表這份複製品缺東西，開起來也只會在按下轉檔的那一刻才失敗。
 
    首次轉檔會自動下載 OCR 模型，需要短暫連網。
 
@@ -48,7 +50,6 @@ import ctypes
 import datetime
 import io
 import os
-import json
 import queue
 import re
 import subprocess
@@ -64,11 +65,14 @@ from tkinter import filedialog, font as tkfont, messagebox, ttk
 
 APP_TITLE = "NotebookLM PDF → PPT 轉檔工具"
 
-# 視窗圖示。⚠️ 路徑要以**本檔所在位置**為基準而不是 cwd：從「啟動.vbs」進來
-# 時工作目錄不一定是專案根目錄，而介面上的「選擇專案資料夾…」還會把載入的
-# 程式碼換到另一份 checkout ——圖示要跟著這支 GUI 走，不跟著那個選擇走。
-# 檔案本身由 tools/make_icon.py 產生（幾何與色票的唯一真值在那支）。
-APP_ICON = Path(__file__).resolve().parent / "assets" / "icon.ico"
+# 專案根目錄 ＝ **本檔所在的資料夾**，沒有第二個候選（使用者 2026-08-25 指示
+# 拿掉介面上的位置選擇）。⚠️ 一定要用 `__file__` 而不是 cwd：從「啟動.vbs」／
+# 捷徑進來時工作目錄不保證是這裡。合不合格由 is_project_dir() 在 main() 驗一次
+# ——不合格就跳訊息框、不開視窗（見 fail_no_project）。
+PROJECT_DIR = Path(__file__).resolve().parent
+
+# 視窗圖示。檔案本身由 tools/make_icon.py 產生（幾何與色票的唯一真值在那支）。
+APP_ICON = PROJECT_DIR / "assets" / "icon.ico"
 
 # 工作列用來認「這是哪個應用程式」的身分。⚠️ `tools/make_shortcut.py` 會把
 # 這個字串讀走寫進 .lnk，兩邊必須同值——不同的話，釘選到工作列的那顆與
@@ -294,11 +298,9 @@ def apply_ui_style(root: tk.Misc, scale: float) -> tuple[str, dict]:
 
 # 轉檔結束代碼裡的這一個代表「檔案有了，但至少一頁降級」（cli.py 的
 # PARTIAL_RC）。⚠️ 手抄過來的常數，tests/test_docs.py 釘著兩邊一致 ——
-# 不 import 是因為 GUI 可以在執行中途改指到另一份 checkout，而那一份未必有它。
+# 不 import 是因為 cli.py 會把整組相依（numpy／pymupdf／python-pptx…）拉進來，
+# 而那些只有按下轉檔的那一刻才需要——啟動路徑不該為一個整數付那個代價。
 PARTIAL_RC = 3
-
-# 記住專案位置的設定檔（存在使用者家目錄，跟著使用者走）
-CONFIG_PATH = Path.home() / ".notebooklm_pdf2ppt_gui.json"
 
 # 日誌視窗保留的最大行數：GUI 是長時間開著的行程，不設上限的話一整個工作階段
 # 的輸出會一直累積，每次 insert 都要重繪愈來愈大的緩衝區
@@ -335,36 +337,15 @@ _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 _NON_BMP_RE = re.compile(r"[^\u0000-\uffff]")
 
 
-def load_config() -> dict:
-    """讀設定檔；壞掉或格式不對一律當成空設定（不要讓 GUI 開不起來）。"""
-    try:
-        cfg = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
-    return cfg if isinstance(cfg, dict) else {}
-
-
-def save_config(cfg: dict) -> bool:
-    """寫設定檔。回傳是否成功 —— 呼叫端必須據此決定要不要跟使用者說「已記住」，
-    否則在唯讀／漫遊設定檔的環境下會每次都宣告成功、每次啟動又忘記。"""
-    try:
-        CONFIG_PATH.write_text(json.dumps(cfg, ensure_ascii=False, indent=2),
-                               encoding="utf-8")
-        return True
-    except Exception:
-        return False
-
-
 def log_dir() -> Path:
     """執行紀錄要落在哪個資料夾。
 
-    釘在**本檔所在的資料夾**、不是使用者挑的專案資料夾：「啟動.vbs」就在旁邊，
-    出事時要找的人是雙擊它的那一個，而挑選器可以在同一次執行中途換掉專案位置
-    ——紀錄檔跟著跑的話，同一趟的內容會散在兩個地方。"""
+    釘在**本檔所在的資料夾**（PROJECT_DIR）、不是 cwd：「啟動.vbs」就在旁邊，
+    出事時要找的人是雙擊它的那一個，而 cwd 從捷徑進來時不保證是這裡。"""
     override = os.environ.get(LOG_DIR_ENV)
     if override:
         return Path(override)
-    return Path(__file__).resolve().parent / LOG_DIR_NAME
+    return PROJECT_DIR / LOG_DIR_NAME
 
 
 def purge_old_logs(keep_days: int = LOG_KEEP_DAYS) -> None:
@@ -388,7 +369,7 @@ def _git_sha() -> str:
     直接讀 `.git`、**不叫 `git` 指令**：啟動路徑不該多開一個行程，而使用者拿到
     的可能是複製過去的資料夾（這個專案的交付方式就是複製整個資料夾），機器上
     不見得有 git。"""
-    git = Path(__file__).resolve().parent / ".git"
+    git = PROJECT_DIR / ".git"
     try:
         head = (git / "HEAD").read_text(encoding="utf-8").strip()
     except OSError:
@@ -418,7 +399,7 @@ def code_version() -> str:
     版號一整段開發期間都不會動，能分辨「今天這一版」的只有 sha。"""
     ver = ""
     try:
-        text = (Path(__file__).resolve().parent / "pyproject.toml").read_text(
+        text = (PROJECT_DIR / "pyproject.toml").read_text(
             encoding="utf-8")
         m = re.search(r'^\s*version\s*=\s*"([^"]+)"', text, re.M)
         ver = m.group(1) if m else ""
@@ -478,27 +459,38 @@ def is_project_dir(path: Path) -> bool:
         return False
 
 
-def find_project_dir() -> Path | None:
-    """依序嘗試：1) GUI 自身所在目錄 2) 設定檔記住的路徑 3) 目前工作目錄。
+def fail_no_project() -> None:
+    """PROJECT_DIR 裡沒有 pdf2ppt 套件：講清楚，然後讓行程收掉。
 
-    自身目錄優先於記憶路徑：本檔就存放在專案根目錄，而「把它複製到另一份
-    checkout 執行」是最自然的用法。記憶路徑若優先，一個曾經用過資料夾挑選器的
-    使用者會在新 checkout 裡靜靜地跑舊 checkout 的程式碼。
-    """
-    here = Path(__file__).resolve().parent
-    if is_project_dir(here):
-        return here
+    ⚠️ **不要退而求其次開一個「殘廢的視窗」**（2026-08-25 使用者指示拿掉位置
+    選擇時一併定的）：以前找不到套件會照常開窗、把紅字寫在專案位置那一格，等
+    使用者按下轉檔才擋下來；沒有挑選器之後那條路已經無解，開窗只是把「這份
+    複製品缺東西」延後到最不好懂的時機才講。
 
-    remembered = load_config().get("project_dir")
-    if isinstance(remembered, str) and remembered:
+    訊息要有兩個落點，因為主要入口「啟動.vbs」把主控台藏掉了：**訊息框**（不論
+    誰啟動的都看得到）＋ **stderr**（`.vbs` 在結束碼非 0 時會把攔到的內容跳出來，
+    「啟動（顯示訊息）.bat」與直接下指令則是印在主控台上）。"""
+    msg = (f"這個資料夾裡找不到 pdf2ppt\\cli.py：\n{PROJECT_DIR}\n\n"
+           "pdf2ppt_gui_2.py 必須跟 pdf2ppt 資料夾放在一起（也就是專案根目錄）。\n"
+           "請把整個專案資料夾完整複製過來，再執行一次「安裝.bat」。")
+    try:
+        sys.stderr.write("[啟動失敗] " + msg.replace("\n\n", "\n") + "\n")
+        sys.stderr.flush()
+    except Exception:
+        pass
+    try:
+        root = tk.Tk()
+        root.withdraw()
         try:
-            if is_project_dir(Path(remembered)):
-                return Path(remembered)
+            if APP_ICON.is_file():
+                root.iconbitmap(default=str(APP_ICON))
         except Exception:
             pass
-
-    cwd = Path.cwd()
-    return cwd if is_project_dir(cwd) else None
+        messagebox.showerror("找不到 pdf2ppt 套件", msg)
+        root.destroy()
+    except Exception:
+        # 連 Tk 都起不來（沒有桌面工作階段之類）；stderr 那一份已經寫出去了
+        pass
 
 
 # --font 只設定輸出的 <a:ea> 東亞字型；style.py 的 _measure_em() 一律以
@@ -593,9 +585,6 @@ class App(tk.Tk):
         self._log_path, self._log_file = open_run_log()
         self.worker: threading.Thread | None = None
         self.running = False
-        self.project_dir: Path | None = find_project_dir()
-        # 目前 sys.modules 裡的 pdf2ppt 是從哪個目錄載入的
-        self.loaded_from: Path | None = None
         # 我們上次自動帶出來的輸出路徑；使用者改過就不再自動跟著換
         self._auto_out = ""
         # 展開進階區時「借走」的視窗高度：撐開前量到的高度與撐開後量到的高度，
@@ -605,7 +594,6 @@ class App(tk.Tk):
 
         self._build_vars()
         self._build_ui()
-        self._refresh_project_label()
         # 位置要講出來：出事時使用者才知道要附哪一個檔，而不是被問「log 在哪」
         self._append(f"執行紀錄：{self._log_path}\n" if self._log_path
                      else "（無法建立執行紀錄檔；錯誤訊息只會留在這個日誌區，"
@@ -679,17 +667,6 @@ class App(tk.Tk):
             style="Muted.TLabel",
         )
         sub.pack(anchor="w", pady=(0, p(10)))
-
-        # ---- 專案位置區 ----
-        proj = ttk.LabelFrame(root, text="專案位置（pdf2ppt 程式所在資料夾）",
-                              padding=p(12))
-        proj.pack(fill="x", **pad)
-        self.project_label = ttk.Label(proj, text="", style="Muted.TLabel",
-                                       wraplength=p(560), justify="left")
-        self.project_label.grid(row=0, column=0, sticky="w")
-        ttk.Button(proj, text="選擇專案資料夾…",
-                   command=self._pick_project).grid(row=0, column=1, padx=p(6))
-        proj.columnconfigure(0, weight=1)
 
         # ---- 檔案區 ----
         files = ttk.LabelFrame(root, text="檔案", padding=p(12))
@@ -883,44 +860,6 @@ class App(tk.Tk):
         if target < cur:
             self.geometry(f"{self.winfo_width()}x{target}")
 
-    # ---- 專案位置 ----
-    def _refresh_project_label(self) -> None:
-        if self.project_dir and is_project_dir(self.project_dir):
-            self.project_label.config(
-                text=f"✓ 已找到：{self.project_dir}",
-                foreground=self.pal["ok"])
-        else:
-            self.project_label.config(
-                text="✗ 尚未找到 pdf2ppt 套件，請按右側按鈕選擇專案資料夾"
-                     "（裡面要有 pdf2ppt.py 和 pdf2ppt 資料夾）。",
-                foreground=self.pal["err"])
-
-    def _pick_project(self) -> None:
-        if self.running:
-            messagebox.showinfo("轉檔進行中", "請等目前這次轉檔結束再切換專案資料夾。")
-            return
-        d = filedialog.askdirectory(title="選擇 NotebookLM_OCR 專案資料夾")
-        if not d:
-            return
-        path = Path(d)
-        if not is_project_dir(path):
-            messagebox.showerror(
-                "資料夾不正確",
-                f"這個資料夾裡找不到 pdf2ppt\\cli.py：\n{path}\n\n"
-                "請選擇 NotebookLM_OCR 專案的根目錄"
-                "（能看到 pdf2ppt.py 和 pdf2ppt 資料夾的那一層）。")
-            return
-        self.project_dir = path
-        cfg = load_config()
-        cfg["project_dir"] = str(path)
-        ok = save_config(cfg)
-        self._refresh_project_label()
-        if ok:
-            self._append(f"已記住專案位置：{path}\n")
-        else:
-            self._append(f"已切換到：{path}（但寫不進設定檔 {CONFIG_PATH}，"
-                         "下次啟動需要重新選擇）\n")
-
     # ---- 檔案挑選 ----
     def _pick_input(self) -> None:
         p = filedialog.askopenfilename(
@@ -1012,13 +951,9 @@ class App(tk.Tk):
         self.run_btn.state(["!disabled"] if enabled else ["disabled"])
 
     def _start(self) -> None:
+        # 專案位置不必在這裡再驗一次：main() 在開窗之前就擋掉了不合格的資料夾
+        # （fail_no_project），視窗存在本身就代表 PROJECT_DIR 是好的。
         if self.running:
-            return
-        if not (self.project_dir and is_project_dir(self.project_dir)):
-            messagebox.showwarning(
-                "找不到專案",
-                "尚未指定 pdf2ppt 專案位置。\n\n"
-                "請按上方「選擇專案資料夾…」，指向 NotebookLM_OCR 專案根目錄。")
             return
         try:
             argv = self._build_argv()
@@ -1051,19 +986,7 @@ class App(tk.Tk):
         sys.stdout = sys.stderr = self.writer
         rc = 1
         try:
-            proj = Path(self.project_dir)
-            # 換過專案資料夾就得把舊的模組丟掉：sys.modules 會快取第一次載入的
-            # pdf2ppt，光是 sys.path.insert 換不掉它，結果是「切到新 checkout、
-            # 卻仍在跑舊 checkout 的程式碼」而且毫無提示
-            if self.loaded_from is not None and self.loaded_from != proj:
-                for name in [m for m in list(sys.modules)
-                             if m == "pdf2ppt" or m.startswith("pdf2ppt.")]:
-                    sys.modules.pop(name, None)
-                try:
-                    sys.path.remove(str(self.loaded_from))
-                except ValueError:
-                    pass
-                self.log_queue.put(f"專案位置已變更，改載入：{proj}\n")
+            proj = PROJECT_DIR
             if str(proj) not in sys.path:
                 sys.path.insert(0, str(proj))
             # 切到專案目錄，確保模型快取等相對路徑落在專案底下
@@ -1071,18 +994,17 @@ class App(tk.Tk):
             try:
                 from pdf2ppt.cli import main
             except ModuleNotFoundError as e:
-                # 只有「找不到 pdf2ppt 本身」才是選錯資料夾；相依套件沒裝時把
-                # 使用者指去重選資料夾是錯誤的診斷
+                # 開窗前驗過 pdf2ppt\cli.py 在不在，所以缺的通常是相依套件——
+                # 兩種情形的處方不同，別把「沒 uv sync」講成資料夾有問題
                 if (e.name or "").split(".")[0] == "pdf2ppt":
                     raise ModuleNotFoundError(
-                        f"在指定的專案目錄找不到 pdf2ppt 套件：{proj}\n"
-                        "請確認該資料夾裡有 pdf2ppt 子資料夾。\n"
+                        f"pdf2ppt 套件在啟動之後消失了：{proj}\n"
+                        "請確認資料夾沒有被移動或刪除，然後重開程式。\n"
                         f"原始錯誤：{e}") from e
                 raise ModuleNotFoundError(
                     f"缺少相依套件 {e.name}。\n"
-                    f"請在 {proj} 執行：uv sync\n"
+                    f"請在 {proj} 執行：uv sync（或雙擊「安裝.bat」）\n"
                     f"原始錯誤：{e}") from e
-            self.loaded_from = proj
             rc = main(argv)
         except SystemExit as e:        # argparse 在參數錯誤時會 raise 這個
             rc = int(e.code) if isinstance(e.code, int) else 1
@@ -1315,6 +1237,11 @@ def main() -> int:
     enable_dpi_awareness()
     # ⚠️ 同樣要在建 Tk 之前：視窗一建出來就已經被工作列歸隊了
     set_app_user_model_id()
+    # 沒有 pdf2ppt 套件就別開窗：介面上每一個控制項都只是在為那一次呼叫收集
+    # 參數，缺了它整支程式沒有任何一件事做得成（使用者 2026-08-25 指示）
+    if not is_project_dir(PROJECT_DIR):
+        fail_no_project()
+        return 2
     app = App()
     app.mainloop()
     return 0
