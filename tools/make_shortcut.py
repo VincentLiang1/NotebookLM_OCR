@@ -1,0 +1,275 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+r"""在桌面與「開始」功能表放上本工具的捷徑。
+
+由「安裝.bat」在環境建好之後呼叫；資料夾搬過位置要重建，直接跑
+
+    uv run python tools/make_shortcut.py
+
+**存在的理由是那三段路徑只有安裝當下才知道**：使用者把專案放在哪裡是他的
+自由（他換電腦的方式就是複製整個資料夾），所以捷徑要指的「啟動.vbs」、工作
+目錄與圖示檔**都得從這支腳本自己的位置往上推**——任何一段寫死，就只有開發
+那台機器按得動，別人桌面上會出現一顆指向不存在路徑的死圖示，比沒有更糟。
+
+⚠️ **捷徑指的是 `wscript.exe`，不是 `啟動.vbs` 本身**（本專案與姊妹專案
+`meeting-scribe` 的關鍵差異：那邊的入口是 `.bat`，直接指就好）。`.vbs` 當
+捷徑目標有兩個踩得到的坑，都會讓「雙擊桌面圖示」與「雙擊 `啟動.vbs`」表現
+不一致：**①** 副檔名關聯被改掉——不少公司把 `.vbs` 關聯到記事本當作防毒
+措施，那時捷徑會打開原始碼而不是執行；**②** 預設主機若是 `cscript`，就會
+蹦出一個黑視窗，而那正是 `啟動.vbs` 存在的唯一理由。把主機釘成
+`wscript.exe`、`.vbs` 當參數，兩個都繞開了。找不到 `wscript.exe` 才退回直接
+指 `.vbs`。
+
+⚠️ **為什麼不叫 PowerShell 的 `WScript.Shell`**：`.lnk` 在 Windows 上只有
+COM 一條路，而 PowerShell 正是公司電腦最常被群組原則收走的東西（執行原則、
+Constrained Language Mode 都擋得掉）。ctypes 直接叫 `IShellLinkW` 不經過任何
+外部行程，也不必為了一顆捷徑多拉一個相依進來。
+
+⚠️ **中文不從 .bat 傳進來**：批次檔是 cp950，字串經 cmd 那一層會被重新編碼。
+捷徑名稱與所有訊息都寫在這支 UTF-8 的 Python 裡，「安裝.bat」只負責呼叫一行
+**純 ASCII** 的指令。
+
+⚠️ **建不出來絕不能擋住安裝**：走到這一步環境已經好了，捷徑只是方便。桌面被
+群組原則重導到唯讀的網路磁碟、OneDrive 沒登入、資安軟體擋住寫入，都會讓這裡
+失敗——那時該做的是告訴他「雙擊資料夾裡的啟動.vbs 一樣能用」，而不是讓他以為
+安裝失敗、回頭重跑一次。離開碼只拿來讓「安裝.bat」挑最後那句話該怎麼寫，
+**兩種都算安裝成功**：0=桌面那顆放好了，3=沒放成。
+"""
+from __future__ import annotations
+
+import ctypes
+import os
+import re
+import sys
+from ctypes import POINTER, byref, c_int, c_void_p, c_wchar_p
+from pathlib import Path
+from uuid import UUID
+
+ROOT = Path(__file__).resolve().parents[1]
+
+LAUNCHER = "啟動.vbs"          # 不開黑視窗的那條，README 教的也是它
+ICON = Path("assets") / "icon.ico"
+# 滑鼠停在圖示上會看到這句。寫「不會上傳」是因為那是使用者最常問的第一個問題
+DESCRIPTION = ("把 NotebookLM 的簡報 PDF 轉成可編輯的 PowerPoint"
+               "（全程在這台電腦上跑，不會上傳）")
+FALLBACK_NAME = "NotebookLM PDF → PPT 轉檔工具"
+
+# Windows 的「已知資料夾」GUID（shlobj_core.h 的 FOLDERID_*）
+_DESKTOP_GUID = "{B4BFCC3A-DB2C-424C-B029-7FE99A87C641}"
+_PROGRAMS_GUID = "{A77F5D77-2E2B-44C3-A6A2-ABA601054A51}"   # 開始功能表\程式集
+
+_S_OK = 0
+_CLSCTX_INPROC_SERVER = 1
+_CLSID_SHELL_LINK = "{00021401-0000-0000-C000-000000000046}"
+_IID_ISHELL_LINK_W = "{000214F9-0000-0000-C000-000000000046}"
+_IID_IPERSIST_FILE = "{0000010B-0000-0000-C000-000000000046}"
+
+# vtable 上的**順序**，不是名字——數錯一格就是呼叫到隔壁那個方法，而那多半
+# 是當場 crash 不是回錯誤碼。所以照介面宣告的順序整段抄在這裡對照：
+#   IUnknown:      0 QueryInterface  1 AddRef  2 Release
+#   IShellLinkW:   3 GetPath  4 GetIDList  5 SetIDList  6 GetDescription
+#                  7 SetDescription  8 GetWorkingDirectory  9 SetWorkingDirectory
+#                  10 GetArguments  11 SetArguments  12 GetHotkey  13 SetHotkey
+#                  14 GetShowCmd  15 SetShowCmd  16 GetIconLocation
+#                  17 SetIconLocation  18 SetRelativePath  19 Resolve  20 SetPath
+#   IPersistFile:  3 GetClassID  4 IsDirty  5 Load  6 Save  7 SaveCompleted
+_QUERY_INTERFACE, _RELEASE = 0, 2
+_SET_DESCRIPTION, _SET_WORKING_DIRECTORY = 7, 9
+_SET_ARGUMENTS = 11
+_SET_ICON_LOCATION, _SET_PATH = 17, 20
+_PERSIST_SAVE = 6
+
+
+class _GUID(ctypes.Structure):
+    _fields_ = [
+        ("Data1", ctypes.c_ulong),
+        ("Data2", ctypes.c_ushort),
+        ("Data3", ctypes.c_ushort),
+        ("Data4", ctypes.c_ubyte * 8),
+    ]
+
+
+def _guid(text: str) -> _GUID:
+    u = UUID(text)
+    return _GUID(u.time_low, u.time_mid, u.time_hi_version,
+                 (ctypes.c_ubyte * 8)(*u.bytes[8:]))
+
+
+def app_name() -> str:
+    """捷徑顯示的名字＝視窗標題。
+
+    ⚠️ 用**讀檔正規表示式**而不是 import：`pdf2ppt_gui_2` 一載入就會拉進
+    tkinter。也不寫死字面值——名字在兩處各寫一份、改一邊忘了另一邊時，使用者
+    桌面上的圖示會叫舊名字，而那是最難發現的那種漂移。"""
+    try:
+        text = (ROOT / "pdf2ppt_gui_2.py").read_text(encoding="utf-8")
+        if m := re.search(r'^APP_TITLE\s*=\s*"([^"]+)"', text, re.M):
+            return m.group(1)
+    except Exception:
+        pass
+    return FALLBACK_NAME
+
+
+def known_folder(guid: str) -> Path | None:
+    r"""問 Windows 要「已知資料夾」的實際位置，問不到回 None。
+
+    ⚠️ 不用 `ctypes.wintypes` 湊 GUID 結構：那個模組在非 Windows 上 import
+    就會炸。改用 ctypes 的基本型別自己排，欄位寬度是一樣的。"""
+    try:
+        g = _guid(guid)
+        out = c_wchar_p()
+        if ctypes.windll.shell32.SHGetKnownFolderPath(
+                byref(g), 0, None, byref(out)) != 0:
+            return None
+        try:
+            return Path(out.value)
+        finally:
+            ctypes.windll.ole32.CoTaskMemFree(out)
+    except Exception:
+        return None
+
+
+def desktop_dir() -> Path:
+    r"""桌面的實際位置。
+
+    ⚠️ 不寫死 `~/Desktop`：OneDrive 的「資料夾備份」會把桌面整個重導到
+    `%USERPROFILE%\OneDrive\Desktop`，而寫死的那條路徑往往還在、只是沒人看
+    ——捷徑建立成功，使用者卻永遠看不到。所以先問 Windows，問不到才退回猜。"""
+    return known_folder(_DESKTOP_GUID) or next(
+        (p for p in (Path.home() / "OneDrive" / "Desktop", Path.home() / "Desktop")
+         if p.is_dir()), Path.home())
+
+
+def start_menu_programs_dir() -> Path | None:
+    r"""這個使用者的「開始功能表\程式集」；問不到才退回 `%APPDATA%` 那條。
+
+    回 None 代表連退路都不成立——呼叫端要當成「這台機器沒有開始功能表」處理，
+    不是當成錯誤：它只是桌面捷徑的備援，少了不影響工具能不能用。"""
+    if found := known_folder(_PROGRAMS_GUID):
+        return found
+    if base := os.environ.get("APPDATA"):
+        return Path(base) / "Microsoft" / "Windows" / "Start Menu" / "Programs"
+    return None
+
+
+def script_host() -> Path | None:
+    """`wscript.exe` 的位置（見模組 docstring 的第一條 ⚠️）。找不到回 None。"""
+    host = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "wscript.exe"
+    return host if host.is_file() else None
+
+
+def _call(obj: c_void_p, slot: int, argtypes: tuple, *args) -> int:
+    """叫 COM 物件 vtable 上第 slot 個方法，回 HRESULT。
+
+    ⚠️ argtypes 明寫、不用 `type(a)` 推：`byref()` 回的是 CArgObject，推出來
+    的型別是錯的，而錯的型別在這一層不會報錯、只會把垃圾推上堆疊。"""
+    vtable = ctypes.cast(obj, POINTER(c_void_p))[0]
+    method = ctypes.cast(vtable, POINTER(c_void_p))[slot]
+    return ctypes.WINFUNCTYPE(ctypes.c_long, c_void_p, *argtypes)(method)(obj, *args)
+
+
+def _check(hr: int, what: str) -> None:
+    if hr != _S_OK:
+        raise OSError(f"{what} 失敗（HRESULT 0x{hr & 0xFFFFFFFF:08X}）")
+
+
+def write_shortcut(dest: Path, target: Path, arguments: str, workdir: Path,
+                   icon: Path, description: str) -> None:
+    """寫出一個 .lnk；失敗一律拋例外（呼叫端決定要不要當成致命）。"""
+    ole32 = ctypes.windll.ole32
+    ole32.CoInitialize(None)
+    try:
+        clsid, iid = _guid(_CLSID_SHELL_LINK), _guid(_IID_ISHELL_LINK_W)
+        link = c_void_p()
+        _check(ole32.CoCreateInstance(byref(clsid), None, _CLSCTX_INPROC_SERVER,
+                                      byref(iid), byref(link)),
+               "CoCreateInstance(ShellLink)")
+        try:
+            _check(_call(link, _SET_PATH, (c_wchar_p,), str(target)), "SetPath")
+            _check(_call(link, _SET_ARGUMENTS, (c_wchar_p,), arguments),
+                   "SetArguments")
+            _check(_call(link, _SET_WORKING_DIRECTORY, (c_wchar_p,), str(workdir)),
+                   "SetWorkingDirectory")
+            _check(_call(link, _SET_DESCRIPTION, (c_wchar_p,), description),
+                   "SetDescription")
+            # 第二個參數是 .ico 裡的第幾張圖；icon.ico 是同一個圖示的八個尺寸、
+            # 不是八張不同的圖，所以固定 0（Windows 自己會挑合適的尺寸）
+            _check(_call(link, _SET_ICON_LOCATION, (c_wchar_p, c_int), str(icon), 0),
+                   "SetIconLocation")
+
+            persist_iid = _guid(_IID_IPERSIST_FILE)
+            persist = c_void_p()
+            _check(_call(link, _QUERY_INTERFACE, (c_void_p, c_void_p),
+                         byref(persist_iid), byref(persist)),
+                   "QueryInterface(IPersistFile)")
+            try:
+                # 第二個參數 fRemember=TRUE：把這個路徑記成物件目前的檔案
+                _check(_call(persist, _PERSIST_SAVE, (c_wchar_p, c_int),
+                             str(dest), 1), "Save")
+            finally:
+                _call(persist, _RELEASE, ())
+        finally:
+            _call(link, _RELEASE, ())
+    finally:
+        ole32.CoUninitialize()
+
+
+def install_to(folder: Path) -> Path:
+    """在 folder 底下建立（或覆寫）捷徑，回傳落地的 .lnk 路徑。
+
+    同名一律覆寫：使用者換電腦的方式是複製整個專案資料夾，而「搬過位置就重跑
+    安裝.bat」那句話要成立，這裡就得真的把舊捷徑那條指到別處的路徑改回來。"""
+    folder.mkdir(parents=True, exist_ok=True)
+    dest = folder / f"{app_name()}.lnk"
+    vbs = ROOT / LAUNCHER
+    if host := script_host():
+        # 參數要自己加引號：專案路徑含中文、也可能含空格
+        target, args = host, f'"{vbs}"'
+    else:
+        target, args = vbs, ""
+    write_shortcut(dest, target, args, ROOT, ROOT / ICON, DESCRIPTION)
+    return dest
+
+
+def main() -> int:
+    # 只改 errors、不改 encoding：輸出被導向檔案時 encoding 會退回 cp950，
+    # 而專案資料夾的名字可能有 cp950 表達不了的字——那時 errors 若是預設的
+    # strict，會在印路徑那一行整支炸掉。接到真主控台時 PEP 528 已經保證中文
+    # 顯示正確（底層走 WriteConsoleW，與黑視窗的 chcp 950 無關）。
+    try:
+        sys.stdout.reconfigure(errors="replace")
+    except Exception:
+        pass
+
+    if not (ROOT / LAUNCHER).is_file():
+        print(f"[提醒] 找不到 {LAUNCHER}，略過建立捷徑。")
+        return 3
+    if not (ROOT / ICON).is_file():
+        # 圖示缺了還是建得出捷徑（Windows 會用預設圖示），但那顆圖示在桌面上
+        # 認不出來，寧可講一句
+        print(f"[提醒] 找不到 {ICON}，捷徑會用系統預設圖示。"
+              "　可以跑 uv run python tools/make_icon.py 重新產生。")
+
+    # 只講原因，不講「那你改用啟動.vbs」——那句由「安裝.bat」的 :nolnk 統一印。
+    try:
+        install_to(desktop_dir())
+    except Exception as exc:
+        print(f"[提醒] 桌面圖示建立失敗：{exc}")
+        return 3
+
+    print(f"已經在桌面放上「{app_name()}」，以後雙擊它就能啟動。")
+
+    # 開始功能表是備援，不是主角：桌面被公司政策鎖住時它通常還寫得進去，
+    # 而且使用者可以按 Windows 鍵直接搜尋名字。失敗就安靜跳過——為了一個
+    # 備援去嚇使用者，只會讓他以為安裝有問題。
+    if (programs := start_menu_programs_dir()) is not None:
+        try:
+            install_to(programs)
+            print("「開始」功能表裡也放了一份，按 Windows 鍵打名字就找得到。")
+        except Exception:
+            pass
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
