@@ -25,7 +25,10 @@ OCR / 排版工作全部沿用 pdf2ppt 套件。注意選項清單目前是手�
 argparse 定義：在 cli.py 增刪旗標或改預設值時，這裡與 README 的選項表要一起改。
 
 版面：主畫面只留輸入／輸出檔，其餘選項全部收在預設收合的「進階選項」區
-（_toggle_advanced）。色塊的選項曾經是主畫面上唯一的核取方塊（要拿它做 A/B），
+（_toggle_advanced）。主線的終點「開始轉檔」排在檔案區正下方、收合按鈕**之上**
+（使用者 2026-08-25 指示），展開的兩區插在收合按鈕與進度條之間；展開時借走的
+視窗高度在收合時原樣還回去（_restore_height_after_collapse）。
+色塊的選項曾經是主畫面上唯一的核取方塊（要拿它做 A/B），
 2026-08-24 量完之後 cli.py 的預設換成 --no-cover，這裡也就跟著收進進階區、
 反向成「輸出獨立色塊形狀」，預設不勾 —— 三方的預設值現在一致。
 
@@ -60,6 +63,15 @@ APP_TITLE = "NotebookLM PDF → PPT 轉檔工具"
 # 都不必動，攤在主畫面上只是讓「選檔 → 開始轉檔」這條主線被十幾個控制項擋住。
 ADV_SHOW_TEXT = "▸ 進階選項（頁碼、字型、DPI、除錯…）"
 ADV_HIDE_TEXT = "▾ 進階選項（收合）"
+
+# 「開始轉檔」的配色。⚠️ 這一顆是 tk.Button 而不是 ttk.Button：Windows 上
+# ttk 的 vista 佈景把按鈕的底交給原生主題畫，`background` 設了不會有任何效果
+# （要嘛整支程式改用 clam 佈景、連帶換掉所有控制項的長相），只有 classic 的
+# tk.Button 真的塗得上顏色。代價是 disabled 時只換文字顏色、底色照舊鮮豔，
+# 所以底色要自己換 —— 見 _set_run_enabled。
+RUN_BG = "#1a73e8"
+RUN_BG_ACTIVE = "#1666d0"          # 滑鼠移上去（Tk 的 active 狀態）
+RUN_BG_DISABLED = "#9db9e8"        # 轉檔進行中
 
 # 轉檔結束代碼裡的這一個代表「檔案有了，但至少一頁降級」（cli.py 的
 # PARTIAL_RC）。⚠️ 手抄過來的常數，tests/test_docs.py 釘著兩邊一致 ——
@@ -360,6 +372,10 @@ class App(tk.Tk):
         self.loaded_from: Path | None = None
         # 我們上次自動帶出來的輸出路徑；使用者改過就不再自動跟著換
         self._auto_out = ""
+        # 展開進階區時「借走」的視窗高度：撐開前量到的高度與撐開後量到的高度，
+        # 收合時要照原樣還回去（見 _restore_height_after_collapse）
+        self._adv_prev_height: int | None = None
+        self._adv_grown_height: int | None = None
 
         self._build_vars()
         self._build_ui()
@@ -444,8 +460,27 @@ class App(tk.Tk):
         # 主畫面到這裡就結束：選項一個都不露出來（日常轉檔一項都不必動）。
         # 色塊那一項曾經留在這裡做 A/B，量完之後收進了進階區。
 
+        # ---- 動作列 ----
+        # 位置緊接在檔案區底下、排在進階選項的收合按鈕**之前**（使用者
+        # 2026-08-25 指示）：主線是「選檔 → 按下去」，把它排在收合按鈕後面等於
+        # 讓主線的終點被一個日常不必碰的東西隔開，展開進階區時還會被推到很下面。
+        actions = self.actions_frame = ttk.Frame(root)
+        actions.pack(fill="x", **pad)
+        self.run_btn = tk.Button(
+            actions, text="▶  開始轉檔", command=self._start,
+            font=("", 12, "bold"),
+            bg=RUN_BG, fg="white",
+            activebackground=RUN_BG_ACTIVE, activeforeground="white",
+            disabledforeground="#eef3fb",
+            relief="flat", bd=0, highlightthickness=0,
+            padx=30, pady=9, cursor="hand2")
+        self.run_btn.pack(side="left")
+        self.status = ttk.Label(actions, text="就緒", foreground="#0a0")
+        self.status.pack(side="right")
+
         # ---- 進階區的收合按鈕 ----
-        # 底下兩區建好但不 pack，按下去才用 before=actions 插回原位
+        # 底下兩區建好但不 pack，按下去才用 before=progress 插回原位（也就是
+        # 這顆按鈕的正下方）
         toggle_row = ttk.Frame(root)
         toggle_row.pack(fill="x", padx=8, pady=(2, 0))
         self.adv_toggle = ttk.Button(toggle_row, text=ADV_SHOW_TEXT,
@@ -519,14 +554,6 @@ class App(tk.Tk):
             ttk.Checkbutton(adv, text=label, variable=var).grid(
                 row=i, column=0, sticky="w", padx=6, pady=2)
 
-        # ---- 動作列 ----
-        actions = self.actions_frame = ttk.Frame(root)
-        actions.pack(fill="x", **pad)
-        self.run_btn = ttk.Button(actions, text="開始轉檔", command=self._start)
-        self.run_btn.pack(side="left")
-        self.status = ttk.Label(actions, text="就緒", foreground="#0a0")
-        self.status.pack(side="right")
-
         self.progress = ttk.Progressbar(root, mode="indeterminate")
         self.progress.pack(fill="x", **pad)
 
@@ -547,24 +574,53 @@ class App(tk.Tk):
         show = not self.show_advanced.get()
         self.show_advanced.set(show)
         if show:
-            self.opt_frame.pack(fill="x", before=self.actions_frame,
-                                **self._pad)
-            self.adv_frame.pack(fill="x", before=self.actions_frame,
-                                **self._pad)
+            self.opt_frame.pack(fill="x", before=self.progress, **self._pad)
+            self.adv_frame.pack(fill="x", before=self.progress, **self._pad)
             self.adv_toggle.config(text=ADV_HIDE_TEXT)
             # 視窗高度是啟動時就寫死的，展開後的內容塞不進去時 pack 只能去壓
             # 唯一 expand=True 的日誌區（它沒有捲軸可退，只會被壓成幾像素），
-            # 所以不夠高就把視窗撐開。只長不縮：收合後多出來的空間全歸日誌
-            # 區，而視窗管理員可能把我們要的高度夾掉一截（工作區高度），
-            # 「還原成展開前的高度」那種寫法會因為夾掉的那幾像素而失效
+            # 所以不夠高就把視窗撐開。
             self.update_idletasks()
             need = self.winfo_reqheight()
-            if need > self.winfo_height():
+            cur = self.winfo_height()
+            if need > cur:
+                # 撐開前後的高度都要記下來，收合時照原樣還回去
+                self._adv_prev_height = cur
                 self.geometry(f"{self.winfo_width()}x{need}")
+                self.update_idletasks()
+                self._adv_grown_height = self.winfo_height()
         else:
             self.opt_frame.pack_forget()
             self.adv_frame.pack_forget()
             self.adv_toggle.config(text=ADV_SHOW_TEXT)
+            self._restore_height_after_collapse()
+
+    def _restore_height_after_collapse(self) -> None:
+        """收合進階區之後，把展開時借走的視窗高度還回去。
+
+        不還的話，多出來的空間會**全部**歸給唯一 `expand=True` 的日誌區（pack
+        的行為），收合後的畫面比展開前還高一大截，使用者得自己去拉視窗才回得
+        到原樣（2026-08-25 使用者回報）。
+
+        ⚠️ **還原的目標是展開前實際量到的高度**，不是「現在的高度減掉展開時
+        加的量」——視窗管理員可能把我們要的高度夾掉一截（工作區高度、螢幕邊
+        界），減法會把夾掉的那幾像素永久留在視窗上，展開／收合幾次就愈長愈高。
+
+        使用者在展開期間自己拉過視窗就整個不動：那是他要的尺寸，不是我們借的。
+        """
+        prev, grown = self._adv_prev_height, self._adv_grown_height
+        self._adv_prev_height = self._adv_grown_height = None
+        if prev is None:
+            return                       # 展開時根本沒撐開過，沒有東西要還
+        self.update_idletasks()
+        cur = self.winfo_height()
+        if grown is not None and abs(cur - grown) > 8:
+            return                       # 展開期間被手動調過，尊重使用者的尺寸
+        # 收合後的內容仍需要的高度是下限：視窗管理員會拒絕比 reqheight 更小的
+        # 要求，硬要只會得到一個跟畫面對不上的 geometry 字串
+        target = max(prev, self.winfo_reqheight())
+        if target < cur:
+            self.geometry(f"{self.winfo_width()}x{target}")
 
     # ---- 專案位置 ----
     def _refresh_project_label(self) -> None:
@@ -685,6 +741,17 @@ class App(tk.Tk):
         return argv
 
     # ---- 啟動轉檔 ----
+    def _set_run_enabled(self, enabled: bool) -> None:
+        """開始轉檔鈕的鎖／解鎖。
+
+        ⚠️ 底色要跟著換：它是 tk.Button，`state="disabled"` 只會換文字顏色，
+        鮮豔的底色照舊留在畫面上，轉檔期間看起來仍像可以按（ttk.Button 的
+        disabled 是整顆變灰，換過來就沒有這回事了）。"""
+        self.run_btn.config(
+            state="normal" if enabled else "disabled",
+            bg=RUN_BG if enabled else RUN_BG_DISABLED,
+            cursor="hand2" if enabled else "")
+
     def _start(self) -> None:
         if self.running:
             return
@@ -705,7 +772,7 @@ class App(tk.Tk):
             return
 
         self.running = True
-        self.run_btn.config(state="disabled")
+        self._set_run_enabled(False)
         self.status.config(text="轉檔中…", foreground="#c60")
         # 不定長度進度條不帶任何資訊，12ms（83Hz）只是白白讓主執行緒重繪；
         # 用 ttk 的預設節奏即可
@@ -835,7 +902,7 @@ class App(tk.Tk):
             # 對話框關掉之後才解鎖，否則使用者可以在完成對話框還開著時按下
             # 「開始轉檔」，第二輪的日誌會整段看不到
             self.running = False
-            self.run_btn.config(state="normal")
+            self._set_run_enabled(True)
 
     def _open_folder(self, path: Path) -> None:
         # 一定要收到真正的路徑：以前這裡吃的是顯示用字串，輸出欄留空時會拿
