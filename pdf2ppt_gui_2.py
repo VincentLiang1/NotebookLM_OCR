@@ -23,25 +23,34 @@ NotebookLM PDF → PPT  桌面轉檔工具（圖形介面）
    首次轉檔會自動下載 OCR 模型，需要短暫連網。
 
 這支 GUI 只負責「收集選項 + 呼叫專案的轉檔邏輯 + 即時顯示進度」，真正的
-OCR / 排版工作全部沿用 pdf2ppt 套件。注意選項清單目前是手抄 cli.py 的
-argparse 定義：在 cli.py 增刪旗標或改預設值時，這裡與 README 的選項表要一起改。
+OCR / 排版工作全部沿用 pdf2ppt 套件。
+
+⚠️ 介面上**只露出五個選項**（使用者 2026-08-25 指示）：頁碼、保留浮水印、
+關閉簡體混入修正、色塊獨立畫成矩形、保留圖表內小字。理由是其餘那些「改了
+會讓結果差很多，或根本用不到」——DPI／字型／信心分數是校準值（200 DPI ＋
+Microsoft YaHei 是整條管線唯一校準過的作業點，動了排版估算就失準）、
+粗體模式與 --fast 會整份換掉判別依據、--device 有 auto、--lang 預設就是中英、
+--merge-lines 與 --debug 是開發用的。它們**不再由 GUI 傳**，直接吃 cli.py 的
+argparse 預設值：少一份手抄就少一處會漂移的地方（要調就用命令列）。
 
 外觀：Sun Valley 佈景（模仿 Windows 11 Fluent／WinUI）、Microsoft JhengHei UI、
 亮暗跟隨 Windows，並且開了 DPI 感知 —— 三個一動就壞的點寫在 apply_ui_style 與
 enable_dpi_awareness 的 docstring 裡，取捨（以及「為什麼不是真的 WinUI 3」）見
 docs/dev/windows-環境與入口.md 5.1。
 
-版面：主畫面只留輸入／輸出檔，其餘選項全部收在預設收合的「進階選項」區
+版面：主畫面只留輸入／輸出檔，那五個選項全部收在預設收合的「轉檔選項」區
 （_toggle_advanced）。主線的終點「開始轉檔」排在檔案區正下方、收合按鈕**之上**
-（使用者 2026-08-25 指示），展開的兩區插在收合按鈕正下方的 adv_slot 裡。
+（使用者 2026-08-25 指示），展開的那一區插在收合按鈕正下方的 adv_slot 裡。
 色塊的選項曾經是主畫面上唯一的核取方塊（要拿它做 A/B），
-2026-08-24 量完之後 cli.py 的預設換成 --no-cover，這裡也就跟著收進進階區、
+2026-08-24 量完之後 cli.py 的預設換成 --no-cover，這裡也就跟著收進選項區、
 反向成「輸出獨立色塊形狀」，預設不勾 —— 三方的預設值現在一致。
 
-⚠️ 進階區與日誌區是**手風琴**（_set_advanced／_set_log_shown）：展開進階就收
-日誌、按下轉檔就收進階並展開日誌。理由是量出來的——1143x1006 的視窗展開進階區
-後 reqheight 是 953 邏輯 px，而本機工作區只有 912（1080p@125% 更只有約 810），
-兩區同時攤開必定有一截在螢幕外。高度一律由 _fit_window() 統一決定：量 reqheight、
+⚠️ 選項區與日誌區是**手風琴**（_set_advanced／_set_log_shown）：展開選項就收
+日誌、按下轉檔就收選項並展開日誌。理由是量出來的——1143x1006 的視窗展開當時的
+進階區後 reqheight 是 953 邏輯 px，而本機工作區只有 912（1080p@125% 更只有約
+810），兩區同時攤開必定有一截在螢幕外。選項砍到五個之後那一區矮了很多，但手風
+琴留著：日誌區是唯一 expand=True 的區塊，兩區同時攤開仍然是「進度看不到」的那
+一種版面。高度一律由 _fit_window() 統一決定：量 reqheight、
 鉗進所在螢幕的工作區、必要時把視窗往上移；使用者自己拉過視窗之後就只長不縮。
 
 進度：動作列上是**同一列**的「開始轉檔／停止轉檔」鈕、進度條與狀態字（舊版散在
@@ -92,14 +101,15 @@ APP_ICON = PROJECT_DIR / "assets" / "icon.ico"
 # 執行中的視窗會變成兩個各自獨立的按鈕。
 APP_ID = "VincentLiang.NotebookLM.Pdf2Ppt"
 
-# 進階區的收合按鈕文字。預設收起來：這些選項全部有校準過的預設值
-# （200 DPI + Microsoft YaHei 是整條管線唯一校準過的作業點），日常轉檔一項
-# 都不必動，攤在主畫面上只是讓「選檔 → 開始轉檔」這條主線被十幾個控制項擋住。
+# 選項區的收合按鈕文字。預設收起來：這五個都有合用的預設值，日常轉檔一項都不
+# 必動，攤在主畫面上只是讓「選檔 → 開始轉檔」這條主線被一排控制項擋住。
 # ⚠️ 兩個狀態的**標籤要一模一樣、只換三角形**：舊版收合時寫「進階選項（頁碼、
 # 字型、DPI、除錯…）」、展開後整句換成「進階選項（收合）」，同一顆鈕在兩個狀態
 # 講的是兩件事（一個講內容、一個講動作），而它的寬度又是寫死的 34 字，於是右半
 # 邊永遠空著。現在是整條寬、只有三角形會翻。
-ADV_LABEL = "進階選項（頁碼、字型、DPI、除錯…）"
+# ⚠️ 括號裡列的是**實際露出來的那五個**，不是「還有什麼藏在裡面」：2026-08-25
+# 把選項砍到五個之後，舊標籤上的字型／DPI／除錯已經沒有對應的控制項了。
+ADV_LABEL = "轉檔選項（頁碼、浮水印、簡體修正、色塊、小字）"
 LOG_LABEL = "詳細訊息（每頁的處理結果與錯誤）"
 # ⚠️ 三角形一律用 ▸／▾ 這一對（同一個字族、同寬）：▶／▼ 在 Microsoft JhengHei UI
 # 下是全形，換狀態時整行文字會左右跳一格。
@@ -127,9 +137,9 @@ STATUS_SAMPLES = ("等待選檔", "就緒", "準備中…", "載入 OCR 引擎�
 #  外觀（字型、DPI、佈景）
 # --------------------------------------------------------------------------- #
 # 介面字型（使用者 2026-08-25 指定）。⚠️ **這跟 --font 完全是兩回事**：
-# FONT_CHOICES／--font 是**輸出到 PPTX 裡**的東亞字型，預設必須是 Microsoft
-# YaHei（style.py 的寬度量測固定用 msyh.ttc 校準，換掉會讓排版估算失準）；
-# 這裡只管介面自己的字，兩者不可互相「順手統一」。
+# `--font` 是**輸出到 PPTX 裡**的東亞字型，必須是 Microsoft YaHei（style.py 的
+# 寬度量測固定用 msyh.ttc 校準，換掉會讓排版估算失準——這也正是介面上不再露出
+# 字型選單的理由）；這裡只管介面自己的字，兩者不可互相「順手統一」。
 UI_FONT = "Microsoft JhengHei UI"
 UI_FONT_FALLBACK = "Microsoft JhengHei"   # 舊版 Windows 沒有 UI 版
 # 佈景：**Sun Valley**（`sv-ttk`，MIT）—— 一套模仿 Windows 11 Fluent／WinUI 的
@@ -327,7 +337,7 @@ def apply_ui_style(root: tk.Misc, scale: float) -> tuple[str, dict]:
     # ⚠️ 樣式名要以 .Accent.TButton 結尾才繼承得到那組圖片元件
     st.configure("Run.Accent.TButton", font=(fam, 12, "bold"),
                  padding=(px(22), px(9)))
-    # 進階選項／詳細訊息的收合鈕：低調一點，別跟主要動作搶注意力。整條寬 +
+    # 轉檔選項／詳細訊息的收合鈕：低調一點，別跟主要動作搶注意力。整條寬 +
     # anchor="w"，讀起來像區段標題而不是一顆浮在半空中的按鈕
     st.configure("Adv.TButton", padding=(px(10), px(6)), anchor="w")
     # 次要動作（變更…、開啟簡報、開啟紀錄…）：比主要動作小一號
@@ -653,17 +663,6 @@ def fail_no_project() -> bool:
         return False
 
 
-# --font 只設定輸出的 <a:ea> 東亞字型；style.py 的 _measure_em() 一律以
-# C:\Windows\Fonts\msyh.ttc（YaHei）量寬度，換字型不會跟著換度量衡。
-# 因此非 YaHei 的選擇會讓所有寬度夾制以錯誤的字型計算 —— 介面上有註明。
-# PingFang TC 是 macOS 專屬、在 Windows 只會靜默回落，故不列入。
-FONT_CHOICES = [
-    "Microsoft YaHei",
-    "Microsoft JhengHei",
-    "Noto Sans CJK TC",
-    "標楷體",
-]
-
 
 # --------------------------------------------------------------------------- #
 #  把背景執行緒裡的 print() 導到 GUI 的工具
@@ -825,19 +824,16 @@ class App(tk.Tk):
         return max(1, int(round(n * self.ui_scale)))
 
     # ---- 變數 ----
+    # ⚠️ 這裡**只有介面上真的露得出來的那五個**（使用者 2026-08-25 指示）。
+    # 其餘旗標（--dpi／--font／--min-score／--device／--lang／--fast／
+    # --no-bold／--force-bold／--merge-lines／--debug）不再由 GUI 傳，直接吃
+    # cli.py 的 argparse 預設值——舊版是在這裡手抄一份預設值再原封不動傳回去，
+    # 那份抄本除了會漂移之外沒有任何作用。
     def _build_vars(self) -> None:
         self.in_path = tk.StringVar()
         self.out_path = tk.StringVar()
         self.pages = tk.StringVar()
-        self.lang = tk.StringVar()
-        self.font = tk.StringVar(value=FONT_CHOICES[0])
-        self.device = tk.StringVar(value="auto")
-        # 預設值與 pdf2ppt/cli.py 的 argparse 定義一致，改一邊要改兩邊
-        self.dpi = tk.IntVar(value=200)
-        self.min_score = tk.DoubleVar(value=0.5)
-        self.bold_mode = tk.StringVar(value="auto")       # auto / never / always
 
-        self.fast = tk.BooleanVar(value=False)
         self.no_s2t = tk.BooleanVar(value=False)
         # 這一個存的是**反向**旗標：cli.py 的預設是 --no-cover，所以 GUI 拿
         # 「要不要輸出獨立色塊」當開關（不勾 = 走預設）。2026-08-23 到
@@ -846,10 +842,8 @@ class App(tk.Tk):
         self.cover = tk.BooleanVar(value=False)
         self.keep_watermark = tk.BooleanVar(value=False)
         self.keep_tiny_text = tk.BooleanVar(value=False)
-        self.merge_lines = tk.BooleanVar(value=False)
-        self.debug = tk.BooleanVar(value=False)
 
-        # 進階區／日誌區是否展開（不寫進設定檔：每次開起來都回到最單純的畫面）
+        # 選項區／日誌區是否展開（不寫進設定檔：每次開起來都回到最單純的畫面）
         self.show_advanced = tk.BooleanVar(value=False)
         self.show_log = tk.BooleanVar(value=False)
         # 畫面上顯示的輸出路徑（縮短過的）。輸出欄本身已經不是輸入框了，
@@ -909,12 +903,12 @@ class App(tk.Tk):
         files.columnconfigure(1, weight=1)
 
         # 主畫面到這裡就結束：選項一個都不露出來（日常轉檔一項都不必動）。
-        # 色塊那一項曾經留在這裡做 A/B，量完之後收進了進階區。
+        # 色塊那一項曾經留在這裡做 A/B，量完之後收進了選項區。
 
         # ---- 動作列 ----
-        # 位置緊接在檔案區底下、排在進階選項的收合按鈕**之前**（使用者
+        # 位置緊接在檔案區底下、排在轉檔選項的收合按鈕**之前**（使用者
         # 2026-08-25 指示）：主線是「選檔 → 按下去」，把它排在收合按鈕後面等於
-        # 讓主線的終點被一個日常不必碰的東西隔開，展開進階區時還會被推到很下面。
+        # 讓主線的終點被一個日常不必碰的東西隔開，展開選項區時還會被推到很下面。
         #
         # ⚠️ 進度回饋三件事（動作、進度條、狀態字）**同一列**：舊版是右上角一個
         # 「就緒」、版面中段一條 indeterminate 進度條、最下面一大塊日誌，三個東西
@@ -945,7 +939,7 @@ class App(tk.Tk):
         # 進度條的右端就會在「就緒」與「載入 OCR 引擎…」之間左右抽動。
         actions.columnconfigure(2, minsize=self._status_width() + p(2))
 
-        # ---- 進階區的收合按鈕 ----
+        # ---- 選項區的收合按鈕 ----
         toggle_row = ttk.Frame(root)
         toggle_row.pack(fill="x", padx=p(10), pady=(p(2), 0))
         self.adv_toggle = ttk.Button(toggle_row, text=CHEV_SHOW + ADV_LABEL,
@@ -960,87 +954,42 @@ class App(tk.Tk):
         self.adv_slot = ttk.Frame(root)
         self.adv_slot.pack(fill="x")
 
-        # ---- 常用選項 ----
-        # ⚠️ 這一區有**分層**，不是四個等重的格子：最常用的「頁碼」自己一行排在
-        # 最上面；「渲染 DPI」與「最低信心分數」是校準值（200 DPI 是整條管線唯一
-        # 校準過的作業點），排在分隔線與那句警告底下——舊版把它們跟頁碼平起平坐，
-        # 看起來就像四個一樣該調的東西。
-        opt = self.opt_frame = ttk.LabelFrame(self.adv_slot, text="常用選項",
-                                              padding=p(10))
+        # ---- 轉檔選項（就這五個）----
+        # ⚠️ **只有這五個**（使用者 2026-08-25 指示）：頁碼、保留浮水印、關閉
+        # 簡體混入修正、色塊獨立畫成矩形、保留圖表內小字。刪掉的是「改了會讓結
+        # 果差很多，或根本用不到」的那些——中文字型／渲染 DPI／最低信心分數是校
+        # 準值（200 DPI ＋ Microsoft YaHei 是整條管線唯一校準過的作業點）、粗體
+        # 模式與快速模型會整份換掉判別依據、推論裝置有 auto、辨識語言預設就是
+        # 中英、行合併與除錯資料是開發用的。它們**連變數都不留**，直接吃 cli.py
+        # 的預設值（要調就用命令列，README 的選項表是完整的）。
+        # ⚠️ 舊版是「常用選項」＋「進階開關」兩個 LabelFrame；剩五項還分兩區，
+        # 只是讓一件小事看起來像兩件事。
+        # ⚠️ 這一區**不掛 LabelFrame 的標題**：它就貼在收合鈕正下方，而那顆鈕上
+        # 已經寫著「轉檔選項（…）」，再寫一次等於同一句話說兩遍。改用 Sun Valley
+        # 的 `Card.TFrame`（一張淡色卡片）純粹當視覺容器 —— ttk 的樣式名是可繼承
+        # 的，載不到 sv_ttk 時它會自動退回 `TFrame`，不會炸（實測過）。
+        opt = self.opt_frame = ttk.Frame(self.adv_slot, style="Card.TFrame",
+                                         padding=p(12))
 
+        # 頁碼自己一行排在最上面：五個裡面只有它是「每次可能不一樣」的值，
+        # 其餘四個是開關
         ttk.Label(opt, text="頁碼（例 1-5,8，留空=全部）：").grid(
             row=0, column=0, sticky="w")
         ttk.Entry(opt, textvariable=self.pages, width=18).grid(
             row=0, column=1, sticky="w", padx=p(6))
 
-        ttk.Label(opt, text="中文字型：").grid(row=1, column=0, sticky="w",
-                                              pady=(p(8), 0))
-        ttk.Combobox(opt, textvariable=self.font, values=FONT_CHOICES,
-                     width=20).grid(row=1, column=1, sticky="w", padx=p(6),
-                                    pady=(p(8), 0))
-
-        ttk.Label(opt, text="粗體模式：").grid(row=1, column=2, sticky="e",
-                                              pady=(p(8), 0))
-        ttk.Combobox(opt, textvariable=self.bold_mode,
-                     values=["auto", "never", "always"], width=10,
-                     state="readonly").grid(row=1, column=3, sticky="w",
-                                            padx=p(6), pady=(p(8), 0))
-
-        ttk.Label(opt, text="推論裝置：").grid(row=2, column=0, sticky="w",
-                                              pady=(p(8), 0))
-        ttk.Combobox(opt, textvariable=self.device,
-                     values=["auto", "cpu", "dml", "cuda"], width=8,
-                     state="readonly").grid(row=2, column=1, sticky="w",
-                                            padx=p(6), pady=(p(8), 0))
-
-        ttk.Label(opt, text="辨識語言（留空=中英）：").grid(
-            row=2, column=2, sticky="e", pady=(p(8), 0))
-        ttk.Entry(opt, textvariable=self.lang, width=12).grid(
-            row=2, column=3, sticky="w", padx=p(6), pady=(p(8), 0))
-
-        ttk.Separator(opt, orient="horizontal").grid(
-            row=3, column=0, columnspan=4, sticky="ew", pady=(p(10), 0))
-        ttk.Label(
-            opt,
-            text="以下兩項與「中文字型」是校準值，非必要不要動：字級／粗體／色塊的"
-                 "判別門檻全部以 200 DPI ＋ Microsoft YaHei 字寬校準過，改了會讓"
-                 "排版估算失準。",
-            style="Muted.TLabel", wraplength=p(620), justify="left").grid(
-            row=4, column=0, columnspan=4, sticky="w", pady=(p(6), 0))
-
-        ttk.Label(opt, text="渲染 DPI：").grid(row=5, column=0, sticky="w",
-                                               pady=(p(6), 0))
-        # 遞增值必須讓 200 落在序列上：整條管線的門檻（TPL_SIGMA、
-        # MIN_INK_ROW_PX、8px 字墨切群、COVER_PAD_PX…）都是 200dpi 的絕對像素，
-        # 原本的 from_=72/increment=20 序列是 72,92,…,192,212，永遠踩不到 200，
-        # 使用者只要按一下箭頭就再也回不到唯一校準過的作業點
-        ttk.Spinbox(opt, from_=100, to=600, increment=25, textvariable=self.dpi,
-                    width=8).grid(row=5, column=1, sticky="w", padx=p(6),
-                                  pady=(p(6), 0))
-
-        ttk.Label(opt, text="最低信心分數：").grid(row=5, column=2, sticky="e",
-                                                  pady=(p(6), 0))
-        ttk.Spinbox(opt, from_=0.0, to=1.0, increment=0.05, format="%.2f",
-                    textvariable=self.min_score, width=8).grid(
-            row=5, column=3, sticky="w", padx=p(6), pady=(p(6), 0))
-
-        # ---- 進階開關 ----
-        adv = self.adv_frame = ttk.LabelFrame(self.adv_slot, text="進階開關",
-                                              padding=p(10))
         checks = [
-            ("使用快速模型（mobile，較快但繁中較不準）", self.fast),
             ("保留浮水印（NotebookLM／Gemini Notebook）", self.keep_watermark),
-            ("保留圖表內小字（預設保留原圖不轉文字）", self.keep_tiny_text),
-            ("相鄰同樣式行合併成一個文字方塊", self.merge_lines),
             ("關閉簡體混入修正", self.no_s2t),
             ("色塊獨立畫成矩形（預設是讓文字方塊自帶底色）", self.cover),
-            ("輸出除錯資料（OCR 疊圖 PNG + JSON）", self.debug),
+            ("保留圖表內小字（預設保留原圖不轉文字）", self.keep_tiny_text),
         ]
         # 一列一項：雙欄版的第 0 欄由最長的標籤決定寬度，兩欄合計會超出視窗的
         # 最小寬度，在 125%／150% 顯示縮放下右欄的選項會被擠出可見範圍
         for i, (label, var) in enumerate(checks):
-            ttk.Checkbutton(adv, text=label, variable=var).grid(
-                row=i, column=0, sticky="w", padx=p(6), pady=p(2))
+            ttk.Checkbutton(opt, text=label, variable=var).grid(
+                row=1 + i, column=0, columnspan=2, sticky="w", padx=p(6),
+                pady=(p(8) if i == 0 else p(2), p(2)))
 
         # ---- 結果列 ----
         # ⚠️ 取代舊版的「完成」對話框（`askyesno("要開啟所在資料夾嗎？")`）。
@@ -1123,13 +1072,13 @@ class App(tk.Tk):
         self.in_path.trace_add("write", lambda *a: self._refresh_input_state())
         self.out_path.trace_add("write", lambda *a: self._refresh_out_show())
 
-    # ---- 手風琴：進階區與日誌區 ----
-    # ⚠️ 兩區**不同時攤開**（2026-08-25 量出來的）：舊版展開進階區之後
+    # ---- 手風琴：選項區與日誌區 ----
+    # ⚠️ 兩區**不同時攤開**（2026-08-25 量出來的）：當時展開進階區之後
     # `winfo_reqheight()` 是 953 邏輯 px，而本機（2560×1440@150%）的工作區只有
     # 912，1080p@125% 的筆電更只有約 810——也就是說「展開」這個動作本身就會把
     # 日誌區與進度條推到工作列底下。分成兩個模式之後兩邊都塞得進去：
-    #   設定模式：展開進階 → 收日誌（在調參數，不是在看跑）
-    #   執行模式：按下轉檔 → 收進階、展開日誌（在看跑，不是在調參數）
+    #   設定模式：展開選項 → 收日誌（在調參數，不是在看跑）
+    #   執行模式：按下轉檔 → 收選項、展開日誌（在看跑，不是在調參數）
     def _toggle_advanced(self) -> None:
         self._set_advanced(not self.show_advanced.get())
 
@@ -1142,11 +1091,9 @@ class App(tk.Tk):
         self.show_advanced.set(show)
         if show:
             self.opt_frame.pack(fill="x", **self._pad)
-            self.adv_frame.pack(fill="x", **self._pad)
             self._set_log_shown(False, fit=False)
         else:
             self.opt_frame.pack_forget()
-            self.adv_frame.pack_forget()
             _collapse_slot(self.adv_slot)
         self.adv_toggle.config(
             text=(CHEV_HIDE if show else CHEV_SHOW) + ADV_LABEL)
@@ -1389,22 +1336,12 @@ class App(tk.Tk):
         # 的位置
         # in_path is non-empty here, so _effective_out() always resolves
         argv = [str(src.resolve()), "-o", str(self._effective_out())]
+        # ⚠️ **只傳介面上真的動得到的旗標**。舊版連 `--dpi 200 --min-score 0.50
+        # --device auto --font "Microsoft YaHei"` 都照傳一遍，那是把 cli.py 的預
+        # 設值抄一份再原封不動送回去：值沒變，但 cli.py 改預設時 GUI 會安靜地把
+        # 舊值釘住。現在沒傳的一律由 argparse 決定。
         if self.pages.get().strip():
             argv += ["--pages", self.pages.get().strip()]
-        if self.lang.get().strip():
-            argv += ["--lang", self.lang.get().strip()]
-        argv += ["--dpi", str(self.dpi.get())]
-        argv += ["--min-score", f"{self.min_score.get():.2f}"]
-        argv += ["--device", self.device.get()]
-        argv += ["--font", self.font.get()]
-
-        if self.bold_mode.get() == "never":
-            argv.append("--no-bold")
-        elif self.bold_mode.get() == "always":
-            argv.append("--force-bold")
-
-        if self.fast.get():
-            argv.append("--fast")
         if self.no_s2t.get():
             argv.append("--no-s2t")
         if self.cover.get():
@@ -1413,10 +1350,6 @@ class App(tk.Tk):
             argv.append("--keep-watermark")
         if self.keep_tiny_text.get():
             argv.append("--keep-tiny-text")
-        if self.merge_lines.get():
-            argv.append("--merge-lines")
-        if self.debug.get():
-            argv.append("--debug")
         return argv
 
     # ---- 啟動轉檔 ----
@@ -1459,12 +1392,14 @@ class App(tk.Tk):
             return
         try:
             argv = self._build_argv()
-        # IntVar/DoubleVar.get() 在 Spinbox 被清空或打成非數字時丟的是
-        # tkinter.TclError（它直接繼承 Exception，不是 ValueError），只攔
-        # ValueError 會讓例外穿到 Tk 的 report_callback_exception：沒有對話框、
-        # 沒有日誌、狀態也不變，按鈕看起來就像壞掉
+        # ⚠️ `tk.TclError` 也要攔，即使現在的欄位都是 StringVar／BooleanVar：
+        # 那是 IntVar/DoubleVar 在欄位被清空時丟的型別，它直接繼承 Exception、
+        # 不是 ValueError，漏攔的話例外會穿到 Tk 的 report_callback_exception
+        # ——沒有對話框、沒有日誌、狀態也不變，按鈕看起來就像壞掉。
+        # （2026-08-25 選項砍到五個之後 DPI／信心分數的 Spinbox 沒了，這一半
+        # 目前是防禦性的；再加回任何數值欄位它就會重新用得上。）
         except (ValueError, tk.TclError) as e:
-            messagebox.showwarning("選項有誤", str(e) or "請檢查 DPI／信心分數欄位。")
+            messagebox.showwarning("選項有誤", str(e) or "請檢查選項欄位。")
             return
 
         self.running = True
@@ -1483,7 +1418,7 @@ class App(tk.Tk):
         # 不定長度進度條不帶任何資訊，12ms（83Hz）只是白白讓主執行緒重繪；
         # 用 ttk 的預設節奏即可
         self.progress.start()
-        # 執行模式：收起進階區、把日誌打開（見 _set_advanced 上面那段說明）
+        # 執行模式：收起選項區、把日誌打開（見 _set_advanced 上面那段說明）
         self._set_advanced(False, fit=False)
         self._set_log_shown(True)
         self._append("\n" + "=" * 60 + "\n")

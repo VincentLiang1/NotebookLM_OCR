@@ -211,16 +211,39 @@ def test_every_cli_flag_is_in_the_readme_option_table():
 
 
 def test_every_cli_flag_has_a_gui_control():
-    """GUI 的選項清單同樣是手抄 argparse 的，而且**已經漂移過一次**
-    （`--lang` 在 CLI 與 README 都有、GUI 完全沒有，2026-08-16 補上）。
+    """GUI 只露出**使用者拍板的那五個**選項（2026-08-25 指示），其餘一律吃
+    `cli.py` 的 argparse 預設值。
 
-    兩個刻意的例外寫在這裡，不是寫在註解裡——例外要能被讀到才算數。"""
-    # --no-cover 自 2026-08-24 起是預設值，GUI 只需要 --cover 這一個反向
-    # 開關（在進階區）；輸出路徑由 GUI 自己的存檔對話框決定，不經 --output
-    deliberate = {"--no-cover", "--output"}
-    missing = [f for f in sorted(_cli_long_flags() - deliberate)
-               if f'"{f}"' not in GUI_PY]
+    這支測試本來是「每個旗標都要有 GUI 控制項」——當時它抓到過真的漂移
+    （`--lang` 在 CLI 與 README 都有、GUI 完全沒有，2026-08-16 補上）。選項砍
+    到五個之後那個述詞不再成立，但**守備範圍不可以跟著消失**，所以改成雙向釘：
+    露出來的五個必須真的在 GUI 裡，而**沒露出來的每一個都要在下面這份名單上**
+    ——`cli.py` 新增旗標時就會紅一次，逼人回答「這個要不要給使用者看」。
+
+    刻意的取捨寫在這裡、不是寫在註解裡——例外要能被讀到才算數。"""
+    # 介面上真的有控制項的五個
+    exposed = {"--pages", "--keep-watermark", "--no-s2t", "--cover",
+               "--keep-tiny-text"}
+    # 刻意不給 GUI 的：
+    #   --output      由 GUI 自己的存檔對話框決定
+    #   --no-cover    自 2026-08-24 起是預設值，只需要 --cover 這個反向開關
+    #   --dpi/--font/--min-score  校準值（200 DPI ＋ YaHei 是唯一校準過的作業點）
+    #   --no-bold/--force-bold/--fast  會整份換掉粗體／辨識的判別依據
+    #   --device      auto 已經是 DirectML > CUDA > CPU
+    #   --lang        預設就是中英
+    #   --merge-lines/--debug  開發用的
+    hidden = {"--output", "--no-cover", "--dpi", "--font", "--min-score",
+              "--no-bold", "--force-bold", "--fast", "--device", "--lang",
+              "--merge-lines", "--debug"}
+    flags = _cli_long_flags()
+    assert exposed <= flags, (
+        f"GUI 露出的旗標在 cli.py 裡不見了：{sorted(exposed - flags)}")
+    missing = [f for f in sorted(exposed) if f'"{f}"' not in GUI_PY]
     assert not missing, f"pdf2ppt_gui_2.py 沒有對應控制項的旗標：{missing}"
+    undecided = flags - exposed - hidden
+    assert not undecided, (
+        f"cli.py 新增了旗標卻沒人決定它在 GUI 露不露：{sorted(undecided)}"
+        "（要露就加控制項並列進 exposed，不露就列進 hidden）")
 
 
 def test_the_partial_exit_code_is_the_same_number_in_both_places():
