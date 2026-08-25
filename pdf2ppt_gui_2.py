@@ -168,7 +168,12 @@ THEME_ENV = "NOTEBOOKLM_PDF2PPT_THEME"     # light / dark，不設就跟隨 Wind
 PALETTES = {
     "light": {
         "page": "#fafafa",       # 與 Sun Valley 的 light 視窗底同色
-        "muted": "#5d6470",      # 說明文字
+        # 說明文字。⚠️ **這個值有下限，不要再往回調淡**（使用者 2026-08-25 晚
+        # 說「介面上的字顏色有點太淺」）：舊值 #5d6470 對 #fafafa 的對比度只有
+        # 5.7:1（一般標籤是 15:1），而中文小字反鋸齒之後**實際渲染成
+        # (112,118,130)**，比色碼本身還淡一階——量出來的，不是感覺。現值 9.0:1。
+        # ⚠️ 副標、輸入提示、「輸出：…」全走這一個，它佔了畫面上大半的字。
+        "muted": "#41474f",
         "ok": "#0f7b3f",
         "warn": "#9a5b00",
         "err": "#c02626",
@@ -179,7 +184,7 @@ PALETTES = {
     },
     "dark": {
         "page": "#1c1c1c",
-        "muted": "#a6adb8",
+        "muted": "#b9c0cb",      # 對 #1c1c1c 是 9.3:1（舊值 #a6adb8 是 7.5:1）
         "ok": "#5fd18a",
         "warn": "#f0b429",
         "err": "#ff7b72",
@@ -905,13 +910,18 @@ class App(tk.Tk):
         # 個畫面上唯一必填的東西。
         ttk.Label(files, text="輸入 PDF", style="Section.TLabel").grid(
             row=0, column=0, columnspan=2, sticky="w")
+        # 轉檔中要鎖起來的控制項都收進這一份清單（見 _set_inputs_enabled）。
+        # ⚠️ 用**明列**、不要走訪 children：那樣會連「輸入 PDF」小標與提示文字
+        # 一起變灰，而那兩行正是轉檔中最該讀得清楚的東西
+        self._inputs: list[ttk.Widget] = []
         self.in_entry = ttk.Entry(files, textvariable=self.in_path)
         self.in_entry.grid(row=1, column=0, sticky="ew", pady=(p(SP_SM), 0))
         # ⚠️ 這一欄的兩顆鈕（瀏覽…／變更…）都要 `sticky="ew"`：同一欄裡一顆
         # `w`、一顆 `w` 時欄寬由較寬的決定，另一顆的右緣就會短一截、看起來沒對齊
-        ttk.Button(files, text="瀏覽…", command=self._pick_input).grid(
-            row=1, column=1, sticky="ew", padx=(p(SP_SM), 0),
-            pady=(p(SP_SM), 0))
+        browse = ttk.Button(files, text="瀏覽…", command=self._pick_input)
+        browse.grid(row=1, column=1, sticky="ew", padx=(p(SP_SM), 0),
+                    pady=(p(SP_SM), 0))
+        self._inputs += [self.in_entry, browse]
 
         # 提示與錯誤共用這一行，而且**一直都在**（只換文字不換有無），填錯路徑
         # 時版面才不會上下跳。⚠️ 路徑不對要在這裡當場說：舊版是照樣讓人按下
@@ -933,10 +943,11 @@ class App(tk.Tk):
         ttk.Label(files, textvariable=self.out_show, style="Muted.TLabel",
                   anchor="w", wraplength=p(700)).grid(
             row=3, column=0, sticky="ew", pady=(p(SP_XL), 0))
-        ttk.Button(files, text="變更…", style="Small.TButton",
-                   command=self._pick_output).grid(
-            row=3, column=1, sticky="ew", padx=(p(SP_SM), 0),
-            pady=(p(SP_XL), 0))
+        change = ttk.Button(files, text="變更…", style="Small.TButton",
+                            command=self._pick_output)
+        change.grid(row=3, column=1, sticky="ew", padx=(p(SP_SM), 0),
+                    pady=(p(SP_XL), 0))
+        self._inputs.append(change)
         files.columnconfigure(0, weight=1)
 
         # 主畫面到這裡就結束：選項一個都不露出來（日常轉檔一項都不必動）。
@@ -1023,8 +1034,9 @@ class App(tk.Tk):
         # 其餘四個是開關
         ttk.Label(opt, text="頁碼（例 1-5,8，留空＝全部）").grid(
             row=0, column=0, sticky="w")
-        ttk.Entry(opt, textvariable=self.pages, width=18).grid(
-            row=0, column=1, sticky="w", padx=(p(SP_MD), 0))
+        pages_entry = ttk.Entry(opt, textvariable=self.pages, width=18)
+        pages_entry.grid(row=0, column=1, sticky="w", padx=(p(SP_MD), 0))
+        self._inputs.append(pages_entry)
 
         checks = [
             ("保留浮水印（NotebookLM／Gemini Notebook）", self.keep_watermark),
@@ -1037,9 +1049,10 @@ class App(tk.Tk):
         # ⚠️ 行距是 SP_SM 不是 2px：四個核取方塊擠成 4px 一行時，它們看起來
         # 像一段文字而不是四個可以按的東西
         for i, (label, var) in enumerate(checks):
-            ttk.Checkbutton(opt, text=label, variable=var).grid(
-                row=1 + i, column=0, columnspan=2, sticky="w",
-                pady=(p(SP_LG) if i == 0 else p(SP_SM), 0))
+            cb = ttk.Checkbutton(opt, text=label, variable=var)
+            cb.grid(row=1 + i, column=0, columnspan=2, sticky="w",
+                    pady=(p(SP_LG) if i == 0 else p(SP_SM), 0))
+            self._inputs.append(cb)
 
         # ---- 結果列 ----
         # ⚠️ 取代舊版的「完成」對話框（`askyesno("要開啟所在資料夾嗎？")`）。
@@ -1248,6 +1261,12 @@ class App(tk.Tk):
         `event.data` 是 **Tcl 的 list 字面值**（`{C:/有 空白/a.pdf} C:/b.pdf`），
         不是用空白切就好的字串——含空白的路徑會被大括號包起來。用直譯器自己的
         `splitlist` 拆，那是唯一不會拆錯的作法。"""
+        if self.running:
+            # 灰掉的欄位擋不住拖放（它不經過控制項）。⚠️ 不可以靜靜地什麼都不做：
+            # 那看起來就是拖放壞了，而使用者會一直重拖
+            self._set_hint("轉檔中不能換檔案 —— 要換請先按「■ 停止轉檔」。",
+                           err=True)
+            return
         try:
             paths = [q for q in self.tk.splitlist(event.data) if q]
         except Exception:
@@ -1267,6 +1286,8 @@ class App(tk.Tk):
         這個綁定掛在整個視窗上，不擋掉的話，使用者在「頁碼」欄貼一段文字會變成
         「輸入 PDF 被換掉」——而且他貼的那一段還是照樣進了頁碼欄，兩件事同時
         發生，看起來就像程式在亂跳。"""
+        if self.running:
+            return None                  # 轉檔中不換輸入檔（見 _set_inputs_enabled）
         w = self.focus_get()
         if isinstance(w, (ttk.Entry, tk.Entry, ttk.Spinbox, tk.Spinbox,
                           tk.Text, ttk.Combobox)):
@@ -1343,6 +1364,23 @@ class App(tk.Tk):
             pass
         self.out_show.set(f"輸出：{out.name}（與來源同資料夾）" if same_dir
                           else f"輸出：{_shorten_path(out)}")
+
+    def _set_inputs_enabled(self, on: bool) -> None:
+        """轉檔中把「按了也沒用」的輸入全部鎖起來（使用者 2026-08-25 晚指示）。
+
+        argv 在 `_start()` 的第一行就已經組好交給背景執行緒了，所以轉檔中改頁碼、
+        改核取方塊、甚至換一份輸入 PDF，**對這一趟完全沒有作用**——但畫面上那些
+        控制項照樣有反應、照樣打得進字，看起來像是改得到。鎖起來是把「這件事現在
+        做不到」講在使用者動手之前，跟「路徑不存在就把開始轉檔鎖起來」是同一條原則
+        （用擋的、不要用告知的）。
+
+        ⚠️ **檔案區也要一起鎖**，不是只鎖轉檔選項：換輸入 PDF 對這一趟同樣沒有
+        作用，只鎖一半反而讓人以為另一半改得到。
+        ⚠️ **停止鈕、兩顆收合鈕、開啟紀錄不在清單裡**：那些是轉檔中真的要按的。
+        ⚠️ 拖放與 Ctrl+V 是**繞過控制項**的另外兩條路，`_on_files_dropped()` 與
+        `_on_paste_path()` 各自也要擋——不然欄位是灰的、路徑卻換掉了。"""
+        for w in self._inputs:
+            w.state(["!disabled"] if on else ["disabled"])
 
     def _refresh_run_button(self) -> None:
         if self.running:
@@ -1466,6 +1504,7 @@ class App(tk.Tk):
         self._pages_done = self._pages_total = 0
         self._last_warning = ""
         self._determinate = False
+        self._set_inputs_enabled(False)    # 轉檔中改了也沒用（argv 已經送出去了）
         self.progress.grid()               # 沒在跑就不顯示（見 _build_ui）
         self.progress.config(mode="indeterminate", value=0)
         # 不定長度進度條不帶任何資訊，12ms（83Hz）只是白白讓主執行緒重繪；
@@ -1632,7 +1671,14 @@ class App(tk.Tk):
                                   self.pal["err"], None)
                 self._set_log_shown(True)
         finally:
+            # ⚠️ **順序有意義**：`_refresh_input_state()` 要趁 `running` 還是 True
+            # 時呼叫。它結尾會把狀態字寫成「就緒」，而那一步是用 `not self.running`
+            # 擋住的——先把旗標放掉再呼叫，剛剛寫上去的「完成 ✓」／「已停止」／
+            # 「失敗」就會被蓋成「就緒」。這裡要它做的只有一件事：把拖放／Ctrl+V
+            # 被擋掉時寫進去的那句紅字換回正常提示。
+            self._refresh_input_state()
             self.running = False
+            self._set_inputs_enabled(True)
             # ⚠️ 歸零成 determinate/0 **再**藏起來：舊版是「`_determinate` 為假
             # 就留在 indeterminate」，那正是它自己註解裡警告過的狀態（Sun Valley
             # 下停住的 indeterminate 會在最左邊留一小截藍色）。現在閒置根本不顯
