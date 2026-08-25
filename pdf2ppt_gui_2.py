@@ -55,8 +55,9 @@ docs/dev/windows-環境與入口.md 5.1。
 
 進度：動作列上是**同一列**的「開始轉檔／停止轉檔」鈕、進度條與狀態字（舊版散在
 三個地方：右上角的「就緒」、中段一條沒有資訊量的 indeterminate 進度條、下方日誌）。
-進度條在 cli 印出第一行 `page N (n/total)` 時從 indeterminate 換成 determinate
-（_scan_line）。⚠️ 狀態字**只報頁數、不報剩餘時間**（使用者 2026-08-25 指示刪掉
+進度條**沒在跑就不顯示**（使用者 2026-08-25 晚指示：閒置時那條 determinate value=0
+的空槽橫貫版面中段，讀起來像一條分隔線）；轉檔一開始 grid() 回來，在 cli 印出第一行
+`page N (n/total)` 時從 indeterminate 換成 determinate（_scan_line）。⚠️ 狀態字**只報頁數、不報剩餘時間**（使用者 2026-08-25 指示刪掉
 「約剩 2 分」那一段）：頁數是量到的，剩餘時間是猜的。轉檔結果不再用互動式對話框問「要開啟資料夾嗎」——那個框正好蓋住
 日誌最後一行的降級 WARNING，改成日誌區上方一條結果列（_show_result），降級的頁碼
 直接寫在列上。
@@ -963,11 +964,18 @@ class App(tk.Tk):
         # ⚠️ 開場一定是 indeterminate：載入引擎（首次還要下載約 90MB 模型）那段
         # 根本沒有頁數可報，畫一條會動的假進度是騙人的。收到第一行
         # `page N (n/total)` 才換成 determinate（見 _scan_line）。
-        # ⚠️ 閒置時是 **determinate 且 value=0**（一條空的槽），不是停住的
-        # indeterminate——後者在 Sun Valley 下會在最左邊留一小截藍色，看起來像
-        # 「已經跑了 3%」或「卡住了」。轉檔一開始才切成 indeterminate。
+        # ⚠️ **沒在跑就不顯示**（2026-08-25 晚，使用者指示）：閒置時本來是一條
+        # determinate value=0 的空槽，但那條空槽橫貫版面中段，讀起來像一條分隔
+        # 線——一個「什麼都沒在發生」的元件卻在畫面上劃了一刀。⚠️ **用
+        # `grid_remove()`／`grid()`，不要 destroy、也不要改欄寬**：它與按鈕、狀態
+        # 字是**同一列的三個欄**，列高由最高的那個（按鈕 46px）決定，藏掉這條 7px
+        # 的東西**版面完全不動**（實測：actions reqheight 46→46、視窗 reqheight
+        # 426→426、狀態字 x 787→787——欄 1 的 weight 讓空間原地留白）。這正是它
+        # 可以「沒在跑就不顯示」的前提：換成 pack_forget 或整列重排，按鈕與狀態字
+        # 就會在按下去的瞬間跳位。
         self.progress = ttk.Progressbar(actions, mode="determinate", value=0)
         self.progress.grid(row=0, column=1, sticky="ew", padx=p(SP_LG))
+        self.progress.grid_remove()
         self.status = ttk.Label(actions, text="就緒", style="Status.TLabel",
                                 anchor="e", foreground=self.pal["ok"])
         self.status.grid(row=0, column=2, sticky="e")
@@ -1458,6 +1466,7 @@ class App(tk.Tk):
         self._pages_done = self._pages_total = 0
         self._last_warning = ""
         self._determinate = False
+        self.progress.grid()               # 沒在跑就不顯示（見 _build_ui）
         self.progress.config(mode="indeterminate", value=0)
         # 不定長度進度條不帶任何資訊，12ms（83Hz）只是白白讓主執行緒重繪；
         # 用 ttk 的預設節奏即可
@@ -1624,8 +1633,12 @@ class App(tk.Tk):
                 self._set_log_shown(True)
         finally:
             self.running = False
-            self.progress.config(mode="determinate" if self._determinate
-                                 else "indeterminate")
+            # ⚠️ 歸零成 determinate/0 **再**藏起來：舊版是「`_determinate` 為假
+            # 就留在 indeterminate」，那正是它自己註解裡警告過的狀態（Sun Valley
+            # 下停住的 indeterminate 會在最左邊留一小截藍色）。現在閒置根本不顯
+            # 示，但下一趟 `_start()` 之前的狀態還是要乾淨。
+            self.progress.config(mode="determinate", value=0)
+            self.progress.grid_remove()
             self.run_btn.config(text=RUN_TEXT)
             self._refresh_run_button()
             self._fit_window()
