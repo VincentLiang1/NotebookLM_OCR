@@ -94,6 +94,8 @@ DirectML 版是「**取代**」CPU 版的完整 build（它同時提供 `CPUExec
 
 **② 字型走 Tk 的具名字型**（`TkDefaultFont`／`TkTextFont`／…）：ttk 控制項預設就吃這幾個，改一次全部跟著換。⚠️ 連 `TkFixedFont` 與日誌區的 `Consolas` 都換掉了（使用者說「全部的字體」）——代價是日誌區不再等寬，`tqdm` 之類的欄位對齊會鬆掉；要換回等寬只需改 `_build_ui` 裡日誌 `tk.Text` 的 `font=`。⚠️ 佈景自帶的 `SunValley*Font` 是 **Segoe UI Variable + 像素單位**（`-14`），既不是使用者要的字型、在 DPI-aware 的 150% 下也小一號，所以一併改成我們的家族名 + 點數。
 
+⚠️ **介面字型與輸出字型是兩回事、不可互相「順手統一」**：`UI_FONT`（Microsoft JhengHei UI）只管介面自己的字，`--font`（預設 Microsoft YaHei）是**寫進 PPTX 的東亞字型**——`style.py` 的 `_measure_em()` 固定載入 `msyh.ttc` 量寬度，整套寬度夾制、snap 與標題足跡門檻都照 YaHei 校準，換掉它不會跟著換度量衡。兩個名字長得像、住在同一支檔案裡，是這個專案最容易被「統一」掉的一對。
+
 **③ 佈景：`sv-ttk`（Sun Valley）**，一套模仿 Windows 11 Fluent／WinUI 的 ttk 佈景（圓角、細框線、Fluent 輸入框、亮／暗兩套，MIT，純 Tcl+PNG 約 100KB）。內建可選的只有 `winnative / clam / alt / default / classic / vista / xpnative`——其中只有 `clam` 吃得下自訂配色（vista/winnative 的控制項是原生主題畫的），而手工調 clam 只能做到「乾淨」，做不出圓角（圓角要圖片元件）。亮／暗跟隨 Windows 的「應用程式模式」（`preferred_theme_mode()` 直接讀 registry 的 `AppsUseLightTheme`，不為了一個值加 `darkdetect` 依賴），`NOTEBOOKLM_PDF2PPT_THEME=light|dark` 可覆寫；深色時連標題列也用 DWM 屬性 20 一起變深。
 
 ⚠️ **切完佈景要自己補一發 `<<ThemeChanged>>`，而且要先 `update_idletasks()`**：sv-ttk 的顏色不寫在佈景定義裡，而是掛在該事件上的 `configure_colors` 設的，Tk 8.6.15 在 `ttk::style theme use` 時**不會**把事件送到根視窗。實測 `ttk::style configure .` 在 `set_theme()` 之後仍是空字串；只補 `event_generate`（`tail` 或 `now` 都一樣）也沒用，**視窗還沒實體化前那個 class binding 根本不會觸發**——補上 `update_idletasks()` 兩者才成立。症狀非常好認：深色模式下一堆**白底黑字的標籤**散在深色視窗上（那是母佈景 clam 的預設灰）。
