@@ -31,9 +31,9 @@ from .style import estimate_style
 # model's casing is the least trustworthy part of an otherwise easy read.
 # Exit code for a run that produced a deck but had to degrade at least one
 # page. Neither 0 nor 1 is honest here: 0 makes the GUI announce plain success
-# over a page that lost its text, and 1 tells 轉檔.bat the conversion failed
-# when the file is perfectly usable. ⚠️ pdf2ppt_gui_2.py and 轉檔.bat carry
-# their own copy of this number (a test pins the GUI's to this one).
+# over a page that lost its text, and 1 reports failure over a file that is
+# perfectly usable. ⚠️ pdf2ppt_gui_2.py carries its own copy of this number
+# (a test pins it to this one).
 PARTIAL_RC = 3
 
 WATERMARK_MARKS = ("notebooklm", "gemininotebook")

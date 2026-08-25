@@ -73,8 +73,9 @@ If rc <> 0 Then
     If Len(out) > 0 Then
         msg = msg & out
     Else
-        msg = msg & "沒有攔到任何訊息。請改用「啟動（顯示訊息）.bat」，" & _
-              "它會把主控台留著；若是第一次使用，請先執行「安裝.bat」。"
+        msg = msg & "沒有攔到任何訊息。若是第一次使用，請先執行「安裝.bat」；" & _
+              "仍然這樣的話，在這個資料夾按住 Shift 點右鍵選在終端機中開啟，" & _
+              "執行 uv run python pdf2ppt_gui_2.py，訊息會直接顯示在視窗裡。"
     End If
     MsgBox msg, vbCritical, APP_TITLE
 End If

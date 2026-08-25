@@ -220,15 +220,16 @@ def test_every_cli_flag_has_a_gui_control():
     assert not missing, f"pdf2ppt_gui_2.py 沒有對應控制項的旗標：{missing}"
 
 
-def test_the_partial_exit_code_is_the_same_number_in_all_three_places():
-    """降級的離開碼在三個地方各存一份：`cli.py` 是正典，`pdf2ppt_gui_2.py` 與
-    `轉檔.bat` 都是手抄的。
+def test_the_partial_exit_code_is_the_same_number_in_both_places():
+    """降級的離開碼存兩份：`cli.py` 是正典，`pdf2ppt_gui_2.py` 是手抄的。
 
-    不 import 的理由寫在各自的註解裡（GUI 不想為了一個整數把整組相依拉進啟動
-    路徑，而 `.bat` 根本沒有 Python 可用）。手抄就會漂移，而**這一種漂移
-    是沉默的**：號碼對不上時，有頁面降級的那一趟會被報成單純的「完成」，或者
-    反過來被報成「失敗」——兩種都會讓使用者做錯決定，而且畫面上不會有任何一
-    句話提示他號碼對不上。"""
+    （2026-08-25 之前是三份，第三份在拖放用的 `轉檔.bat` 裡；那個檔連同
+    `啟動（顯示訊息）.bat` 一起刪掉了——使用者要交付面單純。）
+
+    不 import 的理由寫在 GUI 自己的註解裡（不想為了一個整數把整組相依拉進啟動
+    路徑）。手抄就會漂移，而**這一種漂移是沉默的**：號碼對不上時，有頁面降級的
+    那一趟會被報成單純的「完成」，或者反過來被報成「失敗」——兩種都會讓使用者
+    做錯決定，而且畫面上不會有任何一句話提示他號碼對不上。"""
     m = re.search(r"^PARTIAL_RC = (\d+)$", CLI_PY, re.M)
     assert m, "cli.py 的 PARTIAL_RC 不見了（改名了就要一起改這支測試）"
     rc = m.group(1)
@@ -236,9 +237,6 @@ def test_the_partial_exit_code_is_the_same_number_in_all_three_places():
     assert g and g.group(1) == rc, (
         f"pdf2ppt_gui_2.py 的 PARTIAL_RC 是 {g and g.group(1)}，"
         f"cli.py 是 {rc}")
-    bat = (ROOT / "轉檔.bat").read_text(encoding="cp950")
-    assert f"errorlevel {rc}" in bat, (
-        f"轉檔.bat 沒有 errorlevel {rc} 的分支，降級會被當成失敗")
 
 
 def test_the_self_reported_exit_code_matches_the_launcher():

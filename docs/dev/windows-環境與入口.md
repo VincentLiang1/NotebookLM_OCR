@@ -50,14 +50,14 @@ DirectML 版是「**取代**」CPU 版的完整 build（它同時提供 `CPUExec
 - `.vbs` 沒有 `chcp` 這回事：`wscript` 用系統 ANSI codepage 讀檔，所以編碼要對，但**不需要也不能**下 `chcp`。
 - ⚠️ **cp950 編不出 `U+26A0`（⚠）**：`.bat`／`.vbs` 的註解不能用這個 repo 慣用的警告符號，改寫「【注意】」。中文、破折號、全形括號、`→` 都編得出來，只有這一個字會在寫檔當下丟 `UnicodeEncodeError`。
 
-## 4. 四個入口
+## 4. 兩個入口（2026-08-25 起）
 
 | 檔案 | 做什麼 |
 | --- | --- |
 | `安裝.bat` | `uv sync` ＋ 煙霧測試 ＋ 建立桌面／「開始」功能表捷徑（見 §5.3） |
 | `啟動.vbs` | 開圖形介面，**不開黑視窗**（使用者 2026-08-24 要求；平常用這個） |
-| `啟動（顯示訊息）.bat` | 同上但保留主控台，看得到訊息；啟動不起來時的退路 |
-| `轉檔.bat` | 把一個或多個 PDF **拖上去**，用預設選項轉檔，`.pptx` 輸出到 PDF 旁邊 |
+
+⚠️ **本來有四個，`啟動（顯示訊息）.bat`（保留主控台的退路）與 `轉檔.bat`（拖放批次轉檔）在 2026-08-25 依使用者指示刪掉**：「未來希望盡量單純檔案，不要給使用者太多」。兩者的功能都沒有消失，只是改成**不佔交付檔案**的形式——看訊息＝從終端機跑 `uv run python pdf2ppt_gui_2.py`，批次轉檔＝`uv run python pdf2ppt.py a.pdf b.pdf`。判準與通則寫在 `docs/spec/09-執行環境與效能.md` §9.3。⚠️ **新增檔案之前先過那條判準**：這個資料夾裡每多一個長得像入口的檔案，就多一次「我該點哪一個」。
 
 ⚠️ **圖形介面每次啟動會在 `logs` 底下寫一份執行紀錄**（檔名是啟動時間＋pid，保留 30 天）；`啟動.vbs` 在程式沒能正常結束時**當場把攔到的訊息跳訊息框**、不落檔（專案資料夾裡沒有 `啟動.log` 這個東西了）。細節見 `docs/dev/gui-啟動與錯誤留底.md`。
 
@@ -81,7 +81,7 @@ DirectML 版是「**取代**」CPU 版的完整 build（它同時提供 `CPUExec
 
 - `PROJECT_DIR = Path(__file__).resolve().parent`，模組層級一個常數，**沒有第二個候選**。`APP_ICON`、`log_dir()`、`_git_sha()`、版號讀的 `pyproject.toml` 全部改成從它出發（本來各自寫一次 `Path(__file__).resolve().parent`）。
 - 驗證放在 `main()`、**在 `App()` 之前**：`is_project_dir(PROJECT_DIR)` 不過就呼叫 `fail_no_project()` 然後 `return 2`，視窗完全不建。
-- `fail_no_project()` 的訊息有兩個落點：`messagebox.showerror`（自己起一個 withdraw 掉的 `tk.Tk()`，因為此刻還沒有主視窗）＋ `sys.stderr`。對話框是給雙擊「啟動.vbs」的人看的（那條路沒有主控台）；stderr 是給「啟動（顯示訊息）.bat」、直接下指令，**以及對話框跳不出來時**的人看的。⚠️ `tk.Tk()` 起不來也要吞掉例外，否則錯誤訊息本身變成 traceback。
+- `fail_no_project()` 的訊息有兩個落點：`messagebox.showerror`（自己起一個 withdraw 掉的 `tk.Tk()`，因為此刻還沒有主視窗）＋ `sys.stderr`。對話框是給雙擊「啟動.vbs」的人看的（那條路沒有主控台）；stderr 是給從終端機跑的人、**以及對話框跳不出來時**看的。⚠️ `tk.Tk()` 起不來也要吞掉例外，否則錯誤訊息本身變成 traceback。
 - ⚠️ **只讓使用者看到一個框**（使用者 2026-08-25 追加指示）：`.vbs` 本來在結束碼非 0 時會把攔到的 stderr 再跳一次，於是同一件事說兩遍。改法是一個雙方講好的暗號——`fail_no_project()` **回傳訊息框有沒有真的跳出來**，`main()` 據此回 `SELF_REPORTED_RC`(78) 或 1；`.vbs` 收到 78 就 `Cleanup` 後 `WScript.Quit rc`，安靜收工但結束碼照傳。⚠️ **暗號不可以是 1 或 2**：`1` 是未攔到的例外，**`2` 是直譯器連 `.py` 都打不開**（只複製了 `.vbs`、GUI 檔不在的情況）——撞上去就會把那次最需要跳框的失敗靜靜吞掉。78 是 sysexits 的 `EX_CONFIG`，uv 與 Python 都不會回。⚠️ **也不可以無條件回 78**：Tk 起不來的機器上那等於什麼都沒說，所以「跳不出來就回 1」那一半是這條規則的另一半。兩個常數由 `tests/test_docs.py::test_the_self_reported_exit_code_matches_the_launcher` 釘著。
 - **跟著刪掉的殘骸**（位置固定之後它們在定義上不會再被用到）：`~/.notebooklm_pdf2ppt_gui.json` 這個設定檔與 `load_config()`／`save_config()`（它只存過 `project_dir` 一個鍵，連同 `import json` 一起沒了）、`find_project_dir()` 的三段 fallback、`App.project_dir`／`App.loaded_from`、`_refresh_project_label()`／`_pick_project()`、`_run_conversion()` 裡「換過資料夾就把 `sys.modules` 裡的 `pdf2ppt` 清掉」那一段，以及 `_start()` 開頭的位置檢查。⚠️ **`_run_conversion()` 的 `ModuleNotFoundError` 分流要留著**：`pdf2ppt` 自己不見了（啟動後才被搬走）與缺相依套件（沒跑 `uv sync`）的處方不同。
 - 版面連帶：主畫面第一個區塊從「專案位置」變成「檔案」，多出來的高度落給日誌區（`geometry` 的 760×640 沒有跟著改）。
