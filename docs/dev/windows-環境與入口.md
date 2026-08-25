@@ -70,8 +70,34 @@ DirectML 版是「**取代**」CPU 版的完整 build（它同時提供 `CPUExec
 **2026-08-25 使用者又指示了三件事**（都在 `_build_ui`／`_toggle_advanced` 一帶）：
 
 1. **「開始轉檔」排到收合按鈕之上**、緊接檔案區底下。主線是「選檔 → 按下去」，把終點排在一個日常不必碰的東西後面等於把主線切斷；展開進階區時它還會被推到很下面。連帶：展開的兩區改用 `before=self.progress` 插回去（也就是收合按鈕的正下方），不再是 `before=self.actions_frame`。
-2. **主要動作按鈕要明顯**：改用 `tk.Button` + 實心藍底白字（`RUN_BG`）。⚠️ **不能用 `ttk.Button`**——Windows 的 vista 佈景把按鈕的底交給原生主題畫，`style.configure(background=…)` 完全沒有效果，要嘛整支程式改用 clam 佈景、連帶換掉所有控制項的長相。代價是 `state="disabled"` 只會換文字顏色、鮮豔的底色照舊留著（看起來仍像可以按），所以 `_set_run_enabled` 要自己換底色，開關兩處都改走它。
+2. **主要動作按鈕要明顯**：藍底白字的實心鈕。⚠️ 這一項當天做了兩版——先用 `tk.Button` 自己塗色（因為 Windows 的 vista 佈景把 `ttk.Button` 的底交給原生主題畫，`style.configure(background=…)` 完全沒有效果），換上 Sun Valley 佈景之後改成佈景自己的 **`Accent.TButton`**（`Run.Accent.TButton` 只加大字級與內距）。⚠️ 樣式名**必須以 `.Accent.TButton` 結尾**才繼承得到那組圖片元件；`_set_run_enabled` 也因此瘦成一行 `state()`，hover／pressed／disabled 全部由佈景畫。
 3. **收合要把高度還回去**（`_restore_height_after_collapse`）。原本是「只長不縮」，理由寫在程式註解裡：視窗管理員可能把我們要的高度夾掉一截，「還原成展開前的高度」會失效。⚠️ 那個顧慮只對**減法**成立（現在的高度減掉展開時加的量，會把被夾掉的那幾像素永久留下、按幾次愈長愈高）；改成**記下展開前實際量到的高度**再還原就沒事，實測 620 → 941 → 620，第二輪仍是 620。另外記下撐開後量到的高度，使用者展開期間自己拉過視窗（差 >8px）就整個不動——那是他要的尺寸，不是我們借的。
+
+## 5.1 外觀：DPI、字型、佈景（2026-08-25）
+
+使用者當天回報「UI 字體有鋸齒狀」、要求介面全部改用 **Microsoft JhengHei UI**，並問「有沒有其他 Theme 可以選」、能不能改成 [WinUI 3](https://learn.microsoft.com/zh-tw/windows/apps/winui/winui3/)。三件事分開處理：
+
+**① 鋸齒的成因不是字型，是 DPI。** 本機顯示縮放 150%，而 Tk 行程預設**不是 DPI-aware**：Windows 讓它以 96dpi 畫完整個視窗，再**點陣放大** 1.5 倍貼上去，所有筆畫因此糊掉。修法是 `enable_dpi_awareness()`（`SetProcessDpiAwareness(1)`，⚠️ **必須在建 Tk 之前**，Tk 只在啟動時問一次 DPI）。實測 `winfo fpixels 1i` 95.9 → 143.9、螢幕 1707×960 → 2560×1440。⚠️ **連帶代價**：點數指定的字型會自己換算，**寫死的像素不會**——`geometry`、`padx`、`wraplength` 全部要過 `App.px()`，漏一個就在 150% 下縮成 2/3。另外本機的 `TkDefaultFont` 本來就已經是 Microsoft JhengHei UI，所以「換字型」本身治不了鋸齒。
+
+**② 字型走 Tk 的具名字型**（`TkDefaultFont`／`TkTextFont`／…）：ttk 控制項預設就吃這幾個，改一次全部跟著換。⚠️ 連 `TkFixedFont` 與日誌區的 `Consolas` 都換掉了（使用者說「全部的字體」）——代價是日誌區不再等寬，`tqdm` 之類的欄位對齊會鬆掉；要換回等寬只需改 `_build_ui` 裡日誌 `tk.Text` 的 `font=`。⚠️ 佈景自帶的 `SunValley*Font` 是 **Segoe UI Variable + 像素單位**（`-14`），既不是使用者要的字型、在 DPI-aware 的 150% 下也小一號，所以一併改成我們的家族名 + 點數。
+
+**③ 佈景：`sv-ttk`（Sun Valley）**，一套模仿 Windows 11 Fluent／WinUI 的 ttk 佈景（圓角、細框線、Fluent 輸入框、亮／暗兩套，MIT，純 Tcl+PNG 約 100KB）。內建可選的只有 `winnative / clam / alt / default / classic / vista / xpnative`——其中只有 `clam` 吃得下自訂配色（vista/winnative 的控制項是原生主題畫的），而手工調 clam 只能做到「乾淨」，做不出圓角（圓角要圖片元件）。亮／暗跟隨 Windows 的「應用程式模式」（`preferred_theme_mode()` 直接讀 registry 的 `AppsUseLightTheme`，不為了一個值加 `darkdetect` 依賴），`NOTEBOOKLM_PDF2PPT_THEME=light|dark` 可覆寫；深色時連標題列也用 DWM 屬性 20 一起變深。
+
+⚠️ **切完佈景要自己補一發 `<<ThemeChanged>>`，而且要先 `update_idletasks()`**：sv-ttk 的顏色不寫在佈景定義裡，而是掛在該事件上的 `configure_colors` 設的，Tk 8.6.15 在 `ttk::style theme use` 時**不會**把事件送到根視窗。實測 `ttk::style configure .` 在 `set_theme()` 之後仍是空字串；只補 `event_generate`（`tail` 或 `now` 都一樣）也沒用，**視窗還沒實體化前那個 class binding 根本不會觸發**——補上 `update_idletasks()` 兩者才成立。症狀非常好認：深色模式下一堆**白底黑字的標籤**散在深色視窗上（那是母佈景 clam 的預設灰）。
+
+⚠️ **沒有 `sv_ttk` 也必須開得起來**：`apply_ui_style` 的 `except` 會留在系統原生佈景、只換字型。GUI 是使用者的主要入口，為了外觀讓它開不了完全不划算（測法：`sys.modules["sv_ttk"] = None` 再開一次）。
+
+### 為什麼不是真的 WinUI 3
+
+使用者問了兩次（[microsoft-ui-xaml](https://github.com/microsoft/microsoft-ui-xaml)、[sotanakamura/winui-python](https://github.com/sotanakamura/winui-python)）。WinUI 3 是 C++/C#/XAML 的原生框架（WinAppSDK），**Tk 的視窗裡放不進 XAML 控制項**，所以「改成 WinUI 3」等於換掉整個前端，三條路的代價：
+
+| 路 | 代價 | 換到什麼 |
+| --- | --- | --- |
+| 現況：Tk + Sun Valley | 一個 100KB 的 MIT 依賴，程式碼零改寫 | 很像 Win11 的外觀（圓角、Fluent 控制項、亮暗自動） |
+| `winui-python`（`win32more`） | 使用者機器要另外裝 **Windows App Runtime**；UI 全部改寫成 XAML；背景執行緒要改走 `DispatcherQueue`；那個 repo 是 **16 個 commit 的範例集**，不是框架 | 真的 WinUI 3 控制項、Mica 背景 |
+| PySide6 + Fluent widgets | 約 150MB 依賴 + 前端全改寫 | 很接近 WinUI 的外觀，但仍不是 WinUI |
+
+⚠️ 第二條的**風險落點是啟動**：這支 GUI 的價值有一半在「雙擊就開、出事有 log」（`啟動.vbs`、`logs\<時間>-<pid>.log`、訊息框留底），而多一個必須預先安裝的執行階段正好打在那裡。要走這條路的話，先做一個**只有一個視窗、一顆按鈕**的 PoC 確認 Runtime 在使用者機器上裝得起來，再談移植。
 
 **預設值現在三方一致**（2026-08-24 起）。曾經不一致的只有色塊那一項：2026-08-23 到 08-24 之間它是主畫面上唯一的核取方塊、且刻意與 `cli.py` 相反（使用者要拿它做 A/B，看「只有文字方塊帶底色」在 PowerPoint 裡的可編輯性）；量完之後 `cli.py` 的預設改成 `--no-cover`（理由與完整量測見 `docs/spec/06-流程-顏色、蓋板與裁切.md` §6.4），GUI 那一項也收進進階區。
 

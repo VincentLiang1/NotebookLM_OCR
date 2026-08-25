@@ -24,6 +24,11 @@ NotebookLM PDF → PPT  桌面轉檔工具（圖形介面）
 OCR / 排版工作全部沿用 pdf2ppt 套件。注意選項清單目前是手抄 cli.py 的
 argparse 定義：在 cli.py 增刪旗標或改預設值時，這裡與 README 的選項表要一起改。
 
+外觀：Sun Valley 佈景（模仿 Windows 11 Fluent／WinUI）、Microsoft JhengHei UI、
+亮暗跟隨 Windows，並且開了 DPI 感知 —— 三個一動就壞的點寫在 apply_ui_style 與
+enable_dpi_awareness 的 docstring 裡，取捨（以及「為什麼不是真的 WinUI 3」）見
+docs/dev/windows-環境與入口.md 5.1。
+
 版面：主畫面只留輸入／輸出檔，其餘選項全部收在預設收合的「進階選項」區
 （_toggle_advanced）。主線的終點「開始轉檔」排在檔案區正下方、收合按鈕**之上**
 （使用者 2026-08-25 指示），展開的兩區插在收合按鈕與進度條之間；展開時借走的
@@ -39,6 +44,7 @@ argparse 定義：在 cli.py 增刪旗標或改預設值時，這裡與 README �
 """
 from __future__ import annotations
 
+import ctypes
 import datetime
 import io
 import os
@@ -53,7 +59,7 @@ import traceback
 from pathlib import Path
 
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, font as tkfont, messagebox, ttk
 
 
 APP_TITLE = "NotebookLM PDF → PPT 轉檔工具"
@@ -64,14 +70,195 @@ APP_TITLE = "NotebookLM PDF → PPT 轉檔工具"
 ADV_SHOW_TEXT = "▸ 進階選項（頁碼、字型、DPI、除錯…）"
 ADV_HIDE_TEXT = "▾ 進階選項（收合）"
 
-# 「開始轉檔」的配色。⚠️ 這一顆是 tk.Button 而不是 ttk.Button：Windows 上
-# ttk 的 vista 佈景把按鈕的底交給原生主題畫，`background` 設了不會有任何效果
-# （要嘛整支程式改用 clam 佈景、連帶換掉所有控制項的長相），只有 classic 的
-# tk.Button 真的塗得上顏色。代價是 disabled 時只換文字顏色、底色照舊鮮豔，
-# 所以底色要自己換 —— 見 _set_run_enabled。
-RUN_BG = "#1a73e8"
-RUN_BG_ACTIVE = "#1666d0"          # 滑鼠移上去（Tk 的 active 狀態）
-RUN_BG_DISABLED = "#9db9e8"        # 轉檔進行中
+# --------------------------------------------------------------------------- #
+#  外觀（字型、DPI、佈景）
+# --------------------------------------------------------------------------- #
+# 介面字型（使用者 2026-08-25 指定）。⚠️ **這跟 --font 完全是兩回事**：
+# FONT_CHOICES／--font 是**輸出到 PPTX 裡**的東亞字型，預設必須是 Microsoft
+# YaHei（style.py 的寬度量測固定用 msyh.ttc 校準，換掉會讓排版估算失準）；
+# 這裡只管介面自己的字，兩者不可互相「順手統一」。
+UI_FONT = "Microsoft JhengHei UI"
+UI_FONT_FALLBACK = "Microsoft JhengHei"   # 舊版 Windows 沒有 UI 版
+# 佈景：**Sun Valley**（`sv-ttk`，MIT）—— 一套模仿 Windows 11 Fluent／WinUI 的
+# ttk 佈景（圓角、細框線、Fluent 的輸入框與勾選方塊、內建亮／暗兩套）。
+#
+# ⚠️ **這不是 WinUI 3 本身，也不可能是**（使用者 2026-08-25 問過）：WinUI 3
+# （microsoft/microsoft-ui-xaml + WinAppSDK）是 C++/C#/XAML 的原生框架，Tk 的
+# 視窗裡放不進 XAML 控制項。要「真的」用 WinUI 3 就得把整個前端改寫成 C#、
+# 讓它去呼叫本專案的 CLI（兩套工具鏈、另一套打包，而且這支 GUI 的日誌留底、
+# 背景執行緒、換 checkout 重載模組全部要重寫）。取捨見
+# docs/dev/windows-環境與入口.md §5。
+#
+# ⚠️ 佈景只挑得動 **ttk** 控制項；`tk.Text`（日誌區）與視窗底色是 classic 的，
+# 顏色要自己餵 —— 就是底下這兩份 PALETTE 存在的理由。
+THEME_ENV = "NOTEBOOKLM_PDF2PPT_THEME"     # light / dark，不設就跟隨 Windows
+PALETTES = {
+    "light": {
+        "page": "#fafafa",       # 與 Sun Valley 的 light 視窗底同色
+        "muted": "#5d6470",      # 說明文字
+        "ok": "#0f7b3f",
+        "warn": "#9a5b00",
+        "err": "#c02626",
+        "log_bg": "#ffffff",
+        "log_fg": "#1f2328",
+        "log_sel": "#cfe3fb",
+    },
+    "dark": {
+        "page": "#1c1c1c",
+        "muted": "#a6adb8",
+        "ok": "#5fd18a",
+        "warn": "#f0b429",
+        "err": "#ff7b72",
+        "log_bg": "#202020",
+        "log_fg": "#e6e6e6",
+        "log_sel": "#2d4f76",
+    },
+}
+
+
+def enable_dpi_awareness() -> None:
+    """讓 Windows 用真實像素畫這個視窗。⚠️ **必須在建立 Tk 之前呼叫**。
+
+    不設的話，Windows 會把整個視窗當成 96dpi 畫完、再**點陣放大**到顯示縮放
+    （本機 150%，就是 1.5×），字的邊緣全是鋸齒 —— 使用者 2026-08-25 回報的
+    「UI 字體有鋸齒狀」就是這個，**跟字型無關**（本機的 TkDefaultFont 本來
+    就已經是 Microsoft JhengHei UI）。
+
+    設了之後 Tk 量到的是真實 DPI（實測 95.9 → 143.9），**用點數指定的字型會
+    自己換算成正確的像素高**，但**寫死的像素數字不會**（geometry、padx、
+    wraplength…）——那些一律要過 App.px()，否則 150% 下整個版面會縮成 2/3。
+    """
+    if not sys.platform.startswith("win"):
+        return
+    try:                                   # Win8.1+：PROCESS_SYSTEM_DPI_AWARE
+        ctypes.windll.shcore.SetProcessDpiAwareness(1)
+    except Exception:
+        try:                               # Win7/8 的舊 API
+            ctypes.windll.user32.SetProcessDPIAware()
+        except Exception:
+            pass                           # 沒有就算了：只是回到會鋸齒的舊行為
+
+
+def ui_font_family(root: tk.Misc) -> str:
+    """介面要用的字型家族名（挑不到就讓 Tk 用系統預設，不要硬塞不存在的名字）。"""
+    fams = set(tkfont.families(root))
+    for fam in (UI_FONT, UI_FONT_FALLBACK):
+        if fam in fams:
+            return fam
+    return tkfont.nametofont("TkDefaultFont").actual("family")
+
+
+def preferred_theme_mode() -> str:
+    """"light" 或 "dark"：環境變數優先，否則跟隨 Windows 的「應用程式模式」。
+
+    讀 registry 而不是加一個 darkdetect 依賴 —— 就這一個值，而且它正是
+    darkdetect 在 Windows 上讀的那一個。讀不到就當亮色（絕大多數的情況）。"""
+    override = (os.environ.get(THEME_ENV) or "").strip().lower()
+    if override in PALETTES:
+        return override
+    try:
+        import winreg
+        with winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER,
+                r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"
+        ) as key:
+            return "light" if winreg.QueryValueEx(
+                key, "AppsUseLightTheme")[0] else "dark"
+    except Exception:
+        return "light"
+
+
+def use_dark_titlebar(root: tk.Misc) -> None:
+    """把視窗標題列也換成深色（Windows 10 20H1+ 的 DWM 屬性）。
+
+    不做的話深色介面會頂著一條白色標題列，比整片亮色還醜。失敗就算了。"""
+    if not sys.platform.startswith("win"):
+        return
+    try:
+        root.update_idletasks()          # 先讓 HWND 真的存在
+        hwnd = ctypes.windll.user32.GetParent(root.winfo_id())
+        ctypes.windll.dwmapi.DwmSetWindowAttribute(
+            hwnd, 20, ctypes.byref(ctypes.c_int(1)), ctypes.sizeof(ctypes.c_int))
+    except Exception:
+        pass
+
+
+def apply_ui_style(root: tk.Misc, scale: float) -> tuple[str, dict]:
+    """設定字型與佈景，回傳 (字型家族名, 調色盤)。
+
+    字型走 **Tk 的具名字型**（TkDefaultFont…）：所有 ttk 控制項預設就吃這幾個，
+    改一次全部跟著換，不必逐個 widget 設 font。⚠️ 連 TkFixedFont 也換掉 ——
+    日誌區原本是 Consolas（等寬），使用者 2026-08-25 要求「全部的字體」都用
+    Microsoft JhengHei UI。
+
+    ⚠️ **沒有 sv_ttk 也必須開得起來**：這支是使用者的主要入口，為了外觀讓它
+    開不了完全不划算。缺套件就留在系統原生佈景（vista），只換字型。
+    """
+    def px(n: float) -> int:
+        return max(1, int(round(n * scale)))
+
+    fam = ui_font_family(root)
+    for name, size in (("TkDefaultFont", 10), ("TkTextFont", 10),
+                       ("TkMenuFont", 10), ("TkHeadingFont", 10),
+                       ("TkIconFont", 10), ("TkTooltipFont", 9),
+                       ("TkCaptionFont", 10), ("TkSmallCaptionFont", 9),
+                       ("TkFixedFont", 10)):
+        try:
+            tkfont.nametofont(name, root).configure(family=fam, size=size)
+        except tk.TclError:
+            pass
+
+    mode = preferred_theme_mode()
+    pal = dict(PALETTES[mode])
+    st = ttk.Style(root)
+    try:
+        import sv_ttk
+        sv_ttk.set_theme(mode, root)
+    except Exception:
+        # 佈景載不起來（沒跑過 uv sync、Tcl 版本不合）：字型已經換好了，
+        # 版面照舊，只是回到 Windows 原生長相
+        pal["page"] = st.lookup("TFrame", "background") or pal["page"]
+        return fam, pal
+
+    # ⚠️ **切完佈景要自己補一發 <<ThemeChanged>>**：sv-ttk 的顏色不是寫在佈景
+    # 定義裡，而是掛在那個事件上的 configure_colors 設的，而 Tk 8.6.15 在
+    # `ttk::style theme use` 時**不會**把事件送到根視窗（實測：set_theme 之後
+    # `ttk::style configure .` 仍是空字串，補一發才有值）。少了這一行，ttk 控制項
+    # 會沿用母佈景 clam 的淺灰 —— 深色模式下就是一堆白底黑字的標籤散在深色視窗上。
+    # ⚠️ **要先 update_idletasks()**：視窗還沒實體化之前，`<<ThemeChanged>>` 送到
+    # 根視窗也不會觸發 class binding（實測 tail 與 now 都一樣沒作用，補了這一行
+    # 兩者才都成立）—— 而 apply_ui_style 正好跑在整支程式最早的地方。
+    root.update_idletasks()
+    root.event_generate("<<ThemeChanged>>", when="now")
+
+    # 佈景自帶的字型是 Segoe UI Variable、而且用**像素**指定（-14px）：既不是
+    # 使用者要的字型，在 DPI-aware 的 150% 下也會小一號（點數才會跟著 DPI 換算）
+    for name, size, bold in (("SunValleyCaptionFont", 9, False),
+                             ("SunValleyBodyFont", 10, False),
+                             ("SunValleyBodyStrongFont", 10, True),
+                             ("SunValleyBodyLargeFont", 12, False),
+                             ("SunValleySubtitleFont", 14, True),
+                             ("SunValleyTitleFont", 20, True)):
+        try:
+            tkfont.nametofont(name, root).configure(
+                family=fam, size=size, weight="bold" if bold else "normal")
+        except tk.TclError:
+            pass
+    st.configure(".", font=(fam, 10))
+
+    # Sun Valley 沒有涵蓋到、或本專案要加大的幾處
+    # 主要動作鈕：吃佈景的 Accent（Fluent 的藍底圓角鈕），只加大字與內距。
+    # ⚠️ 樣式名要以 .Accent.TButton 結尾才繼承得到那組圖片元件
+    st.configure("Run.Accent.TButton", font=(fam, 12, "bold"),
+                 padding=(px(22), px(9)))
+    # 進階選項的收合鈕：低調一點，別跟主要動作搶注意力
+    st.configure("Adv.TButton", padding=(px(10), px(6)), anchor="w")
+    st.configure("Title.TLabel", font=(fam, 15, "bold"))
+    st.configure("Muted.TLabel", foreground=pal["muted"])
+    st.configure("Status.TLabel", font=(fam, 10, "bold"))
+    if mode == "dark":
+        use_dark_titlebar(root)
+    return fam, pal
 
 # 轉檔結束代碼裡的這一個代表「檔案有了，但至少一頁降級」（cli.py 的
 # PARTIAL_RC）。⚠️ 手抄過來的常數，tests/test_docs.py 釘著兩邊一致 ——
@@ -340,8 +527,14 @@ class App(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title(APP_TITLE)
-        self.geometry("760x620")
-        self.minsize(680, 520)
+        # DPI 縮放倍率：enable_dpi_awareness() 之後這裡量到的是真實 DPI，
+        # 而底下所有寫死的像素（視窗大小、padding、wraplength）都是以 96dpi
+        # 為單位寫的，一律要過 px()
+        self.ui_scale = self.winfo_fpixels("1i") / 96.0
+        self.ui_font, self.pal = apply_ui_style(self, self.ui_scale)
+        self.geometry(f"{self.px(760)}x{self.px(640)}")
+        self.minsize(self.px(680), self.px(540))
+        self.configure(background=self.pal["page"])
 
         self.log_queue: "queue.Queue" = queue.Queue()
         # 整個行程共用同一個 writer。pdf2ppt 的相依套件會在 import 當下就把
@@ -387,6 +580,14 @@ class App(tk.Tk):
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self.after(80, self._drain_log)
 
+    # ---- 尺寸 ----
+    def px(self, n: float) -> int:
+        """把「以 96dpi 為單位寫的像素」換成這台機器上的實體像素。
+
+        ⚠️ 介面裡每一個寫死的像素數字都要走這裡（padding、wraplength、視窗
+        大小…）。點數指定的字型不必——Tk 在 DPI-aware 之下會自己換算。"""
+        return max(1, int(round(n * self.ui_scale)))
+
     # ---- 變數 ----
     def _build_vars(self) -> None:
         self.in_path = tk.StringVar()
@@ -417,44 +618,48 @@ class App(tk.Tk):
 
     # ---- 介面 ----
     def _build_ui(self) -> None:
-        pad = self._pad = {"padx": 8, "pady": 4}
-        root = ttk.Frame(self, padding=12)
+        p = self.px                       # 寫死的像素一律過這裡（見 px()）
+        pad = self._pad = {"padx": p(10), "pady": p(5)}
+        root = ttk.Frame(self, padding=p(14))
         root.pack(fill="both", expand=True)
 
-        title = ttk.Label(root, text=APP_TITLE, font=("", 15, "bold"))
+        title = ttk.Label(root, text=APP_TITLE, style="Title.TLabel")
         title.pack(anchor="w")
         sub = ttk.Label(
             root,
             text="把 NotebookLM 產出的繁中 PDF 簡報 OCR 後轉成可編輯的 PowerPoint（本地離線執行）。",
-            foreground="#666",
+            style="Muted.TLabel",
         )
-        sub.pack(anchor="w", pady=(0, 8))
+        sub.pack(anchor="w", pady=(0, p(10)))
 
         # ---- 專案位置區 ----
-        proj = ttk.LabelFrame(root, text="專案位置（pdf2ppt 程式所在資料夾）", padding=10)
+        proj = ttk.LabelFrame(root, text="專案位置（pdf2ppt 程式所在資料夾）",
+                              padding=p(12))
         proj.pack(fill="x", **pad)
-        self.project_label = ttk.Label(proj, text="", foreground="#666",
-                                       wraplength=560, justify="left")
+        self.project_label = ttk.Label(proj, text="", style="Muted.TLabel",
+                                       wraplength=p(560), justify="left")
         self.project_label.grid(row=0, column=0, sticky="w")
         ttk.Button(proj, text="選擇專案資料夾…",
-                   command=self._pick_project).grid(row=0, column=1, padx=6)
+                   command=self._pick_project).grid(row=0, column=1, padx=p(6))
         proj.columnconfigure(0, weight=1)
 
         # ---- 檔案區 ----
-        files = ttk.LabelFrame(root, text="檔案", padding=10)
+        files = ttk.LabelFrame(root, text="檔案", padding=p(12))
         files.pack(fill="x", **pad)
 
-        ttk.Label(files, text="輸入 PDF：").grid(row=0, column=0, sticky="w")
+        ttk.Label(files, text="輸入 PDF：").grid(
+            row=0, column=0, sticky="w")
         ttk.Entry(files, textvariable=self.in_path).grid(
-            row=0, column=1, sticky="ew", padx=6)
+            row=0, column=1, sticky="ew", padx=p(8))
         ttk.Button(files, text="瀏覽…", command=self._pick_input).grid(
             row=0, column=2)
 
-        ttk.Label(files, text="輸出 PPTX：").grid(row=1, column=0, sticky="w", pady=(6, 0))
+        ttk.Label(files, text="輸出 PPTX：").grid(
+            row=1, column=0, sticky="w", pady=(p(8), 0))
         ttk.Entry(files, textvariable=self.out_path).grid(
-            row=1, column=1, sticky="ew", padx=6, pady=(6, 0))
+            row=1, column=1, sticky="ew", padx=p(8), pady=(p(8), 0))
         ttk.Button(files, text="另存…", command=self._pick_output).grid(
-            row=1, column=2, pady=(6, 0))
+            row=1, column=2, pady=(p(8), 0))
         files.columnconfigure(1, weight=1)
 
         # 主畫面到這裡就結束：選項一個都不露出來（日常轉檔一項都不必動）。
@@ -466,17 +671,16 @@ class App(tk.Tk):
         # 讓主線的終點被一個日常不必碰的東西隔開，展開進階區時還會被推到很下面。
         actions = self.actions_frame = ttk.Frame(root)
         actions.pack(fill="x", **pad)
-        self.run_btn = tk.Button(
-            actions, text="▶  開始轉檔", command=self._start,
-            font=("", 12, "bold"),
-            bg=RUN_BG, fg="white",
-            activebackground=RUN_BG_ACTIVE, activeforeground="white",
-            disabledforeground="#eef3fb",
-            relief="flat", bd=0, highlightthickness=0,
-            padx=30, pady=9, cursor="hand2")
+        # 主要動作鈕吃佈景的 Accent 樣式（Fluent 的藍底圓角鈕），連 hover／
+        # pressed／disabled 都由佈景畫；加大字級與內距的 Run.Accent.TButton
+        # 定義在 apply_ui_style
+        self.run_btn = ttk.Button(actions, text="▶  開始轉檔",
+                                  style="Run.Accent.TButton",
+                                  command=self._start)
         self.run_btn.pack(side="left")
-        self.status = ttk.Label(actions, text="就緒", foreground="#0a0")
-        self.status.pack(side="right")
+        self.status = ttk.Label(actions, text="就緒", style="Status.TLabel",
+                                foreground=self.pal["ok"])
+        self.status.pack(side="right", pady=p(4))
 
         # ---- 進階區的收合按鈕 ----
         # 底下兩區建好但不 pack，按下去才用 before=progress 插回原位（也就是
@@ -484,7 +688,7 @@ class App(tk.Tk):
         toggle_row = ttk.Frame(root)
         toggle_row.pack(fill="x", padx=8, pady=(2, 0))
         self.adv_toggle = ttk.Button(toggle_row, text=ADV_SHOW_TEXT,
-                                     width=34,
+                                     width=34, style="Adv.TButton",
                                      command=self._toggle_advanced)
         self.adv_toggle.pack(side="left")
 
@@ -534,7 +738,7 @@ class App(tk.Tk):
             opt,
             text="註：字級／粗體／色塊的判別門檻都以 200 DPI + Microsoft YaHei 字寬校準，"
                  "改這兩項會讓排版估算失準。",
-            foreground="#888", wraplength=680, justify="left").grid(
+            style="Muted.TLabel", wraplength=p(680), justify="left").grid(
             row=4, column=0, columnspan=4, sticky="w", pady=(8, 0))
 
         # ---- 進階開關 ----
@@ -560,8 +764,17 @@ class App(tk.Tk):
         # ---- 日誌 ----
         logframe = ttk.LabelFrame(root, text="進度", padding=6)
         logframe.pack(fill="both", expand=True, **pad)
+        # tk.Text 是 classic 控制項，佈景挑不動它 —— 顏色要自己餵
         self.log = tk.Text(logframe, height=12, wrap="word",
-                           font=("Consolas", 10))
+                           font=(self.ui_font, 10),
+                           relief="flat", borderwidth=0,
+                           highlightthickness=0,
+                           padx=p(8), pady=p(6),
+                           background=self.pal["log_bg"],
+                           foreground=self.pal["log_fg"],
+                           insertbackground=self.pal["log_fg"],
+                           selectbackground=self.pal["log_sel"],
+                           selectforeground=self.pal["log_fg"])
         self.log.pack(side="left", fill="both", expand=True)
         sb = ttk.Scrollbar(logframe, command=self.log.yview)
         sb.pack(side="right", fill="y")
@@ -626,12 +839,13 @@ class App(tk.Tk):
     def _refresh_project_label(self) -> None:
         if self.project_dir and is_project_dir(self.project_dir):
             self.project_label.config(
-                text=f"✓ 已找到：{self.project_dir}", foreground="#0a0")
+                text=f"✓ 已找到：{self.project_dir}",
+                foreground=self.pal["ok"])
         else:
             self.project_label.config(
                 text="✗ 尚未找到 pdf2ppt 套件，請按右側按鈕選擇專案資料夾"
                      "（裡面要有 pdf2ppt.py 和 pdf2ppt 資料夾）。",
-                foreground="#c00")
+                foreground=self.pal["err"])
 
     def _pick_project(self) -> None:
         if self.running:
@@ -747,10 +961,7 @@ class App(tk.Tk):
         ⚠️ 底色要跟著換：它是 tk.Button，`state="disabled"` 只會換文字顏色，
         鮮豔的底色照舊留在畫面上，轉檔期間看起來仍像可以按（ttk.Button 的
         disabled 是整顆變灰，換過來就沒有這回事了）。"""
-        self.run_btn.config(
-            state="normal" if enabled else "disabled",
-            bg=RUN_BG if enabled else RUN_BG_DISABLED,
-            cursor="hand2" if enabled else "")
+        self.run_btn.state(["!disabled"] if enabled else ["disabled"])
 
     def _start(self) -> None:
         if self.running:
@@ -773,7 +984,7 @@ class App(tk.Tk):
 
         self.running = True
         self._set_run_enabled(False)
-        self.status.config(text="轉檔中…", foreground="#c60")
+        self.status.config(text="轉檔中…", foreground=self.pal["warn"])
         # 不定長度進度條不帶任何資訊，12ms（83Hz）只是白白讓主執行緒重繪；
         # 用 ttk 的預設節奏即可
         self.progress.start()
@@ -884,7 +1095,7 @@ class App(tk.Tk):
                 part = rc == PARTIAL_RC
                 self.status.config(
                     text="完成（有頁面降級）" if part else "完成 ✓",
-                    foreground="#c60" if part else "#0a0")
+                    foreground=self.pal["warn"] if part else self.pal["ok"])
                 out = self._effective_out()
                 shown = str(out) if out else "(輸入檔同名 .pptx)"
                 tag = "⚠ 轉檔完成，但有頁面降級" if part else "✓ 轉檔完成"
@@ -896,7 +1107,8 @@ class App(tk.Tk):
                                 f"\n\n要開啟所在資料夾嗎？"):
                     self._open_folder(out)
             else:
-                self.status.config(text=f"失敗（代碼 {rc}）", foreground="#c00")
+                self.status.config(text=f"失敗（代碼 {rc}）",
+                                   foreground=self.pal["err"])
                 self._append(f"\n✗ 轉檔失敗（return code = {rc}）\n")
         finally:
             # 對話框關掉之後才解鎖，否則使用者可以在完成對話框還開著時按下
@@ -1051,6 +1263,8 @@ class App(tk.Tk):
 
 
 def main() -> int:
+    # ⚠️ 一定要在建 App（= 建 Tk）之前：Tk 只在啟動時問一次 DPI
+    enable_dpi_awareness()
     app = App()
     app.mainloop()
     return 0

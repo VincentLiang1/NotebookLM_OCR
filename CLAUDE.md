@@ -23,7 +23,7 @@ uv run python pdf2ppt_gui_2.py         # 圖形介面（或雙擊「啟動.vbs�
 
 ⚠️ **GUI 的選項清單是手抄 `cli.py` 的 argparse 定義**（標籤、預設值、`--device` 的 choices、粗體模式的旗標對應）。在 `cli.py` 增刪旗標或改預設值時，`pdf2ppt_gui_2.py` 與 README 的選項表必須同一輪一起改 —— 已經漂移過一次（`--lang` 在 CLI 與 README 都有、GUI 完全沒有對應控制項，2026-08-16 補上）。
 
-⚠️ **GUI 主畫面一個選項都不露出來**（使用者 2026-08-23／08-24 指示，見 `_toggle_advanced`）：只留輸入／輸出檔，其餘全部收進預設收合的「進階選項」區。⚠️ **色塊那一格存的是反向旗標**（`self.cover`、預設不勾、勾了才送 `--cover`），所以 `tests/test_docs.py` 的三方一致例外清單是 `{"--no-cover", "--output"}`（不是 `--cover`）。⚠️ **「▶ 開始轉檔」排在收合按鈕之上、且刻意是 `tk.Button` 不是 `ttk.Button`**（使用者 2026-08-25 指示）：Windows 的 vista 佈景把按鈕的底交給原生主題畫，ttk 塗不上底色；代價是 disabled 只換文字顏色，底色要由 `_set_run_enabled` 自己換。收合進階區要把展開時借走的高度**還原成展開前量到的值**（`_restore_height_after_collapse`，⚠️ 不可用減法）。沿革、「預設值沒有機器守得住」與這三項的理由見 `docs/dev/windows-環境與入口.md` §5。
+⚠️ **GUI 主畫面一個選項都不露出來**（使用者 2026-08-23／08-24 指示，見 `_toggle_advanced`）：只留輸入／輸出檔，其餘全部收進預設收合的「進階選項」區。⚠️ **色塊那一格存的是反向旗標**（`self.cover`、預設不勾、勾了才送 `--cover`），所以 `tests/test_docs.py` 的三方一致例外清單是 `{"--no-cover", "--output"}`（不是 `--cover`）。⚠️ **「▶ 開始轉檔」排在收合按鈕之上**，用佈景的 `Run.Accent.TButton`（⚠️ 樣式名要以 `.Accent.TButton` 結尾才繼承得到圖片元件）；收合進階區要把展開時借走的高度**還原成展開前量到的值**（`_restore_height_after_collapse`，⚠️ 不可用減法）。⚠️ **介面外觀有三個一動就壞的點**（2026-08-25）：`enable_dpi_awareness()` 必須在建 Tk **之前**呼叫，且**每個寫死的像素都要過 `App.px()`**；`sv_ttk.set_theme()` 之後必須 `update_idletasks()` 再補一發 `<<ThemeChanged>>`（否則深色模式一堆白底標籤）；介面字型是 **Microsoft JhengHei UI**，⚠️ 與輸出用的 `--font`（預設 Microsoft YaHei，寬度量測校準在它身上）**是兩回事、不可互相統一**。沿革、「預設值沒有機器守得住」、為什麼不是真的 WinUI 3，見 `docs/dev/windows-環境與入口.md` §5／§5.1。
 
 自動化測試只有文件與程式碼的一致性（`tests/test_docs.py`）與指路／字元上限（`tests/test_docs_index.py`）；**轉換品質沒有自動測試**，靠五份 deck 全跑加目視比對（見下方「驗證」）。
 

@@ -20,6 +20,10 @@ dependencies = [
     "onnxruntime-directml>=1.24; sys_platform == 'win32'",
     "onnxruntime>=1.26; sys_platform != 'win32'",
     "opencc-python-reimplemented>=0.1.7",
+    # 圖形介面的佈景（Sun Valley：模仿 Windows 11 Fluent／WinUI 的 ttk 佈景）。
+    # 純 Tcl + PNG、MIT、約 100KB，命令列完全用不到它 —— 但 GUI 少了它只會
+    # 回到系統原生長相（apply_ui_style 有 fallback），不會開不起來。
+    "sv-ttk>=2.6",
 ]
 
 [dependency-groups]
