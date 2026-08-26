@@ -1343,7 +1343,7 @@ class App(tk.Tk):
         # 下更會把視窗撐開——一行字左右都貼邊，本身就是「擠」的來源之一。
         sub = ttk.Label(
             root,
-            text="把 NotebookLM 產出的繁中 PDF 簡報 OCR 後轉成可編輯的 PowerPoint（本地離線執行）。",
+            text="把 NotebookLM 產出繁中 PDF 簡報，本機轉換成可編輯的 PowerPoint。",
             style="Sub.Muted.TLabel", wraplength=p(780), justify="left",
         )
         sub.pack(anchor="w", pady=(0, p(CARD_GAP)))
