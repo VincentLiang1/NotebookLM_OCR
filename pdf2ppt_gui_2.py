@@ -517,6 +517,12 @@ SQ_R_CHK = 5          # 核取方塊
 SQ_CHK_BOX = 20       # 核取方塊的邊長（沿用 sv_ttk 的尺寸，見 SQ_PAD）
 SQ_CHK_GAP = 8        # 方塊與標籤之間的縫（畫進圖片右側的透明區，layout 沒地方塞）
 SQ_PB_TH = 7          # 進度條厚度
+# ⚠️ **底板中段要夠寬，不可以縮回 1px。** 九宮格的中段是被 Tk **一格一格重複
+# 貼**滿的，不是拉伸——中段 1px 的話，一顆 840px 寬的收合鈕就是幾百次繪製呼叫，
+# 整個視窗重畫一次要 2.5 秒（使用者 2026-08-26 回報「好像進入死迴圈」，展開／
+# 收合選項也各卡 1–2 秒）。96 讓 `_fit_window` 從 2584ms 回到 71ms，而沒有皮膚
+# 時是 74ms ——也就是回到了「跟沒換皮一樣快」。
+SQ_MID = 96           # 底板中段的寬度
 
 # ⚠️ **底板自己要撐出來的內距**：sv_ttk 的按鈕／輸入框圖片是**自帶內距的**，
 # 我們換掉圖片就得把那一份補回來，否則全畫面的控制項一起矮 8px、視窗 reqheight
@@ -593,18 +599,29 @@ def _sq_mask(w: int, h: int, r: float):
 
 def _plate(w: int, h: int, r: float, fill: str,
            line: str | None = None, lw: int = 1):
-    """一張 squircle 底板：實色填滿，可選描邊。"""
+    """一張 squircle 底板：實色填滿，可選描邊。
+
+    ⚠️ **先畫成不透明的 RGB，最後才把遮罩放進 alpha 通道**——不可以拿遮罩去
+    `paste` 一張 RGB 到透明畫布上。那樣做，角落抗鋸齒帶的 RGB 會**先跟畫布的
+    黑色混一次**（填色 (232,232,237) 會被寫成 (42,42,43)），而 Tk 合成時又依
+    alpha 混第二次，於是四個角各浮出一圈比底色深的邊——使用者 2026-08-26 回報
+    的「灰色形狀四個角落都有別的顏色」就是它。RGB 一律保持填色本身，透明與否
+    只由 alpha 說了算。
+    """
     from PIL import Image
     w, h = max(1, w), max(1, h)
-    img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-    img.paste(Image.new("RGB", (w, h), fill), (0, 0), _sq_mask(w, h, r))
+    outer = _sq_mask(w, h, r)
+    img = Image.new("RGB", (w, h), fill)
     if line and lw > 0:
         inner = Image.new("L", (w, h), 0)
         inner.paste(_sq_mask(max(1, w - 2 * lw), max(1, h - 2 * lw),
                              max(1.0, r - lw)), (lw, lw))
-        ring = Image.composite(_sq_mask(w, h, r), Image.new("L", (w, h), 0),
+        ring = Image.composite(outer, Image.new("L", (w, h), 0),
                                Image.eval(inner, lambda v: 255 - v))
+        # 這一次 paste 是**在不透明的圖層裡**混色，描邊與填色混得對
         img.paste(Image.new("RGB", (w, h), line), (0, 0), ring)
+    img = img.convert("RGBA")
+    img.putalpha(outer)
     return img
 
 
@@ -665,8 +682,11 @@ class SquircleSkin:
               pad=SQ_PAD) -> None:
         """建一個九宮格 image element：四角維持形狀，中段複製著拉開。
 
-        實色底板配九宮格對**任意尺寸**都是對的（拉開的是純色），所以一顆按鈕
+        實色底板配九宮格對**任意尺寸**都是對的（重複貼的是純色），所以一顆按鈕
         一組圖就夠，不必按每個控制項的大小各畫一張。
+        ⚠️ **`width`/`height` 要釘成「正方形版」的尺寸**：image element 的原生
+        尺寸預設等於圖片尺寸，而底板為了 SQ_MID 是加寬過的——不釘的話每顆按鈕
+        的最小寬度都會變成那個寬度，版面當場爆掉。
         ⚠️ **`padding` 一定要明寫**：ttk 的 image element 沒給 padding 時會
         **拿 border 當內距**，於是圓角半徑會加到控制項的內距上——半徑 12 的主要
         動作鈕就這樣一口氣高了 26px（2026-08-26 截圖比對抓到的）。要補的是
@@ -674,11 +694,13 @@ class SquircleSkin:
         ⚠️ **border 不可超過圖片邊長的一半**：切不出九宮格時 ttk 會在幾何計算裡
         原地打轉，事件迴圈當場卡死（`after` 不再觸發、視窗畫不出來，而且**沒有
         任何例外**）。2026-08-26 用 19px 的圖配 border=10 撞到過一次，症狀是程式
-        一路卡到被 timeout 殺掉。所以底板一律畫成 2*(r+1)+1 見方。
+        一路卡到被 timeout 殺掉。所以底板的兩個邊長一律是 2*(r+1) 再加上去的
+        （高 +1、寬 +SQ_MID）。
         """
         args = [str(faces[0][1])] + [(s, str(i)) for s, i in faces[1:]]
         self.st.element_create(name, "image", *args, border=r + 1,
-                               padding=self._pad(pad), sticky="nswe")
+                               padding=self._pad(pad), sticky="nswe",
+                               width=2 * (r + 1) + 1, height=2 * (r + 1) + 1)
 
     def _swap(self, layout, table: dict):
         """複製一份 layout，把背景元件換成我們的（其餘結構原封不動）。"""
@@ -716,23 +738,23 @@ class SquircleSkin:
         # ⚠️ **不描邊**：灰底本身就跟卡片分得開，再加一圈線就變成「框中框」
         # （卡片一圈、按鈕一圈），meeting-scribe 的按鈕也是無框的
         p, r = self.pal, self.px(SQ_R)
-        n = 2 * (r + 1) + 1
+        n, m = 2 * (r + 1) + 1, 2 * (r + 1) + self.px(SQ_MID)
         self._face("Sq.button", r, [
-            ("", self._photo(_plate(n, n, r, p["btn"]))),
-            ("disabled", self._photo(_plate(n, n, r, p["btn_off"]))),
-            ("pressed", self._photo(_plate(n, n, r, p["btn_lo"]))),
-            ("active", self._photo(_plate(n, n, r, p["btn_hi"]))),
+            ("", self._photo(_plate(m, n, r, p["btn"]))),
+            ("disabled", self._photo(_plate(m, n, r, p["btn_off"]))),
+            ("pressed", self._photo(_plate(m, n, r, p["btn_lo"]))),
+            ("active", self._photo(_plate(m, n, r, p["btn_hi"]))),
         ])
         self._relayout("TButton", {"Button.button": "Sq.button"})
 
     def _entry(self) -> None:
         """輸入框：取得焦點時描邊換成 accent 並加粗到 2px。"""
         p, r = self.pal, self.px(SQ_R)
-        n = 2 * (r + 1) + 1
+        n, m = 2 * (r + 1) + 1, 2 * (r + 1) + self.px(SQ_MID)
         self._face("Sq.field", r, [
-            ("", self._photo(_plate(n, n, r, p["field"], p["line"]))),
-            ("disabled", self._photo(_plate(n, n, r, p["field_off"], p["line_off"]))),
-            ("focus", self._photo(_plate(n, n, r, p["field"], p["accent"],
+            ("", self._photo(_plate(m, n, r, p["field"], p["line"]))),
+            ("disabled", self._photo(_plate(m, n, r, p["field_off"], p["line_off"]))),
+            ("focus", self._photo(_plate(m, n, r, p["field"], p["accent"],
                                          lw=max(2, self.px(2))))),
         ], pad=SQ_PAD_FIELD)
         self._relayout("TEntry", {"Entry.field": "Sq.field"})
@@ -773,15 +795,17 @@ class SquircleSkin:
         p = self.pal
         th = self.px(SQ_PB_TH)
         r = th / 2.0
-        n = int(2 * (r + 1) + 1)
+        n = int(2 * (r + 1) + self.px(SQ_MID))
         trough = self._photo(_plate(n, th, r, p["trough"]))
         bar = self._photo(_plate(n, th, r, p["accent"]))
         edge = (int(r) + 1, 0, int(r) + 1, 0)
         # 這兩顆裡面沒有內容，內距一律 0（補 SQ_PAD 只會讓條變胖）
-        self.st.element_create("Sq.trough", "image", str(trough),
-                               border=edge, padding=0, sticky="nswe")
-        self.st.element_create("Sq.pbar", "image", str(bar),
-                               border=edge, padding=0, sticky="nswe")
+        # ⚠️ `width` 要釘住：不釘的話這條加寬過的圖會變成進度條的最小寬度
+        small = int(2 * (r + 1) + 1)
+        self.st.element_create("Sq.trough", "image", str(trough), border=edge,
+                               padding=0, sticky="nswe", width=small, height=th)
+        self.st.element_create("Sq.pbar", "image", str(bar), border=edge,
+                               padding=0, sticky="nswe", width=small, height=th)
         self._relayout("Horizontal.TProgressbar", {
             "Horizontal.Progressbar.trough": "Sq.trough",
             "Horizontal.Progressbar.pbar": "Sq.pbar"})
@@ -794,14 +818,14 @@ class SquircleSkin:
         元件——字級與內距則靠樣式名的後綴繼承（見 RUN_STYLE／STOP_STYLE）。
         """
         p, r = self.pal, self.px(SQ_R_RUN)
-        n = 2 * (r + 1) + 1
+        n, m = 2 * (r + 1) + 1, 2 * (r + 1) + self.px(SQ_MID)
         for kind, style, hover in (("accent", RUN_STYLE, p["accent_hi"]),
                                    ("stop", STOP_STYLE, None)):
-            face = _plate(n, n, r, p[kind])
-            over = _plate(n, n, r, hover) if hover else _shade(face, 0.10)
+            face = _plate(m, n, r, p[kind])
+            over = _plate(m, n, r, hover) if hover else _shade(face, 0.10)
             self._face(f"Sq.{kind}", r, [
                 ("", self._photo(face)),
-                ("disabled", self._photo(_plate(n, n, r, p["run_off"]))),
+                ("disabled", self._photo(_plate(m, n, r, p["run_off"]))),
                 ("pressed", self._photo(_shade(face, -0.12))),
                 ("active", self._photo(over)),
             ])
