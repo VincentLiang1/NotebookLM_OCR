@@ -69,9 +69,11 @@ docs/dev/windows-環境與入口.md 5.1。
 """
 from __future__ import annotations
 
+import base64
 import ctypes
 import datetime
 import io
+import math
 import os
 import queue
 import re
@@ -130,6 +132,11 @@ CHEV_SHOW, CHEV_HIDE = "▸  ", "▾  "
 RUN_TEXT = "▶  開始轉檔"
 STOP_TEXT = "■  停止轉檔"
 STOPPING_TEXT = "停止中…"
+# 同一顆鈕的兩張皮。⚠️ 名字要以 `.Accent.TButton` 結尾：ttk 的樣式選項是照後綴
+# 一層層往上找的，`Stop.Run.Accent.TButton` 這樣寫才繼承得到 `Run.Accent.TButton`
+# 上面設的字級與內距（layout 則由 SquircleSkin 各給一份，見那裡）。
+RUN_STYLE = "Run.Accent.TButton"
+STOP_STYLE = "Stop.Run.Accent.TButton"
 
 # 狀態字會出現的**所有**長相。用途是量出右欄要保留多寬——⚠️ 這一格的寬度必須
 # 釘住（不然「就緒」換成「載入 OCR 引擎…」時進度條的右端會跟著左右抽動），但
@@ -467,8 +474,347 @@ def flash_taskbar(root: tk.Misc) -> None:
         pass
 
 
-def apply_ui_style(root: tk.Misc, scale: float) -> tuple[str, dict]:
-    """設定字型與佈景，回傳 (字型家族名, 調色盤)。
+# --------------------------------------------------------------------------- #
+#  Squircle 皮膚：互動控制項的連續圓角與 Apple 色票
+# --------------------------------------------------------------------------- #
+# 只換**互動控制項**（按鈕、輸入框、核取方塊、進度條）的外觀；卡片維持實色、
+# 視窗外框不碰（使用者 2026-08-26 拍板）。⚠️ 這兩條不是省事，是量過的：
+#   ·「卡片鋪底」會被 Tk 的合成模型擋下來——`ttk.Frame` 只能是實色、沒有透明，
+#     坐在上面的每個 `ttk.Label` 都會用自己的底色蓋掉一塊；而且 `Muted.TLabel`
+#     那條「對比度 ≥9:1」的硬規則在非平面的底色上會**沿著底色滑動**（實色底量
+#     一次就算數，非實色底得整片量，最淡的一端會掉到 6:1）。
+#   · 視窗四角的圓角是 Windows 11 的 DWM 畫的，app 改不了形狀。要改只能走
+#     layered window ＋逐像素 alpha，代價是失去原生標題列——最小化、貼齊、
+#     工作列預覽全部得自己重寫，而 taskbar_progress 那一套也綁在原生視窗上。
+#
+# ⚠️ **全部實色、一處漸層都不留**（使用者 2026-08-26 指示「我不要漸層效果」／
+#「全部都是實色」）。這一條同時省掉兩個坑，要加回漸層之前先讀
+# docs/dev/windows-環境與入口.md §5.9：漸層沒辦法走九宮格（中段一拉伸就成了一片
+# 純色），只能跟著控制項的實際寬高重畫整張，而重畫會讓 image element 的原生尺寸
+# 去撐大 widget 的 requested size，「畫大 → widget 變大 → Configure → 再畫大」
+# 一路發散，事件迴圈當場被灌爆（`after` 從此排不進去，視窗就停在半成品）。
+#
+# ⚠️ **色票抄自 `meeting-scribe` 的 `src/meeting_scribe/ui_style.py`**（使用者
+# 2026-08-26 指示「顏色可以參考 meeting-scribe」）：兩支都是同一個人在用的工具，
+# 主色、次要底、破壞性紅要對得起來。⚠️ **形狀不跟著抄**——那邊的按鈕是膠囊
+# （`button_*_radius: 999px`），這裡是 squircle，那是這支自己的決定。
+#
+# 做法是 ttk 的 **image element**：Pillow 畫好 PNG → base64 → `tk.PhotoImage`
+# → `Style.element_create(..., "image", ...)`，再把 sv_ttk layout 裡的背景元件
+# 換成它（sv_ttk 自己整套佈景就是這樣做的，所以這條路一定走得通）。
+# ⚠️ **不要用 `PIL.ImageTk`**：它需要 `_imagingtk` 這個 C 擴充，缺了就是
+# ImportError，而 Tk 8.6 的 PhotoImage 本來就吃 base64 的 PNG（含 alpha 通道）。
+
+SQ_N = 5.0            # 超橢圓指數：4 還看得出方、6 之後跟正圓角就分不出來了
+SQ_SS = 4             # 遮罩超取樣倍率（畫 4× 再縮回來，這就是抗鋸齒）
+SQ_STEPS = 24         # 每個角取樣幾個點（再多肉眼看不出來，只是變慢）
+
+# 圓角半徑（邏輯 px，一律過 px()）。⚠️ 半徑是**新的一把尺**，不要拿 SP_* 那把
+# 來湊——間距與圓角在版面上管的是兩件事。
+SQ_R = 10             # 一般按鈕、輸入框（對齊 meeting-scribe 的 input_radius）
+SQ_R_RUN = 12         # 主要動作鈕（大一號才撐得住那個字級）
+SQ_R_CHK = 5          # 核取方塊
+SQ_CHK_BOX = 20       # 核取方塊的邊長（沿用 sv_ttk 的尺寸，見 SQ_PAD）
+SQ_CHK_GAP = 8        # 方塊與標籤之間的縫（畫進圖片右側的透明區，layout 沒地方塞）
+SQ_PB_TH = 7          # 進度條厚度
+
+# ⚠️ **底板自己要撐出來的內距**：sv_ttk 的按鈕／輸入框圖片是**自帶內距的**，
+# 我們換掉圖片就得把那一份補回來，否則全畫面的控制項一起矮 8px、視窗 reqheight
+# 從 426 掉到 387（2026-08-26 用 skin 開／關逐個量 requested size 量出來的：
+# 按鈕與收合鈕一律差 8×8，輸入框差 10 寬 7 高）。控制項自己的內距仍然歸
+# `Adv.TButton`／`Small.TButton`／`Run.Accent.TButton` 那幾行管，兩者不衝突。
+SQ_PAD = 4                        # 按鈕、進度條
+SQ_PAD_FIELD = 5                  # 輸入框（比按鈕多 1px，才跟按鈕一樣高）
+
+# hover 有明確色碼（meeting-scribe 給了），pressed 沒有——那一階一律由 _shade()
+# 從同一個底色壓暗，免得再手配一組沒有人記得該差多少的色碼。
+SKINS = {
+    "light": {
+        # 主色與次要底直接取 meeting-scribe 的值（見本段開頭）
+        "accent": "#0071e3", "accent_hi": "#0077ed",
+        "on_accent": "#ffffff",
+        # ⚠️ 停止鈕**兩個模式都用這個深紅**：深色模式的 systemRed（#ff453a）
+        # 拿來當大面積底色時，白字只有 3.4:1；#d70015 是 5.4:1。這顆鈕坐在主要
+        # 動作的位置上、字又是粗體 12pt，讀不清楚不是選項。
+        "stop": "#d70015",
+        "run_off": "#d2d2d7", "run_off_fg": "#8e8e93",
+        "btn": "#e8e8ed", "btn_hi": "#dcdce1", "btn_lo": "#cfcfd6",
+        "btn_off": "#f0f0f3",
+        "field": "#f5f5f7", "field_off": "#f0f0f3",
+        "line": "#d2d2d7", "line_off": "#e4e4e8",
+        "trough": "#e8e8ed",
+        "chk": "#ffffff", "chk_line": "#c7c7cc",
+        "chk_off": "#f0f0f3", "chk_off_line": "#dcdce1",
+    },
+    "dark": {
+        "accent": "#0a84ff", "accent_hi": "#3395ff",
+        "on_accent": "#ffffff",
+        "stop": "#d70015",
+        "run_off": "#3a3a3c", "run_off_fg": "#7c7c80",
+        # ⚠️ 次要按鈕比 meeting-scribe 亮一階（那邊是 #2c2c2e）：它的深色卡片是
+        # #1d1d1f，而這裡的卡片是 sv_ttk 畫的、明顯亮一截——照抄 #2c2c2e 的話
+        # 按鈕會整顆融進卡片，畫面上只剩浮著的文字（2026-08-26 截圖確認）
+        "btn": "#3a3a3c", "btn_hi": "#48484a", "btn_lo": "#2c2c2e",
+        "btn_off": "#2c2c2e",
+        "field": "#2c2c2e", "field_off": "#242426",
+        "line": "#48484a", "line_off": "#3a3a3c",
+        "trough": "#2c2c2e",
+        "chk": "#2c2c2e", "chk_line": "#5a5a5e",
+        "chk_off": "#242426", "chk_off_line": "#3a3a3c",
+    },
+}
+
+
+def _sq_points(w: float, h: float, r: float) -> list[tuple[float, float]]:
+    """連續圓角的輪廓點：四個角各是四分之一超橢圓，直邊保持直的。
+
+    圓角矩形的角是一段**圓弧**，弧與直邊接得上位置、接不上曲率，交界處看得出
+    一個轉折；超橢圓 |x|^n + |y|^n = r^n 的曲率是從邊上的 0 連續長到角落的
+    最大值 —— 同樣的 r，它會顯得更飽滿、轉角更長一段。
+    """
+    r = min(r, w / 2.0, h / 2.0)
+    k = 2.0 / SQ_N
+    q = [(r - r * math.cos(t) ** k, r - r * math.sin(t) ** k)
+         for t in (i / SQ_STEPS * (math.pi / 2) for i in range(SQ_STEPS + 1))]
+    rev = list(reversed(q))
+    return (q                                     # 左上：(0,r) → (r,0)
+            + [(w - x, y) for x, y in rev]        # 右上：(w-r,0) → (w,r)
+            + [(w - x, h - y) for x, y in q]      # 右下：(w,h-r) → (w-r,h)
+            + [(x, h - y) for x, y in rev])       # 左下：(r,h) → (0,h-r)
+
+
+def _sq_mask(w: int, h: int, r: float):
+    from PIL import Image, ImageDraw
+    m = Image.new("L", (w * SQ_SS, h * SQ_SS), 0)
+    ImageDraw.Draw(m).polygon(
+        [(x * SQ_SS, y * SQ_SS) for x, y in _sq_points(w, h, r)], fill=255)
+    return m.resize((w, h), Image.LANCZOS)
+
+
+def _plate(w: int, h: int, r: float, fill: str,
+           line: str | None = None, lw: int = 1):
+    """一張 squircle 底板：實色填滿，可選描邊。"""
+    from PIL import Image
+    w, h = max(1, w), max(1, h)
+    img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    img.paste(Image.new("RGB", (w, h), fill), (0, 0), _sq_mask(w, h, r))
+    if line and lw > 0:
+        inner = Image.new("L", (w, h), 0)
+        inner.paste(_sq_mask(max(1, w - 2 * lw), max(1, h - 2 * lw),
+                             max(1.0, r - lw)), (lw, lw))
+        ring = Image.composite(_sq_mask(w, h, r), Image.new("L", (w, h), 0),
+                               Image.eval(inner, lambda v: 255 - v))
+        img.paste(Image.new("RGB", (w, h), line), (0, 0), ring)
+    return img
+
+
+def _shade(img, amt: float):
+    """把底板整體提亮（amt>0）或壓暗（amt<0），**不動 alpha**。
+
+    ⚠️ 不可以直接對 RGBA 做 blend／ImageEnhance：alpha 會跟著被混，抗鋸齒的
+    邊緣當場糊掉一圈。
+    """
+    from PIL import Image
+    r, g, b, a = img.split()
+    rgb = Image.merge("RGB", (r, g, b))
+    tone = (255, 255, 255) if amt >= 0 else (0, 0, 0)
+    rgb = Image.blend(rgb, Image.new("RGB", img.size, tone), abs(amt))
+    return Image.merge("RGBA", (*rgb.split(), a))
+
+
+def _pad_right(img, gap: int):
+    """右邊補一段透明——核取方塊與標籤之間的縫，layout 裡沒有地方塞。"""
+    from PIL import Image
+    out = Image.new("RGBA", (img.width + gap, img.height), (0, 0, 0, 0))
+    out.paste(img, (0, 0))
+    return out
+
+
+class SquircleSkin:
+    """把 ttk 互動控制項的背景換成 squircle 圖片。
+
+    ⚠️ **只在 sv_ttk 載得起來時才安裝**：這裡是把 sv_ttk 的 layout 複製一份、
+    只換掉背景元件的名字，換不到 layout（原生 vista 佈景的結構不一樣）就整個
+    放棄，讓畫面留在原本的長相——外觀不值得賠上「開得起來」。
+    """
+
+    def __init__(self, root: tk.Misc, scale: float, mode: str) -> None:
+        self.root, self.scale = root, scale
+        self.pal = SKINS[mode]
+        self.st = ttk.Style(root)
+        self._keep: list = []      # ⚠️ Tk 不持有 PhotoImage 的參考，放掉就變空白
+
+    def px(self, n: float) -> int:
+        return max(1, int(round(n * self.scale)))
+
+    def _pad(self, pad):
+        """內距換算成實體像素。⚠️ 0 要留成 0，不可以走 px() 的 max(1, …)。"""
+        if isinstance(pad, tuple):
+            return tuple(0 if n == 0 else self.px(n) for n in pad)
+        return 0 if pad == 0 else self.px(pad)
+
+    # ---- 底層：把圖掛成 element ----
+    def _photo(self, img) -> tk.PhotoImage:
+        buf = io.BytesIO()
+        img.save(buf, "PNG")
+        ph = tk.PhotoImage(master=self.root, data=base64.b64encode(buf.getvalue()))
+        self._keep.append(ph)
+        return ph
+
+    def _face(self, name: str, r: int, faces: list[tuple[str, object]],
+              pad=SQ_PAD) -> None:
+        """建一個九宮格 image element：四角維持形狀，中段複製著拉開。
+
+        實色底板配九宮格對**任意尺寸**都是對的（拉開的是純色），所以一顆按鈕
+        一組圖就夠，不必按每個控制項的大小各畫一張。
+        ⚠️ **`padding` 一定要明寫**：ttk 的 image element 沒給 padding 時會
+        **拿 border 當內距**，於是圓角半徑會加到控制項的內距上——半徑 12 的主要
+        動作鈕就這樣一口氣高了 26px（2026-08-26 截圖比對抓到的）。要補的是
+        SQ_PAD 那一份（見那裡），不是圓角半徑。
+        ⚠️ **border 不可超過圖片邊長的一半**：切不出九宮格時 ttk 會在幾何計算裡
+        原地打轉，事件迴圈當場卡死（`after` 不再觸發、視窗畫不出來，而且**沒有
+        任何例外**）。2026-08-26 用 19px 的圖配 border=10 撞到過一次，症狀是程式
+        一路卡到被 timeout 殺掉。所以底板一律畫成 2*(r+1)+1 見方。
+        """
+        args = [str(faces[0][1])] + [(s, str(i)) for s, i in faces[1:]]
+        self.st.element_create(name, "image", *args, border=r + 1,
+                               padding=self._pad(pad), sticky="nswe")
+
+    def _swap(self, layout, table: dict):
+        """複製一份 layout，把背景元件換成我們的（其餘結構原封不動）。"""
+        out = []
+        for elem, opts in layout:
+            opts = dict(opts)
+            if "children" in opts:
+                opts["children"] = self._swap(opts["children"], table)
+            out.append((table.get(elem, elem), opts))
+        return out
+
+    def _relayout(self, style: str, table: dict, src: str | None = None) -> None:
+        self.st.layout(style, self._swap(self.st.layout(src or style), table))
+
+    # ---- 安裝 ----
+    def install(self) -> bool:
+        try:
+            import PIL.Image  # noqa: F401  畫不出圖就整個不裝
+        except Exception:
+            return False
+        try:
+            self._buttons()
+            self._entry()
+            self._check()
+            self._progress()
+            self._run_styles()
+        except Exception:
+            # 佈景結構跟預期不一樣（換了 sv_ttk 版本、Tcl 版本不合）：畫面留在
+            # 原本的長相就好，不要讓外觀把整支程式帶下水
+            return False
+        return True
+
+    def _buttons(self) -> None:
+        """一般按鈕：瀏覽…／變更…／開啟簡報／開啟紀錄／兩顆收合鈕。"""
+        # ⚠️ **不描邊**：灰底本身就跟卡片分得開，再加一圈線就變成「框中框」
+        # （卡片一圈、按鈕一圈），meeting-scribe 的按鈕也是無框的
+        p, r = self.pal, self.px(SQ_R)
+        n = 2 * (r + 1) + 1
+        self._face("Sq.button", r, [
+            ("", self._photo(_plate(n, n, r, p["btn"]))),
+            ("disabled", self._photo(_plate(n, n, r, p["btn_off"]))),
+            ("pressed", self._photo(_plate(n, n, r, p["btn_lo"]))),
+            ("active", self._photo(_plate(n, n, r, p["btn_hi"]))),
+        ])
+        self._relayout("TButton", {"Button.button": "Sq.button"})
+
+    def _entry(self) -> None:
+        """輸入框：取得焦點時描邊換成 accent 並加粗到 2px。"""
+        p, r = self.pal, self.px(SQ_R)
+        n = 2 * (r + 1) + 1
+        self._face("Sq.field", r, [
+            ("", self._photo(_plate(n, n, r, p["field"], p["line"]))),
+            ("disabled", self._photo(_plate(n, n, r, p["field_off"], p["line_off"]))),
+            ("focus", self._photo(_plate(n, n, r, p["field"], p["accent"],
+                                         lw=max(2, self.px(2))))),
+        ], pad=SQ_PAD_FIELD)
+        self._relayout("TEntry", {"Entry.field": "Sq.field"})
+
+    def _check(self) -> None:
+        """核取方塊：沒勾是描邊空框，勾了才上色（Apple 自己的用法）。"""
+        from PIL import ImageDraw
+        p = self.pal
+        box, r = self.px(SQ_CHK_BOX), self.px(SQ_R_CHK)
+        gap = self.px(SQ_CHK_GAP)
+
+        def ticked(color: str):
+            img = _plate(box, box, r, color)
+            ImageDraw.Draw(img).line(
+                [(box * .28, box * .52), (box * .43, box * .70),
+                 (box * .73, box * .30)], fill=p["on_accent"],
+                width=max(2, self.px(2)), joint="curve")
+            return img
+
+        off = self._photo(_pad_right(_plate(box, box, r, p["chk"], p["chk_line"]), gap))
+        on = self._photo(_pad_right(ticked(p["accent"]), gap))
+        off_d = self._photo(_pad_right(
+            _plate(box, box, r, p["chk_off"], p["chk_off_line"]), gap))
+        on_d = self._photo(_pad_right(_shade(ticked(p["accent"]), -0.45), gap))
+        # ⚠️ 這一顆**不切九宮格**（border=0）：方塊是固定尺寸的，拉伸只會把它拉歪
+        self.st.element_create(
+            "Sq.check", "image", str(off), ("disabled selected", str(on_d)),
+            ("disabled", str(off_d)), ("selected", str(on)),
+            border=0, sticky="")
+        self._relayout("TCheckbutton", {"Checkbutton.indicator": "Sq.check"})
+
+    def _progress(self) -> None:
+        """進度條：圓頭的軌道與填充條，兩條都是九宮格。
+
+        ⚠️ 高度是**釘死**的（thickness ＝ 圖高），所以九宮格的左右兩塊不會被
+        垂直拉伸、圓頭不會變形；會被拉開的只有中段那一欄純色。
+        """
+        p = self.pal
+        th = self.px(SQ_PB_TH)
+        r = th / 2.0
+        n = int(2 * (r + 1) + 1)
+        trough = self._photo(_plate(n, th, r, p["trough"]))
+        bar = self._photo(_plate(n, th, r, p["accent"]))
+        edge = (int(r) + 1, 0, int(r) + 1, 0)
+        # 這兩顆裡面沒有內容，內距一律 0（補 SQ_PAD 只會讓條變胖）
+        self.st.element_create("Sq.trough", "image", str(trough),
+                               border=edge, padding=0, sticky="nswe")
+        self.st.element_create("Sq.pbar", "image", str(bar),
+                               border=edge, padding=0, sticky="nswe")
+        self._relayout("Horizontal.TProgressbar", {
+            "Horizontal.Progressbar.trough": "Sq.trough",
+            "Horizontal.Progressbar.pbar": "Sq.pbar"})
+        self.st.configure("Horizontal.TProgressbar", thickness=th)
+
+    def _run_styles(self) -> None:
+        """主要動作鈕的兩張皮：開始是 Apple 藍、停止是深紅。
+
+        兩個樣式的 layout 都從 sv_ttk 的 `Accent.TButton` 複製過來，只換掉背景
+        元件——字級與內距則靠樣式名的後綴繼承（見 RUN_STYLE／STOP_STYLE）。
+        """
+        p, r = self.pal, self.px(SQ_R_RUN)
+        n = 2 * (r + 1) + 1
+        for kind, style, hover in (("accent", RUN_STYLE, p["accent_hi"]),
+                                   ("stop", STOP_STYLE, None)):
+            face = _plate(n, n, r, p[kind])
+            over = _plate(n, n, r, hover) if hover else _shade(face, 0.10)
+            self._face(f"Sq.{kind}", r, [
+                ("", self._photo(face)),
+                ("disabled", self._photo(_plate(n, n, r, p["run_off"]))),
+                ("pressed", self._photo(_shade(face, -0.12))),
+                ("active", self._photo(over)),
+            ])
+            self._relayout(style, {"AccentButton.button": f"Sq.{kind}"},
+                           src="Accent.TButton")
+            self.st.map(style,
+                        foreground=[("disabled", p["run_off_fg"]),
+                                    ("!disabled", p["on_accent"])])
+
+
+def apply_ui_style(root: tk.Misc,
+                   scale: float) -> tuple[str, dict, SquircleSkin | None]:
+    """設定字型與佈景，回傳 (字型家族名, 調色盤, squircle 皮膚)。
 
     字型走 **Tk 的具名字型**（TkDefaultFont…）：所有 ttk 控制項預設就吃這幾個，
     改一次全部跟著換，不必逐個 widget 設 font。⚠️ 連 TkFixedFont 也換掉 ——
@@ -477,6 +823,7 @@ def apply_ui_style(root: tk.Misc, scale: float) -> tuple[str, dict]:
 
     ⚠️ **沒有 sv_ttk 也必須開得起來**：這支是使用者的主要入口，為了外觀讓它
     開不了完全不划算。缺套件就留在系統原生佈景（vista），只換字型。
+    squircle 皮膚同一條原則——裝不起來就回 None，畫面留在原本的長相。
     """
     def px(n: float) -> int:
         return max(1, int(round(n * scale)))
@@ -502,7 +849,7 @@ def apply_ui_style(root: tk.Misc, scale: float) -> tuple[str, dict]:
         # 佈景載不起來（沒跑過 uv sync、Tcl 版本不合）：字型已經換好了，
         # 版面照舊，只是回到 Windows 原生長相
         pal["page"] = st.lookup("TFrame", "background") or pal["page"]
-        return fam, pal
+        return fam, pal, None
 
     # ⚠️ **切完佈景要自己補一發 <<ThemeChanged>>**：sv-ttk 的顏色不是寫在佈景
     # 定義裡，而是掛在那個事件上的 configure_colors 設的，而 Tk 8.6.15 在
@@ -533,8 +880,7 @@ def apply_ui_style(root: tk.Misc, scale: float) -> tuple[str, dict]:
     # Sun Valley 沒有涵蓋到、或本專案要加大的幾處
     # 主要動作鈕：吃佈景的 Accent（Fluent 的藍底圓角鈕），只加大字與內距。
     # ⚠️ 樣式名要以 .Accent.TButton 結尾才繼承得到那組圖片元件
-    st.configure("Run.Accent.TButton", font=(fam, 12, "bold"),
-                 padding=(px(22), px(9)))
+    st.configure(RUN_STYLE, font=(fam, 12, "bold"), padding=(px(22), px(9)))
     # 轉檔選項／詳細訊息的收合鈕：低調一點，別跟主要動作搶注意力。整條寬 +
     # anchor="w"，讀起來像區段標題而不是一顆浮在半空中的按鈕
     # ⚠️ 內距要撐得起「這是一條區段標題」：(10,6) 時它比上下的卡片都薄，看起來
@@ -553,7 +899,10 @@ def apply_ui_style(root: tk.Misc, scale: float) -> tuple[str, dict]:
     st.configure("Sub.Muted.TLabel", font=(fam, 10, "bold"))
     if mode == "dark":
         use_dark_titlebar(root)
-    return fam, pal
+    # ⚠️ 一定要在 sv_ttk 切完佈景**之後**：image element 是建在「當下這個
+    # 佈景」裡的，`ttk::style theme use` 一換就整批不見了。
+    skin = SquircleSkin(root, scale, mode)
+    return fam, pal, (skin if skin.install() else None)
 
 # 轉檔結束代碼裡的這一個代表「檔案有了，但至少一頁降級」（cli.py 的
 # PARTIAL_RC）。⚠️ 手抄過來的常數，tests/test_docs.py 釘著兩邊一致 ——
@@ -922,7 +1271,7 @@ class App(tk.Tk):
         # 而底下所有寫死的像素（視窗大小、padding、wraplength）都是以 96dpi
         # 為單位寫的，一律要過 px()
         self.ui_scale = self.winfo_fpixels("1i") / 96.0
-        self.ui_font, self.pal = apply_ui_style(self, self.ui_scale)
+        self.ui_font, self.pal, self.skin = apply_ui_style(self, self.ui_scale)
         # ⚠️ 高度**不寫死**：閒置時的畫面只有「檔案 + 開始轉檔」，寫死 640 等於
         # 讓一半的視窗是一個還沒有內容的空白日誌框（2026-08-25 量到的是 51%）。
         # 建完介面由 _fit_window() 量出實際需要的高度，之後每次展開／收合也走
@@ -1153,11 +1502,10 @@ class App(tk.Tk):
         actions.pack(fill="x", **pad)
         # 這一列不是卡片（沒有底色也沒有框）：主要動作要看起來浮在版面上，
         # 而不是又被裝進一個盒子裡
-        # 主要動作鈕吃佈景的 Accent 樣式（Fluent 的藍底圓角鈕），連 hover／
-        # pressed／disabled 都由佈景畫；加大字級與內距的 Run.Accent.TButton
-        # 定義在 apply_ui_style
-        self.run_btn = ttk.Button(actions, text=RUN_TEXT,
-                                  style="Run.Accent.TButton",
+        # 主要動作鈕：畫面上唯一吃滿彩色的東西（Apple 藍，停止時換成深紅）。
+        # 字級與內距在 apply_ui_style，squircle 底板由 SquircleSkin 畫；沒裝成
+        # 皮膚就是佈景自己的 Accent 藍底圓角鈕。
+        self.run_btn = ttk.Button(actions, text=RUN_TEXT, style=RUN_STYLE,
                                   command=self._on_run_clicked)
         self.run_btn.grid(row=0, column=0, sticky="w")
         # ⚠️ 開場一定是 indeterminate：載入引擎（首次還要下載約 90MB 模型）那段
@@ -1682,7 +2030,7 @@ class App(tk.Tk):
 
         self.running = True
         self._cancel.clear()             # ⚠️ 沿用同一個 Event，不要新建
-        self.run_btn.config(text=STOP_TEXT)
+        self.run_btn.config(text=STOP_TEXT, style=STOP_STYLE)
         self.run_btn.state(["!disabled"])
         self._set_status("準備中…", self.pal["warn"])
         # 上一趟的結果留在畫面上會被當成這一趟的
@@ -1890,7 +2238,7 @@ class App(tk.Tk):
             # 示，但下一趟 `_start()` 之前的狀態還是要乾淨。
             self.progress.config(mode="determinate", value=0)
             self.progress.grid_remove()
-            self.run_btn.config(text=RUN_TEXT)
+            self.run_btn.config(text=RUN_TEXT, style=RUN_STYLE)
             self._refresh_run_button()
             self._fit_window()
 

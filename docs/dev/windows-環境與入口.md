@@ -382,3 +382,59 @@ Windows 對這件事有兩個原生答案，`pdf2ppt_gui_2.py` 兩個都用：
 底層那一半（HWND 取不取得到、`ITaskbarList3` 建不建得起來、六個狀態會不會丟例外）用一支臨時腳本開個 Tk 視窗跑一遍就知道：`window_handle()` 非 0 且不等於 `winfo_id()`、`_taskbar_dead` 是 False、所有呼叫都不丟。端到端則是真的轉一份 PDF，中途 `iconify()` 把視窗最小化，收工時工作列按鈕會閃。
 
 ⚠️ **截圖只能當佐證、不能當判準**（同 §5.2 的理由：會截到使用者的實機桌面），而且閃爍是動態的，連拍才抓得到亮的那一張。
+
+## 5.9 Squircle 皮膚：互動控制項的連續圓角與 Apple 色票（2026-08-26）
+
+**做的是換皮，不是改版面。** 按鈕、輸入框、核取方塊、進度條的背景改成連續圓角（squircle）的實色底板，顏色對齊 `meeting-scribe`；卡片、視窗外框、間距、控制項的排列順序**一個都沒動**。決策層（為什麼只到互動控制項為止、為什麼不做漸層）見 `docs/spec/09-執行環境與效能.md` §9.6.3。
+
+### 形狀：四分之一超橢圓，直邊保持直的
+
+圓角矩形的角是一段**圓弧**，弧與直邊接得上位置、接不上曲率，交界處看得出一個轉折；squircle 的角是超橢圓 `|x|^n + |y|^n = r^n` 的四分之一，曲率從邊上的 0 連續長到角落的最大值——同樣的 `r` 看起來更飽滿、轉角更長一段。`SQ_N = 5.0`（4 還看得出方、6 之後跟正圓角分不出來），遮罩用 `SQ_SS = 4` 倍超取樣再縮回來當抗鋸齒。
+
+### 做法：ttk 的 image element
+
+Pillow 畫 PNG → base64 → `tk.PhotoImage` → `Style.element_create(..., "image", ...)` → 把 sv_ttk layout 裡的背景元件換成它（`SquircleSkin._swap` 是遞迴複製 layout、只改元件名字，其餘結構原封不動）。sv_ttk 自己整套佈景就是一堆 PNG，所以這條路一定走得通。
+
+| 控制項 | 換掉的元件 | 圖片 |
+| --- | --- | --- |
+| 一般按鈕（瀏覽…／變更…／開啟簡報／兩顆收合鈕） | `Button.button` | 灰底無框，四個狀態 |
+| 主要動作鈕 | `AccentButton.button` | Apple 藍／深紅各一組 |
+| 輸入框 | `Entry.field` | 淡底描邊，focus 時描邊換 accent 並加粗 |
+| 核取方塊 | `Checkbutton.indicator` | 沒勾是空框，勾了才上色 |
+| 進度條 | `Horizontal.Progressbar.trough`／`.pbar` | 圓頭軌道與填充條 |
+
+⚠️ **不要用 Pillow 的 ImageTk**：它要再多一個 C 擴充模組才 import 得起來，缺了就是 ImportError，而 Tk 8.6 的 `PhotoImage` 本來就吃 base64 的 PNG（含 alpha）。⚠️ **PhotoImage 的參考要自己留著**（`SquircleSkin._keep`）：Tk 不持有，放掉就整片變空白。
+
+### 四個踩得到的地方
+
+1. ⚠️ **`border` 不可超過圖片邊長的一半。** 切不出九宮格時 ttk 會在幾何計算裡原地打轉，事件迴圈**當場卡死**——`after` 不再觸發、視窗畫不出來，而且**沒有任何例外**。用 19px 的圖配 `border=10` 撞到過一次，症狀是程式一路卡到被 timeout 殺掉，逐個元件二分才找出是 `Entry`。底板一律畫成 `2*(r+1)+1` 見方。
+2. ⚠️ **`padding` 一定要明寫。** image element 沒給 padding 時會**拿 border 當內距**，圓角半徑於是加到控制項的內距上——半徑 12 的主要動作鈕就這樣一口氣高了 26px。
+3. ⚠️ **sv_ttk 的圖片是自帶內距的，換掉圖片要把那一份補回來**（`SQ_PAD = 4`／`SQ_PAD_FIELD = 5`）。不補的話全畫面的控制項一起矮 8px、視窗 `reqheight` 從 426 掉到 387。核取方塊同理：`SQ_CHK_BOX` 取 20（sv_ttk 的尺寸），17 會讓每個核取方塊矮 3px、選項區展開時整體矮 12px。
+4. ⚠️ **色票不能照抄。** 深色的次要按鈕比 meeting-scribe 亮一階（`#3a3a3c` 對 `#2c2c2e`）：那邊的深色卡片是 `#1d1d1f`，而這裡的卡片是 sv_ttk 畫的、明顯亮一截，照抄的話按鈕會整顆融進卡片，畫面上只剩浮著的文字。
+
+### 顏色：抄 meeting-scribe，兩處刻意偏離
+
+色票取自 `meeting-scribe` 那支工具的 UI 樣式模組 src/meeting_scribe/ui_style.py（那份的來源是 apple.com）：主色 `#0071e3`／`#0a84ff`（hover `#0077ed`／`#3395ff`）、次要底 `#e8e8ed`／`#3a3a3c`、輸入框 `#f5f5f7`／`#2c2c2e`、分隔線 `#d2d2d7`。兩處不同：
+
+- **深色的次要按鈕亮一階**（理由見上）。
+- **停止鈕兩個模式都用 `#d70015`**。深色的 systemRed（`#ff453a`）拿來當大面積底色時，白字只有 3.4:1；`#d70015` 是 5.4:1。這顆鈕坐在主要動作的位置上、字又是粗體 12pt，讀不清楚不是選項。
+
+⚠️ **形狀不跟著抄**：meeting-scribe 的按鈕是膠囊（`button_*_radius: 999px`），這裡是 squircle。⚠️ 跨 repo 的路徑寫在註解裡會被 `tests/test_docs_index.py` 的斷鏈檢查抓到，那一條要連同理由寫進它的 `_ALLOW`。
+
+### 漸層做過，但拿掉了
+
+第一版是 systemBlue → systemIndigo 的漸層（主鈕、進度條、勾選框），使用者看過參考頁之後指示「我不要漸層效果／全部都是實色」，整批移除。**要加回去之前先知道這兩件事**：
+
+- 漸層**沒辦法走九宮格**——中段一拉伸就成了一片純色（左端一小段藍、中間死板一塊、右端一小段靛），只能跟著控制項的實際寬高重畫整張。
+- 而重畫會撞第二個坑：image element 的原生尺寸會撐大 widget 的 requested size，於是「畫大 → widget 變大 → `<Configure>` → 再畫大」一路發散，事件迴圈被灌爆、`after` 永遠排不進去。`element_create` 時把 `width`/`height` 釘成小值可以切斷這個回饋。
+
+實色沒有這兩個問題：**實色配九宮格對任意尺寸都是對的**（拉開的是純色），所以一種控制項一組圖就夠，也不必綁 `<Configure>`。
+
+### 降級與驗收
+
+⚠️ **裝不起來就回 `None`，畫面留在原本的長相**（與 sv_ttk 缺席同一條原則）：沒有 sv_ttk（layout 結構不一樣）、沒有 Pillow、`element_create` 丟例外，三者任一都整個放棄。⚠️ 樣式名照後綴繼承，所以 `STOP_STYLE`（`Stop.Run.Accent.TButton`）在沒有皮膚時會沿用 `Accent.TButton` 的 layout，**不會炸**，只是停止鈕跟開始鈕同色——已實測。
+
+驗收兩件事，缺一不可：
+
+1. **版面零位移**：`skin` 開／關各建一次 `App`，逐個量 `winfo_reqwidth/reqheight`。目標是**每一格都相同**（含視窗的 `reqheight` 426、展開選項後 655）。這一步抓到了上面第 2、3、4 三個坑，截圖只看得出「怪怪的」。
+2. **視覺**：閒置／選好檔案／轉檔中／完成加選項展開，淺色與深色各一輪，最後真的轉一頁 PDF（載入引擎那段是 indeterminate，形狀要另外看一眼）。⚠️ 截圖用 `PrintWindow` + `PW_RENDERFULLCONTENT` 抓視窗自己，**不要用 `ImageGrab` 抓螢幕座標**——那會截到使用者的實機桌面（第一次就抓到別人的瀏覽器），也逼得測試腳本去搶前景。

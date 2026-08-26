@@ -36,7 +36,11 @@ _PATH_RE = re.compile(
 )
 # 已知的例外,每一條都要有理由。⚠️ **這裡只放「不是指路」的東西**
 # (別的 repo 的路徑、示範用的假檔名);真的斷掉的指路要修,不是寫進來
-_ALLOW: dict[str, str] = {}
+_ALLOW: dict[str, str] = {
+    # squircle 皮膚的色票是從 meeting-scribe 那個 repo 抄過來的,指的是**它的**
+    # 檔案、不是本專案的(見 pdf2ppt_gui_2.py 的 SKINS)。寫全路徑才找得到。
+    "src/meeting_scribe/ui_style.py": "別的 repo(meeting-scribe)的路徑:色票來源",
+}
 
 
 def _pointers() -> set[str]:
