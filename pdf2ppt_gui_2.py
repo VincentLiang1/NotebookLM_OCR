@@ -135,6 +135,20 @@ SP_XS, SP_SM, SP_MD, SP_LG, SP_XL = 4, 8, 12, 16, 24
 # 而圖片自帶的內距是固定像素（`make_skin.SQ_PAD` 那一組是另一件事——那是補回
 # sv_ttk 原本圖片自帶的量）。
 PAGE_PAD = 20      # 視窗邊 → 卡片
+
+# 視窗尺寸。⚠️ **啟動寬度就是最小寬度**（使用者 2026-08-27 指示）：開起來剛好
+# 是下限，要更寬自己拉。所以這兩個地方一定要是**同一個常數**——寫成兩個數字
+# 的話，下次調 minsize 就會讓「啟動 ＝ 最小」這件事安靜地不成立。
+# ⚠️ 舊值是 880（2026-08-25 晚從 760 提上去的），理由是「760 之下副標那一整句
+# 會從左邊界頂到右邊界」。2026-08-27 副標換成更短的一句之後那個理由就沒了
+# ——現在整個介面的 reqwidth 只有 468，760 還有很寬的餘裕。
+# ⚠️ 高度是另一回事，**不寫死**：閒置時的畫面只有「檔案 + 開始轉檔」，寫死 640
+# 等於讓一半的視窗是一個還沒有內容的空白日誌框（2026-08-25 量到的是 51%）。
+# 建完介面由 _fit_window() 量出實際需要的高度（現在是 551），之後每次展開／
+# 收合也走同一支；底下這個只是它跑起來之前的初值。
+WIN_W, WIN_H0 = 760, 460
+# ⚠️ minsize 的**高度**要小：它是 _fit_window 縮不下去的地板。
+WIN_MIN_H = 320
 CARD_PAD = SP_XL   # 卡片邊 → 裡面的元件
 CARD_GAP = 20      # 卡片與卡片之間
 
@@ -1181,14 +1195,10 @@ class App(tk.Tk):
         # 為單位寫的，一律要過 px()
         self.ui_scale = self.winfo_fpixels("1i") / 96.0
         self.ui_font, self.pal, self.skin = apply_ui_style(self, self.ui_scale)
-        # ⚠️ 高度**不寫死**：閒置時的畫面只有「檔案 + 開始轉檔」，寫死 640 等於
-        # 讓一半的視窗是一個還沒有內容的空白日誌框（2026-08-25 量到的是 51%）。
-        # 建完介面由 _fit_window() 量出實際需要的高度，之後每次展開／收合也走
-        # 同一支。⚠️ minsize 的高度同樣要小：它是 _fit_window 縮不下去的地板。
-        # ⚠️ 寬度 760 → 880（2026-08-25 晚上）：760 之下副標題那一整句會從左邊界
-        # 頂到右邊界，長路徑也只能靠中間省略；一行字左右都貼邊本身就讀起來擠。
-        self.geometry(f"{self.px(880)}x{self.px(460)}")
-        self.minsize(self.px(760), self.px(320))
+        # 尺寸與那三個常數的理由都在模組頂端（WIN_W／WIN_H0／WIN_MIN_H）。
+        # ⚠️ 寬度與 minsize 同值＝「開起來就是最小寬度」，兩邊要一起看。
+        self.geometry(f"{self.px(WIN_W)}x{self.px(WIN_H0)}")
+        self.minsize(self.px(WIN_W), self.px(WIN_MIN_H))
         self.configure(background=self.pal["page"])
 
         self.log_queue: "queue.Queue" = queue.Queue()
@@ -1596,7 +1606,12 @@ class App(tk.Tk):
         # tk.Text 是 classic 控制項，佈景挑不動它 —— 顏色要自己餵
         # ⚠️ `padx` 是 SP_XS：12（卡片）+ 8（槽）+ 4 ＝ 24，與上面幾張卡片的
         # CARD_PAD 對齊
-        self.log = tk.Text(well, height=10, wrap="word",
+        # ⚠️ `width` 要明寫，而且要**小**：`tk.Text` 的預設是 80 個字元，在這個
+        # 字型下約 660px——它會直接變成整個視窗的最小寬度（2026-08-27 量到內容
+        # 需求 764 > minsize 760，追下去就是這個預設值）。日誌區是 expand=True
+        # 撐滿的，實際寬度由視窗決定，這個數字只是「不能再窄」的地板。
+        # ⚠️ 同理 `height=10` 也是初值，實際高度由 grid 的 weight 撐（見 _fit_window）。
+        self.log = tk.Text(well, height=10, width=32, wrap="word",
                            font=(self.ui_font, 10),
                            relief="flat", borderwidth=0,
                            # 邊框與圓角都由外層那張底板畫，這裡不要再描一圈——
