@@ -99,6 +99,12 @@ SQ_R_CARD = 20
 SQ_CHK_BOX = 20       # 核取方塊的邊長（沿用 sv_ttk 的尺寸，見下面的 SQ_PAD）
 SQ_CHK_GAP = 8        # 方塊與標籤之間的縫（畫進圖片右側的透明區，layout 沒地方塞）
 SQ_PB_TH = 7          # 進度條厚度
+# 收合鈕的三角形。⚠️ **畫成圖片而不是用文字字元**（2026-08-27，使用者說「三角形
+# 太小」）：`▸`／`▾` 在 10pt 下的字墨只有 7×8px，而換成 advance width 更寬的
+# `⏵`／`⏷` 也沒有用——那多出來的寬度是字元的間距、glyph 本身一樣小。字級是整顆鈕
+# 共用的，沒辦法只放大一個字元，所以唯一能控制大小的路就是圖片。
+SQ_CHEV = 11          # 三角形的邊長
+SQ_CHEV_GAP = 9       # 三角形與標題之間的縫（畫進圖片右側的透明區）
 SQ_MID = 96           # 底板中段的寬度（見檔頭第 1、4 點，不可以縮回 1px）
 
 # ⚠️ **底板自己要撐出來的內距**：sv_ttk 的按鈕／輸入框圖片是**自帶內距的**，換掉
@@ -192,8 +198,29 @@ def shade(color: str, amt: float) -> str:
         round(c + (tone - c) * abs(amt)) for c in rgb)
 
 
+def chevron(size: int, color: str, down: bool) -> Image.Image:
+    """收合鈕的三角形（▶／▼）。
+
+    ⚠️ **兩個方向畫在一模一樣大小的畫布上**：換狀態時整行文字才不會左右跳一格
+    （用文字字元時這一條要靠「挑到同寬的那一對」來滿足，實測 ▶／▼ 是 10／13、
+    ‣／▾ 是 5／7，都會跳）。
+
+    ⚠️ **這一張留透明、不給 `on`**（`plate` 那條「一定要給」的唯一例外）：它由 Tk
+    合成到按鈕自己的底色上，而那個底色會變——低調皮靜止時是卡片色、滑過去是灰的。
+    """
+    m = Image.new("L", (size * SQ_SS, size * SQ_SS), 0)
+    s = size * SQ_SS
+    # 底邊佔滿、頂點在對邊中點；留 0.22 的邊，抗鋸齒才不會把尖角削掉
+    pts = ([(0, s * 0.22), (s, s * 0.22), (s / 2, s * 0.78)] if down
+           else [(s * 0.22, 0), (s * 0.22, s), (s * 0.78, s / 2)])
+    ImageDraw.Draw(m).polygon(pts, fill=255)
+    img = Image.new("RGB", (size, size), color).convert("RGBA")
+    img.putalpha(m.resize((size, size), Image.LANCZOS))
+    return img
+
+
 def _pad_right(img: Image.Image, gap: int) -> Image.Image:
-    """右邊補一段透明——核取方塊與標籤之間的縫，layout 裡沒有地方塞。"""
+    """右邊補一段透明——核取方塊／三角形與標題之間的縫，layout 裡沒有地方塞。"""
     out = Image.new("RGBA", (img.width + gap, img.height), (0, 0, 0, 0))
     out.paste(img, (0, 0))
     return out
@@ -354,6 +381,13 @@ def build_variant(theme: str, scale: float) -> tuple[dict, dict]:
         elems[name] = dict(states=[["", key]], border=[edge, 0, edge, 0],
                            width=int(2 * (pr + 1) + 1), height=th,
                            padding=0, sticky="nswe", on=on)
+
+    # ---- 收合鈕的三角形（見 chevron）----
+    # ⚠️ **不進 `elems`**：它們不是 ttk 元件，是 GUI 直接拿去當按鈕的 `image`
+    # （`compound="left"`）。沒有皮膚時退回文字字元，見 GUI 的 `_set_chevron`。
+    cv, cg = px(SQ_CHEV, scale), px(SQ_CHEV_GAP, scale)
+    imgs["chev-right"] = _pad_right(chevron(cv, p["ink"], False), cg)
+    imgs["chev-down"] = _pad_right(chevron(cv, p["ink"], True), cg)
 
     # ---- 主要動作鈕的兩張皮：開始是 Apple 藍、停止是深紅 ----
     rr = px(SQ_R_RUN, scale)

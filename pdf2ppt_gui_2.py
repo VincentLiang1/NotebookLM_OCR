@@ -148,8 +148,11 @@ CARD_GAP = 20      # 卡片與卡片之間
 # 把選項砍到五個之後，舊標籤上的字型／DPI／除錯已經沒有對應的控制項了。
 ADV_LABEL = "轉檔選項（頁碼、浮水印、簡體修正、色塊、小字）"
 LOG_LABEL = "詳細訊息（每頁的處理結果與錯誤）"
-# ⚠️ 三角形一律用 ▸／▾ 這一對（同一個字族、同寬）：▶／▼ 在 Microsoft JhengHei UI
-# 下是全形，換狀態時整行文字會左右跳一格。
+# 三角形**只在沒有皮膚時**用得到：有皮膚時它是一張圖（`_set_chevron`），因為字元
+# 放不大——使用者 2026-08-27 說「三角形太小」，而字級是整顆鈕共用的，沒辦法只放大
+# 一個字元。⚠️ 退路這一對仍然要**兩個狀態同寬**，否則換狀態時整行文字會左右跳一格：
+# 實測（Microsoft JhengHei UI，`Font.measure` @10pt）▶／▼ 是 10／13、►／▼ 是 12／13、
+# ‣／▾ 是 5／7，這三對都會跳；▸／▾ 是 7／7。
 CHEV_SHOW, CHEV_HIDE = "▸  ", "▾  "
 
 # 主要動作鈕的兩個狀態。⚠️ 同一顆鈕**兼任停止**，不是另外擺一顆：多一顆常駐的
@@ -577,6 +580,9 @@ class SquircleSkin:
         self.st = ttk.Style(root)
         self.source = ""           # "assets"／"drawn"：哪一條路成的，驗收時要分得出來
         self._keep: list = []      # ⚠️ Tk 不持有 PhotoImage 的參考，放掉就變空白
+        # 收合鈕的三角形。跟底板同一張 sprite sheet，但**不是** ttk 元件——GUI
+        # 直接拿去當按鈕的 image（見 App._set_chevron）
+        self.chev: dict[str, tk.PhotoImage] = {}
 
     # ---- 安裝 ----
     def install(self) -> bool:
@@ -653,6 +659,7 @@ class SquircleSkin:
                 cut[key] = sub
             elems = {name: dict(e, states=[(s, cut[k]) for s, k in e["states"]])
                      for name, e in var["elements"].items()}
+            self.chev = {"right": cut["chev-right"], "down": cut["chev-down"]}
         except Exception:
             return None
         self.source = "assets"
@@ -681,6 +688,7 @@ class SquircleSkin:
                      for name, e in elems.items()}
             fg = {"on_accent": make_skin.SKINS[self.mode]["on_accent"],
                   "run_off": make_skin.SKINS[self.mode]["run_off_fg"]}
+            self.chev = {"right": cut["chev-right"], "down": cut["chev-down"]}
         except Exception:
             return None
         self.source = "drawn"
@@ -762,10 +770,13 @@ def apply_ui_style(root: tk.Misc,
     # 一顆浮在半空中的按鈕。⚠️ 它坐在**卡片之外**，走的是低調皮（見 ADV_STYLE）。
     # ⚠️ 內距要撐得起「這是一條區段標題」：(10,6) 時它比上下的卡片都薄，看起來
     # 像夾在兩塊板子中間的縫，而不是可以按的東西
-    # ⚠️ **左右內距是 0**：這顆鈕的底板左緣就是卡片內距的邊界（見 _build_ui 那段
-    # 「每一個直接子元件的左緣都落在同一條線上」），左右再給內距就等於把它推進去
-    # 一截、白邊比隔壁卡片寬。文字仍然離邊 4px——那是底板自帶的 `SQ_PAD`。
-    st.configure(ADV_STYLE, padding=(0, px(SP_MD - 2)), anchor="w")
+    # ⚠️ 左右內距 `SP_SM`、上下 `SP_MD-2`。左右這個值是 2026-08-27 加回來的
+    # （使用者：「三角形太靠近邊界，要多留一點空白」）：先前為了讓**底板左緣**
+    # 落在卡片內距上而給了 0，底板確實對齊了，但底板靜止時是看不見的（低調皮
+    # ＝卡片色），畫面上真正讀得到的是三角形，而它離卡片邊只剩底板自帶的 4px。
+    # ⚠️ 內距不會動到底板的位置，所以那條「六個直接子元件左緣都是 24」仍然成立
+    # ——量的是元件邊緣，這裡加的是元件**裡面**的留白。
+    st.configure(ADV_STYLE, padding=(px(SP_SM), px(SP_MD - 2)), anchor="w")
     # 次要動作（變更…、開啟簡報、開啟資料夾）：比主要動作小一號
     st.configure("Small.TButton", padding=(px(10), px(3)))
     # 「開啟紀錄」：與收合鈕同一列、同樣坐在視窗底上，所以走同一張低調皮，
@@ -1497,9 +1508,9 @@ class App(tk.Tk):
                              padding=(p(CARD_PAD), p(SP_MD)))
         adv_card.pack(fill="x", **pad)
         adv_card.columnconfigure(0, weight=1)
-        self.adv_toggle = ttk.Button(adv_card, text=CHEV_SHOW + ADV_LABEL,
-                                     style=ADV_STYLE,
+        self.adv_toggle = ttk.Button(adv_card, style=ADV_STYLE,
                                      command=self._toggle_advanced)
+        self._set_chevron(self.adv_toggle, False, ADV_LABEL)
         # 整條寬：舊版是寫死 34 字寬的一顆鈕，右半邊永遠空著，看起來像一個
         # 停用的輸入框而不是可以按的區段標題
         self.adv_toggle.grid(row=0, column=0, sticky="ew")
@@ -1559,9 +1570,9 @@ class App(tk.Tk):
         log_card.rowconfigure(1, weight=1)
         head = ttk.Frame(log_card, style="CardBody.TFrame")
         head.grid(row=0, column=0, sticky="ew")
-        self.log_toggle = ttk.Button(head, text=CHEV_SHOW + LOG_LABEL,
-                                     style=ADV_STYLE,
+        self.log_toggle = ttk.Button(head, style=ADV_STYLE,
                                      command=self._toggle_log)
+        self._set_chevron(self.log_toggle, False, LOG_LABEL)
         self.log_toggle.pack(side="left", fill="x", expand=True)
         # 紀錄檔的完整路徑不再印在日誌區裡（在這個寬度下會折成兩行），改成一顆
         # 按鈕。⚠️ 開不起來紀錄檔時它要是灰的，不是按了沒反應。
@@ -1625,6 +1636,24 @@ class App(tk.Tk):
     # 日誌區與進度條推到工作列底下。分成兩個模式之後兩邊都塞得進去：
     #   設定模式：展開選項 → 收日誌（在調參數，不是在看跑）
     #   執行模式：按下轉檔 → 收選項、展開日誌（在看跑，不是在調參數）
+    def _set_chevron(self, btn: ttk.Button, shown: bool, label: str) -> None:
+        """收合鈕左邊那個三角形。
+
+        有皮膚就用**圖片**（`compound="left"`）：字元放不大——`▸`／`▾` 在 10pt 下的
+        字墨只有 7×8px，而字級是整顆鈕共用的，沒辦法只放大一個字元（使用者
+        2026-08-27 說「三角形太小」）。⚠️ 沒有皮膚時退回文字前綴，那一對必須同寬
+        （見 CHEV_SHOW）。
+
+        ⚠️ 圖片與文字之間的縫**畫在圖片裡**（`make_skin.SQ_CHEV_GAP`）：ttk 的
+        `compound` 沒有間距選項，靠這個補。
+        """
+        chev = self.skin.chev if self.skin else None
+        if chev:
+            btn.config(image=chev["down" if shown else "right"],
+                       compound="left", text=label)
+        else:
+            btn.config(text=(CHEV_HIDE if shown else CHEV_SHOW) + label)
+
     def _toggle_advanced(self) -> None:
         self._set_advanced(not self.show_advanced.get())
 
@@ -1642,8 +1671,7 @@ class App(tk.Tk):
             self._set_log_shown(False, fit=False)
         else:
             self.opt_frame.grid_remove()
-        self.adv_toggle.config(
-            text=(CHEV_HIDE if show else CHEV_SHOW) + ADV_LABEL)
+        self._set_chevron(self.adv_toggle, show, ADV_LABEL)
         if fit:
             self._fit_window()
 
@@ -1661,8 +1689,7 @@ class App(tk.Tk):
         else:
             self.logframe.grid_remove()
             self.log_card.pack_configure(fill="x", expand=False)
-        self.log_toggle.config(
-            text=(CHEV_HIDE if show else CHEV_SHOW) + LOG_LABEL)
+        self._set_chevron(self.log_toggle, show, LOG_LABEL)
         if fit:
             self._fit_window()
 
