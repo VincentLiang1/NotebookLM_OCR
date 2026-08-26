@@ -38,9 +38,17 @@ argparse 預設值：少一份手抄就少一處會漂移的地方（要調就�
 enable_dpi_awareness 的 docstring 裡，取捨（以及「為什麼不是真的 WinUI 3」）見
 docs/dev/windows-環境與入口.md 5.1。
 
-版面：主畫面只留輸入／輸出檔，那五個選項全部收在預設收合的「轉檔選項」區
-（_toggle_advanced）。主線的終點「開始轉檔」排在檔案區正下方、收合按鈕**之上**
-（使用者 2026-08-25 指示），展開的那一區插在收合按鈕正下方的 adv_slot 裡。
+版面：由上而下是**四張卡片**（檔案／進度與動作／轉檔選項／詳細訊息），後兩張
+預設收起來、由自己頭上那顆整條寬的收合鈕開關。主畫面只留輸入／輸出檔，那五個
+選項全部收在「轉檔選項」區（_toggle_advanced）。主線的終點「開始轉檔」排在檔案區
+正下方、收合按鈕**之上**（使用者 2026-08-25 指示），展開的那一區插在收合按鈕正
+下方的 adv_slot 裡。
+
+⚠️ 卡片是 2026-08-26 加的（使用者「參考 MP4-2-SRT UI 的圓角、卡片、顏色」）：
+底色分三階 page → card → field（唯一真值在 pdf2ppt/palette.py），圓角底板由
+tools/make_skin.py 畫。兩顆收合鈕與「開啟紀錄」坐在**卡片之外**、走低調皮
+（靜止態就是視窗底色，滑過才浮出灰底）——做成實底的話，畫面上最重的三個元素會是
+三條灰橫槓，而它們講的是最不重要的三件事。
 色塊的選項曾經是主畫面上唯一的核取方塊（要拿它做 A/B），
 2026-08-24 量完之後 cli.py 的預設換成 --no-cover，這裡也就跟著收進選項區、
 反向成「輸出獨立色塊形狀」，預設不勾 —— 三方的預設值現在一致。
@@ -53,14 +61,14 @@ docs/dev/windows-環境與入口.md 5.1。
 一種版面。高度一律由 _fit_window() 統一決定：量 reqheight、
 鉗進所在螢幕的工作區、必要時把視窗往上移；使用者自己拉過視窗之後就只長不縮。
 
-進度：動作列上是**同一列**的「開始轉檔／停止轉檔」鈕、進度條與狀態字（舊版散在
+進度：動作卡片上是**同一列**的「開始轉檔／停止轉檔」鈕、進度條與狀態字（舊版散在
 三個地方：右上角的「就緒」、中段一條沒有資訊量的 indeterminate 進度條、下方日誌）。
 進度條**沒在跑就不顯示**（使用者 2026-08-25 晚指示：閒置時那條 determinate value=0
 的空槽橫貫版面中段，讀起來像一條分隔線）；轉檔一開始 grid() 回來，在 cli 印出第一行
 `page N (n/total)` 時從 indeterminate 換成 determinate（_scan_line）。⚠️ 狀態字**只報頁數、不報剩餘時間**（使用者 2026-08-25 指示刪掉
 「約剩 2 分」那一段）：頁數是量到的，剩餘時間是猜的。轉檔結果不再用互動式對話框問「要開啟資料夾嗎」——那個框正好蓋住
-日誌最後一行的降級 WARNING，改成日誌區上方一條結果列（_show_result），降級的頁碼
-直接寫在列上。
+日誌最後一行的降級 WARNING，改成動作卡片上的一條結果列（_show_result），降級的
+頁碼直接寫在列上。
 
 執行紀錄：每次啟動在本檔所在資料夾底下的 logs 寫一份（檔名是啟動時間＋pid，
 保留 30 天），介面日誌區看得到的東西那裡都有，轉檔失敗的 traceback 也在裡面。
@@ -86,6 +94,13 @@ from pathlib import Path
 
 import tkinter as tk
 from tkinter import filedialog, font as tkfont, messagebox, ttk
+
+# ⚠️ 這是本檔**唯一**從專案套件裡拿的東西，而且是刻意的：`pdf2ppt/palette.py`
+# 一行 import 都沒有、`pdf2ppt/__init__.py` 也只有一句 docstring，所以這一行
+# **不會**把 numpy／pymupdf／python-pptx 那一整串拉進啟動路徑（那些只有按下轉檔
+# 的那一刻、`_run_conversion` 裡 import cli 時才付出）。顏色抽成一份的理由見那支
+# 的 docstring —— 產生器（tools/make_skin.py）與這裡共用同一份色票。
+from pdf2ppt.palette import PALETTES
 
 
 APP_TITLE = "NotebookLM PDF → PPT 轉檔工具"
@@ -113,6 +128,16 @@ APP_ID = "VincentLiang.NotebookLM.Pdf2Ppt"
 # 與「區段標題貼著它管的內容」、SP_XL＝卡片內要分成兩件事時的那一道縫。
 SP_XS, SP_SM, SP_MD, SP_LG, SP_XL = 4, 8, 12, 16, 24
 
+# 卡片的三個尺規（2026-08-26 卡片化時加的，與姊妹專案 MP4-2-SRT 同源）。⚠️ 那邊
+# 的使用者在截圖上圈了卡片邊到內部元件之間那圈白，逐像素掃出 42px、換算回邏輯
+# 像素約 27——所以 `CARD_PAD` 走既有尺規的 SP_XL(24)，**第一版寫 16，他當場說
+# 太窄**。⚠️ 這三個不可以寫進皮膚的底板圖裡：它們要跟著顯示縮放走（過 App.px()），
+# 而圖片自帶的內距是固定像素（`make_skin.SQ_PAD` 那一組是另一件事——那是補回
+# sv_ttk 原本圖片自帶的量）。
+PAGE_PAD = 20      # 視窗邊 → 卡片
+CARD_PAD = SP_XL   # 卡片邊 → 裡面的元件
+CARD_GAP = 20      # 卡片與卡片之間
+
 # 選項區的收合按鈕文字。預設收起來：這五個都有合用的預設值，日常轉檔一項都不
 # 必動，攤在主畫面上只是讓「選檔 → 開始轉檔」這條主線被一排控制項擋住。
 # ⚠️ 兩個狀態的**標籤要一模一樣、只換三角形**：舊版收合時寫「進階選項（頁碼、
@@ -137,6 +162,13 @@ STOPPING_TEXT = "停止中…"
 # 上面設的字級與內距（layout 則由 SquircleSkin 各給一份，見那裡）。
 RUN_STYLE = "Run.Accent.TButton"
 STOP_STYLE = "Stop.Run.Accent.TButton"
+
+# 低調按鈕（Fluent 說的 Subtle button）：坐在**卡片之外**的視窗底上，靜止態就是
+# 視窗底色本身、滑過才浮出灰底。⚠️ 兩顆整條寬的收合鈕與「開啟紀錄」都走這個
+# ——做成實底的話，畫面上最重的三個元素會是三條灰橫槓，而它們講的是最不重要
+# 的三件事。⚠️ 名字要以 `.TButton` 結尾（ttk 的樣式選項照後綴一層層往上找）。
+ADV_STYLE = "Adv.TButton"       # 整條寬的收合鈕（區段標題）
+SUBTLE_STYLE = "Subtle.TButton"  # 同一張皮、小一號的內距（開啟紀錄）
 
 # 狀態字會出現的**所有**長相。用途是量出右欄要保留多寬——⚠️ 這一格的寬度必須
 # 釘住（不然「就緒」換成「載入 OCR 引擎…」時進度條的右端會跟著左右抽動），但
@@ -170,37 +202,12 @@ UI_FONT_FALLBACK = "Microsoft JhengHei"   # 舊版 Windows 沒有 UI 版
 # docs/dev/windows-環境與入口.md §5。
 #
 # ⚠️ 佈景只挑得動 **ttk** 控制項；`tk.Text`（日誌區）與視窗底色是 classic 的，
-# 顏色要自己餵 —— 就是底下這兩份 PALETTE 存在的理由。
+# 顏色要自己餵 —— 那正是色票（`pdf2ppt/palette.py`）存在的理由。
 THEME_ENV = "NOTEBOOKLM_PDF2PPT_THEME"     # light / dark，不設就跟隨 Windows
-PALETTES = {
-    "light": {
-        "page": "#fafafa",       # 與 Sun Valley 的 light 視窗底同色
-        # 說明文字。⚠️ **這個值有下限，不要再往回調淡**（使用者 2026-08-25 晚
-        # 說「介面上的字顏色有點太淺」）：舊值 #5d6470 對 #fafafa 的對比度只有
-        # 5.7:1（一般標籤是 15:1），而中文小字反鋸齒之後**實際渲染成
-        # (112,118,130)**，比色碼本身還淡一階——量出來的，不是感覺。現值 9.0:1。
-        # ⚠️ 副標、輸入提示、「輸出：…」全走這一個，它佔了畫面上大半的字。
-        "muted": "#41474f",
-        "ok": "#0f7b3f",
-        "warn": "#9a5b00",
-        "err": "#c02626",
-        "log_bg": "#ffffff",
-        "log_fg": "#1f2328",
-        "log_sel": "#cfe3fb",
-        "border": "#d8dce1",   # 日誌框的細框線
-    },
-    "dark": {
-        "page": "#1c1c1c",
-        "muted": "#b9c0cb",      # 對 #1c1c1c 是 9.3:1（舊值 #a6adb8 是 7.5:1）
-        "ok": "#5fd18a",
-        "warn": "#f0b429",
-        "err": "#ff7b72",
-        "log_bg": "#202020",
-        "log_fg": "#e6e6e6",
-        "log_sel": "#2d4f76",
-        "border": "#3a3a3a",   # 日誌框的細框線
-    },
-}
+# ⚠️ **色票不在這裡**（2026-08-26 起）：`pdf2ppt/palette.py` 是唯一真值，皮膚產生
+# 器 `tools/make_skin.py` 讀的是同一份。它原本真的分成兩份（產生器一份「畫進圖片
+# 的顏色」、這裡一份「文字的顏色」），而重疊的鍵一旦漂開，症狀是「按鈕的藍跟卡片
+# 邊框的灰差一階」——肉眼看得到卻查不出來源。
 
 
 def enable_dpi_awareness() -> None:
@@ -475,26 +482,32 @@ def flash_taskbar(root: tk.Misc) -> None:
 
 
 # --------------------------------------------------------------------------- #
-#  Squircle 皮膚：互動控制項的連續圓角與 Apple 色票
+#  皮膚：正圓角底板與 Apple 色票
 # --------------------------------------------------------------------------- #
-# 只換**互動控制項**（按鈕、輸入框、核取方塊、進度條）的外觀；卡片維持實色、
-# 視窗外框不碰（使用者 2026-08-26 拍板）。⚠️ 這兩條不是省事，是量過的：
-#   ·「卡片鋪底」會被 Tk 的合成模型擋下來——`ttk.Frame` 只能是實色、沒有透明，
-#     坐在上面的每個 `ttk.Label` 都會用自己的底色蓋掉一塊；而且 `Muted.TLabel`
-#     那條「對比度 ≥9:1」的硬規則在非平面的底色上會**沿著底色滑動**（實色底量
-#     一次就算數，非實色底得整片量，最淡的一端會掉到 6:1）。
-#   · 視窗四角的圓角是 Windows 11 的 DWM 畫的，app 改不了形狀。要改只能走
-#     layered window ＋逐像素 alpha，代價是失去原生標題列——最小化、貼齊、
-#     工作列預覽全部得自己重寫，而 taskbar_progress 那一套也綁在原生視窗上。
+# 換的是**控制項與容器**的背景（按鈕、輸入框、核取方塊、進度條、卡片、日誌槽）；
+# ⚠️ **視窗外框不碰**（使用者 2026-08-26 拍板）：那不是省事，是量過的——視窗四角
+# 的圓角是 Windows 11 的 DWM 畫的，app 改不了形狀。要改只能走 layered window ＋
+# 逐像素 alpha，代價是失去原生標題列，最小化、貼齊、工作列預覽全部得自己重寫，
+# 而 taskbar_progress 那一套也綁在原生視窗上。
+#
+# ⚠️ **卡片是 2026-08-26 才加的**（使用者「參考 MP4-2-SRT UI 的圓角、卡片、顏色」）。
+# 在那之前這裡寫著「卡片維持實色」，理由是「`ttk.Frame` 只能是實色、沒有透明，
+# 坐在上面的每個 `ttk.Label` 都會用自己的底色蓋掉一塊」——那個觀察是對的，但它是
+# **做法的限制，不是不能做的理由**：解法就是讓卡片上的每一個控制項都繼承得到
+# `Card.*` 那一層的 background（見 apply_ui_style 的那一批 `st.configure`）。
+# ⚠️ 真正不能做的仍然是**漸層**：`Muted.TLabel` 那條「對比度 ≥9:1」的硬規則在
+# 非平面的底色上會沿著底色滑動（實色底量一次就算數，非實色底得整片量，最淡的
+# 一端會掉到 6:1）。三階底色（page → card → field）每一階都是實色，量得準。
 #
 # **為什麼是圖**：ttk 內建的繪圖能力只有矩形、3D 浮雕邊框、直線——沒有圓角、
 # 沒有抗鋸齒、沒有任意路徑。現在這個 Sun Valley 佈景（sv_ttk）自己就是一張
 # spritesheet 切成一堆小圖、再用 `ttk::style element create ... image` 掛上去的，
 # 我們換掉的正是它的 `Button.button`／`AccentButton.button`／`Entry.field`／
-# `Checkbutton.indicator`／進度條那幾個元件。
+# `Checkbutton.indicator`／進度條那幾個元件，另外三張（卡片、日誌槽、低調按鈕）
+# 沒有前身，是自己開一份 layout 掛上去的。
 #
-# **圖從哪來**：`assets/skin/`（`tools/make_skin.py` 的產物，形狀、色票、內距的
-# 唯一真值都在那支）。⚠️ **資產不在就當場畫**（使用者 2026-08-26 指示）：那支
+# **圖從哪來**：`assets/skin/`（`tools/make_skin.py` 的產物，形狀與內距的唯一真值
+# 在那支，顏色則在 `pdf2ppt/palette.py`）。⚠️ **資產不在就當場畫**（使用者 2026-08-26 指示）：那支
 # 工具是可以直接 import 的，缺圖時就地畫一份在記憶體裡用，畫不出來（連 Pillow
 # 都沒有）才整個放棄。所以三種情況都活得下去——有資產、只有原始碼、兩者皆無。
 # ⚠️ **不要用 Pillow 的 ImageTk**：它要再多一個 C 擴充模組才 import 得起來，而
@@ -505,7 +518,8 @@ SKIN_DIR = PROJECT_DIR / "assets" / "skin"
 
 # 把 sv_ttk layout 裡的背景元件換成我們的。第二欄是**要從哪個樣式抄 layout**
 # ——主要動作鈕的兩張皮都是從 `Accent.TButton` 複製出來的（`Run.…` 與 `Stop.…`
-# 各要一份自己的 layout 才分得開，字級與內距則靠樣式名的後綴繼承）。
+# 各要一份自己的 layout 才分得開，字級與內距則靠樣式名的後綴繼承）；兩種低調鈕
+# 是從 `TButton` 抄的（同一張底板、兩份 layout，因為它們的內距不同）。
 SKIN_SWAPS = (
     ("TButton", None, {"Button.button": "Sq.button"}),
     ("TEntry", None, {"Entry.field": "Sq.field"}),
@@ -515,6 +529,29 @@ SKIN_SWAPS = (
       "Horizontal.Progressbar.pbar": "Sq.pbar"}),
     (RUN_STYLE, "Accent.TButton", {"AccentButton.button": "Sq.accent"}),
     (STOP_STYLE, "Accent.TButton", {"AccentButton.button": "Sq.stop"}),
+    (ADV_STYLE, "TButton", {"Button.button": "Sq.subtle"}),
+    (SUBTLE_STYLE, "TButton", {"Button.button": "Sq.subtle"}),
+)
+
+# 自己開 layout 的兩個 Frame（不從別的樣式抄，因為要的就只有一張底板）。
+#
+# ⚠️ 三欄綁在一起：誰換 layout、換成哪張圖、以及**沒有皮膚時它自己是什麼顏色**。
+# 最後一欄只在皮膚裝不起來時用得到（那時退回實色的方角矩形）。
+#
+# ⚠️ **圓角外側的顏色不在這裡**，它畫進圖片本身了（`make_skin.plate` 的 `on`）。
+# 一度想走另一條路：把樣式的 `background` 設成外側色——ttk 先用那個值填滿整塊、
+# 再把九宮格圖畫上去，所以透明的圓角外側露出來的正是它。那條路對 Frame 有效，
+# 但對有自己 `background` 語意的控制項就會把別的東西一起改掉，於是整批改成
+# 不透明底板（理由完整寫在 `make_skin.plate` 的 docstring）。
+#
+# ⚠️ **抄 `TEntry` 是行不通的**：那會把 `Entry.textarea` 一起帶進 Frame 裡，而那個
+# 元件在非輸入框的控制項上沒有定義的行為。
+SKIN_FRAMES = (
+    # (樣式, 底板元件, 沒有皮膚時它自己的底色)
+    ("Card.TFrame", "Sq.card", "card"),
+    # 日誌槽：`tk.Text` 是 classic 控制項、**做不到圓角**——所以圓角由外面這層
+    # Frame 畫，Text 縮在它裡面（內距 ≥ 圓角半徑，方角才不會伸進弧裡）
+    ("Sunken.TFrame", "Sq.sunken", "field"),
 )
 
 
@@ -546,9 +583,20 @@ class SquircleSkin:
                     name, "image", *args,
                     border=e["border"], padding=e["padding"],
                     sticky=e["sticky"], width=e["width"], height=e["height"])
-            for style, src, table in SKIN_SWAPS:
-                self.st.layout(style, self._swap(self.st.layout(src or style),
-                                                 table))
+            # ⚠️ **先把來源 layout 全部抓下來，再統一寫回去。** 邊抄邊寫的話
+            # 後面那幾條會抄到**已經換過**的版本：`Adv.TButton` 從 `TButton` 抄
+            # 時，`Button.button` 早就被前一圈改名成 `Sq.button` 了，於是替換表
+            # 對不上任何一個元件名——兩顆收合鈕安靜地留在一般按鈕的灰底皮上，
+            # 沒有例外、也沒有錯誤訊息（2026-08-26 截圖才看出來）。
+            src_layouts = [(style, self.st.layout(src or style), table)
+                           for style, src, table in SKIN_SWAPS]
+            for style, layout, table in src_layouts:
+                self.st.layout(style, self._swap(layout, table))
+            # 卡片與日誌槽：自己開一個**只有底板**的 layout。⚠️ 卡片的內距不在
+            # 這裡——它是版面的尺規（CARD_PAD，要跟著顯示縮放走），由 Frame 自己
+            # 的 padding 給
+            for style, elem, _own in SKIN_FRAMES:
+                self.st.layout(style, [(elem, {"sticky": "nswe"})])
             self.st.configure("Horizontal.TProgressbar",
                               thickness=elems["Sq.trough"]["height"])
             for style in (RUN_STYLE, STOP_STYLE):
@@ -697,24 +745,52 @@ def apply_ui_style(root: tk.Misc,
 
     # Sun Valley 沒有涵蓋到、或本專案要加大的幾處
     # 主要動作鈕：吃佈景的 Accent（Fluent 的藍底圓角鈕），只加大字與內距。
-    # ⚠️ 樣式名要以 .Accent.TButton 結尾才繼承得到那組圖片元件
-    st.configure(RUN_STYLE, font=(fam, 12, "bold"), padding=(px(22), px(9)))
-    # 轉檔選項／詳細訊息的收合鈕：低調一點，別跟主要動作搶注意力。整條寬 +
-    # anchor="w"，讀起來像區段標題而不是一顆浮在半空中的按鈕
+    # ⚠️ 樣式名要以 .Accent.TButton 結尾才繼承得到那組圖片元件。
+    # ⚠️ 字級與內距對齊姊妹專案 MP4-2-SRT（使用者 2026-08-26「按鈕都請依照
+    # MP4-2-SRT 樣式」）：11pt／(20,7)，比舊值 12pt／(22,9) 收斂一點。
+    st.configure(RUN_STYLE, font=(fam, 11, "bold"), padding=(px(20), px(7)))
+    # 轉檔選項／詳細訊息的收合鈕：整條寬 + anchor="w"，讀起來像區段標題而不是
+    # 一顆浮在半空中的按鈕。⚠️ 它坐在**卡片之外**，走的是低調皮（見 ADV_STYLE）。
     # ⚠️ 內距要撐得起「這是一條區段標題」：(10,6) 時它比上下的卡片都薄，看起來
     # 像夾在兩塊板子中間的縫，而不是可以按的東西
-    st.configure("Adv.TButton", padding=(px(SP_MD), px(SP_MD - 2)), anchor="w")
-    # 次要動作（變更…、開啟簡報、開啟紀錄…）：比主要動作小一號
+    st.configure(ADV_STYLE, padding=(px(SP_MD), px(SP_MD - 2)), anchor="w")
+    # 次要動作（變更…、開啟簡報、開啟資料夾）：比主要動作小一號
     st.configure("Small.TButton", padding=(px(10), px(3)))
+    # 「開啟紀錄」：與收合鈕同一列、同樣坐在視窗底上，所以走同一張低調皮，
+    # 只是內距比照 Small
+    st.configure(SUBTLE_STYLE, padding=(px(10), px(3)))
     st.configure("Muted.TLabel", foreground=pal["muted"])
-    st.configure("Status.TLabel", font=(fam, 10, "bold"))
-    # 卡片裡的小標（「輸入 PDF」）：Fluent 的 BodyStrong，不是另一級字級
-    st.configure("Section.TLabel", font=(fam, 10, "bold"))
     # 視窗第一句說明（副標）：粗體（使用者 2026-08-25 晚指示）。
     # ⚠️ 樣式名**必須以 `.Muted.TLabel` 結尾**才繼承得到說明文字的前景色——ttk
     # 是照後綴一層層往上找的（`Sub.Muted.TLabel` → `Muted.TLabel` → `TLabel`）。
     # 取名成 `Subtitle.TLabel` 就只會繼承到 `TLabel`，顏色會掉回預設的黑。
-    st.configure("Sub.Muted.TLabel", font=(fam, 10, "bold"))
+    # ⚠️ 副標坐在**視窗底**上（卡片之外），所以底色要跟著 page；`ttk.Label` 是
+    # 實色底、不是透明的，不指定就吃佈景的 #fafafa，副標那一行會是一塊淺色矩形
+    st.configure("Sub.Muted.TLabel", font=(fam, 10, "bold"),
+                 background=pal["page"])
+    # 卡片之間露出來的視窗底。⚠️ 不設就是 sv_ttk 的 #fafafa，而卡片是純白——
+    # 兩者只差 5 階，卡片整個融進背景，三階層次的最上面那一階等於沒有
+    st.configure("Page.TFrame", background=pal["page"])
+    # ⚠️ **這是沒有皮膚時的後備**（皮膚裝不起來就退回實色的方角矩形）。有皮膚時
+    # 這個值看不到——底板是不透明的，圓角外側已經畫進圖裡了（見 SKIN_FRAMES）。
+    for style, _elem, own in SKIN_FRAMES:
+        st.configure(style, background=pal[own])
+    # 卡片**裡面**的文字。⚠️ 同上：`ttk.Label` 是實色底的，坐在白卡上不指定底色
+    # 就是一塊塊淺灰矩形浮在白色裡。所以卡片上的每一種文字都要繼承得到
+    # `Card.TLabel` 這一層的 background——樣式名的後綴一定要留 `.Card.TLabel`。
+    st.configure("Card.TLabel", background=pal["card"])
+    # 卡片裡的小標（「輸入 PDF」）：Fluent 的 BodyStrong，不是另一級字級
+    st.configure("CardTitle.Card.TLabel", font=(fam, 10, "bold"))
+    st.configure("CardHint.Card.TLabel", foreground=pal["muted"])
+    st.configure("CardStatus.Card.TLabel", font=(fam, 10, "bold"))
+    # 核取方塊跟 Label 一樣是實色底的（那個「底」是文字那半邊，方塊本身是圖片），
+    # 坐在白卡上不指定就是四塊淺灰矩形。⚠️ layout 照後綴繼承，所以這一支照樣
+    # 拿得到換過皮的 `Sq.check`
+    st.configure("Card.TCheckbutton", background=pal["card"])
+    # ⚠️ 卡片**裡面**的 Frame 要用這一支，不是 `Card.TFrame`：那一支的 layout 被
+    # 換成了一張底板圖（`Sq.card`），每用一次就多畫一張帶邊框的小卡片。這一支
+    # 只換背景色、layout 照 ttk 原本的
+    st.configure("CardBody.TFrame", background=pal["card"])
     if mode == "dark":
         use_dark_titlebar(root)
     # ⚠️ 一定要在 sv_ttk 切完佈景**之後**：image element 是建在「當下這個
@@ -1181,12 +1257,12 @@ class App(tk.Tk):
         表意字約兩倍寬、`…` 又不到一倍，於是只能往寬的猜；猜出來的餘裕就是進度
         條右邊那塊永遠用不到的空白。
 
-        字型從樣式查（`Status.TLabel` 的 `font`），⚠️ 不要在這裡重寫一次
+        字型從樣式查（`CardStatus.Card.TLabel` 的 `font`），⚠️ 不要在這裡重寫一次
         `(family, 10, "bold")`——那份定義在 `apply_ui_style`，抄過來就會漂。
         查不到就退回 `TkDefaultFont`：量得不準頂多是餘裕不理想，不該讓介面開不
         起來。"""
         try:
-            spec = ttk.Style(self).lookup("Status.TLabel", "font")
+            spec = ttk.Style(self).lookup("CardStatus.Card.TLabel", "font")
             fnt = tkfont.Font(self, font=spec or "TkDefaultFont")
             return max(fnt.measure(t) for t in STATUS_SAMPLES)
         except tk.TclError:
@@ -1229,14 +1305,20 @@ class App(tk.Tk):
     # ---- 介面 ----
     def _build_ui(self) -> None:
         p = self.px                       # 寫死的像素一律過這裡（見 px()）
-        # ⚠️ **區塊之間的縫要比區塊裡面的大**，否則眼睛分不出群。2026-08-25 晚
-        # 上使用者說「還是有點擠」，量出來的成因就是這條被違反了：所有區塊都用
-        # 同一個 `pady=5`（實際間距 10px）pack 出去，而卡片自己的 padding 是
-        # 12px——外面的縫比裡面的窄，五個區塊就糊成一片、每一塊都在推擠隔壁。
-        # 現在一律走 SP_* 這把尺（見模組頂端）：區塊之間 SP_LG、卡片內 SP_LG、
-        # 卡片裡的列 SP_MD、收合鈕與它底下那一區 SP_SM。
-        pad = self._pad = {"padx": 0, "pady": (0, p(SP_LG))}
-        root = self.root_frame = ttk.Frame(self, padding=p(SP_XL - 4))
+        # ⚠️ **沒有容器邊界時，區塊之間的縫要比區塊裡面的大**，否則眼睛分不出
+        # 群。2026-08-25 晚上使用者說「還是有點擠」，量出來的成因就是這條被違反
+        # 了：所有區塊都用同一個 `pady=5`（實際間距 10px）pack 出去，而卡片自己
+        # 的 padding 是 12px——外面的縫比裡面的窄，五個區塊糊成一片。
+        # ⚠️ 卡片化之後**分群改由卡片自己的底色與邊框負責**，所以 CARD_GAP(20)
+        # 小於 CARD_PAD(24) 不會重演那次災情（MP4-2-SRT 用同一組數字）；但這只
+        # 赦免有容器邊界的那幾道縫，卡片**裡面**照舊走 SP_*（欄距 SP_MD、同一群
+        # 裡的行距 SP_SM、卡片內要分成兩件事時那一道縫 SP_XL）。
+        pad = self._pad = {"padx": 0, "pady": (0, p(CARD_GAP))}
+        # ⚠️ 視窗底要自己指定（`Page.TFrame`）：不指定的話 ttk.Frame 吃的是
+        # sv_ttk 的 TFrame 底色（實測 #fafafa），而卡片是純白——兩者只差 5 階，
+        # 卡片整個融進背景，三階層次的最上面那一階等於沒有
+        root = self.root_frame = ttk.Frame(self, padding=p(PAGE_PAD),
+                                           style="Page.TFrame")
         root.pack(fill="both", expand=True)
 
         # 舊版這裡還有一行 15pt 粗體大標題，寫的是與**標題列一字不差**的同一句
@@ -1249,39 +1331,39 @@ class App(tk.Tk):
             text="把 NotebookLM 產出的繁中 PDF 簡報 OCR 後轉成可編輯的 PowerPoint（本地離線執行）。",
             style="Sub.Muted.TLabel", wraplength=p(780), justify="left",
         )
-        sub.pack(anchor="w", pady=(0, p(SP_LG)))
+        sub.pack(anchor="w", pady=(0, p(CARD_GAP)))
 
-        # ---- 檔案區 ----
+        # ---- 卡片一：檔案 ----
         # ⚠️ 三種容器樣式**不要同時出現**：這裡本來是 `LabelFrame`（蝕刻邊框＋
-        # 「檔案」標題）、選項區是 `Card.TFrame`、收合鈕是扁平長條，同一畫面上
-        # 三種視覺重量輪流出現。統一成卡片之後標題也不必了——卡片裡第一行就寫著
-        # 「輸入 PDF」，再掛一個「檔案」只是多一行字。
+        # 「檔案」標題）、選項區是卡片、收合鈕是扁平長條，同一畫面上三種視覺重量
+        # 輪流出現。統一成卡片之後標題也不必了——卡片裡第一行就寫著「輸入 PDF」，
+        # 再掛一個「檔案」只是多一行字。
         files = self.files_frame = ttk.Frame(root, style="Card.TFrame",
-                                             padding=p(SP_LG))
+                                             padding=p(CARD_PAD))
         files.pack(fill="x", **pad)
 
         # ⚠️ 標籤在**上**、輸入框整條寬。舊版是「輸入 PDF：」與輸入框左右對擠在
         # 同一列，於是第 0 欄的寬度由那五個字決定、輸入框被推掉一截，而它正是這
         # 個畫面上唯一必填的東西。
-        ttk.Label(files, text="輸入 PDF", style="Section.TLabel").grid(
+        ttk.Label(files, text="輸入 PDF", style="CardTitle.Card.TLabel").grid(
             row=0, column=0, columnspan=2, sticky="w")
         # 轉檔中要鎖起來的控制項都收進這一份清單（見 _set_inputs_enabled）。
         # ⚠️ 用**明列**、不要走訪 children：那樣會連「輸入 PDF」小標與提示文字
         # 一起變灰，而那兩行正是轉檔中最該讀得清楚的東西
         self._inputs: list[ttk.Widget] = []
         self.in_entry = ttk.Entry(files, textvariable=self.in_path)
-        self.in_entry.grid(row=1, column=0, sticky="ew", pady=(p(SP_SM), 0))
+        self.in_entry.grid(row=1, column=0, sticky="ew", pady=(p(SP_MD), 0))
         # ⚠️ 這一欄的兩顆鈕（瀏覽…／變更…）都要 `sticky="ew"`：同一欄裡一顆
         # `w`、一顆 `w` 時欄寬由較寬的決定，另一顆的右緣就會短一截、看起來沒對齊
         browse = ttk.Button(files, text="瀏覽…", command=self._pick_input)
         browse.grid(row=1, column=1, sticky="ew", padx=(p(SP_SM), 0),
-                    pady=(p(SP_SM), 0))
+                    pady=(p(SP_MD), 0))
         self._inputs += [self.in_entry, browse]
 
         # 提示與錯誤共用這一行，而且**一直都在**（只換文字不換有無），填錯路徑
         # 時版面才不會上下跳。⚠️ 路徑不對要在這裡當場說：舊版是照樣讓人按下
         # 「開始轉檔」，按了才跳一個對話框——用擋的比用告知的好
-        self.hint = ttk.Label(files, style="Muted.TLabel", anchor="w",
+        self.hint = ttk.Label(files, style="CardHint.Card.TLabel", anchor="w",
                               wraplength=p(700), justify="left")
         self.hint.grid(row=2, column=0, columnspan=2, sticky="w",
                        pady=(p(SP_SM), 0))
@@ -1295,8 +1377,9 @@ class App(tk.Tk):
         # 輸入那一列決定，路徑就會被推到離冒號很遠的地方。
         # ⚠️ 與上面隔 SP_XL（不是 SP_MD）：輸入與輸出是卡片裡的**兩件事**，靠這
         # 一道比較寬的縫分群，就不必再畫一條分隔線進來加重量。
-        ttk.Label(files, textvariable=self.out_show, style="Muted.TLabel",
-                  anchor="w", wraplength=p(700)).grid(
+        ttk.Label(files, textvariable=self.out_show,
+                  style="CardHint.Card.TLabel", anchor="w",
+                  wraplength=p(700)).grid(
             row=3, column=0, sticky="ew", pady=(p(SP_XL), 0))
         change = ttk.Button(files, text="變更…", style="Small.TButton",
                             command=self._pick_output)
@@ -1308,21 +1391,26 @@ class App(tk.Tk):
         # 主畫面到這裡就結束：選項一個都不露出來（日常轉檔一項都不必動）。
         # 色塊那一項曾經留在這裡做 A/B，量完之後收進了選項區。
 
-        # ---- 動作列 ----
-        # 位置緊接在檔案區底下、排在轉檔選項的收合按鈕**之前**（使用者
+        # ---- 卡片二：進度與動作 ----
+        # 位置緊接在檔案卡底下、排在轉檔選項的收合按鈕**之前**（使用者
         # 2026-08-25 指示）：主線是「選檔 → 按下去」，把它排在收合按鈕後面等於
         # 讓主線的終點被一個日常不必碰的東西隔開，展開選項區時還會被推到很下面。
         #
         # ⚠️ 進度回饋三件事（動作、進度條、狀態字）**同一列**：舊版是右上角一個
         # 「就緒」、版面中段一條 indeterminate 進度條、最下面一大塊日誌，三個東西
         # 講同一件事卻散在 900px 內，而中間那條進度條連「跑到第幾頁」都不說。
-        actions = self.actions_frame = ttk.Frame(root)
+        #
+        # ⚠️ 這一區 2026-08-26 從「浮在版面上的裸列」改成**卡片**：卡片化之後
+        # 「浮著」的意思變了——畫面上其他每一塊都是白卡，只有它坐在灰底上，讀起來
+        # 不是「被強調」而是「沒做完」。主要動作靠那顆藍鈕自己就夠亮了。
+        # ⚠️ 動作與結果坐在同一張卡片上也是有意的：按下去與跑完之後要看的東西
+        # 在同一個地方，結果列不必再自己找一條縫擠進版面。
+        actions = self.actions_frame = ttk.Frame(root, style="Card.TFrame",
+                                                 padding=p(CARD_PAD))
         actions.pack(fill="x", **pad)
-        # 這一列不是卡片（沒有底色也沒有框）：主要動作要看起來浮在版面上，
-        # 而不是又被裝進一個盒子裡
         # 主要動作鈕：畫面上唯一吃滿彩色的東西（Apple 藍，停止時換成深紅）。
-        # 字級與內距在 apply_ui_style，squircle 底板由 SquircleSkin 畫；沒裝成
-        # 皮膚就是佈景自己的 Accent 藍底圓角鈕。
+        # 字級與內距在 apply_ui_style，圓角底板由 SquircleSkin 畫；沒裝成皮膚
+        # 就是佈景自己的 Accent 藍底圓角鈕。
         self.run_btn = ttk.Button(actions, text=RUN_TEXT, style=RUN_STYLE,
                                   command=self._on_run_clicked)
         self.run_btn.grid(row=0, column=0, sticky="w")
@@ -1333,15 +1421,17 @@ class App(tk.Tk):
         # determinate value=0 的空槽，但那條空槽橫貫版面中段，讀起來像一條分隔
         # 線——一個「什麼都沒在發生」的元件卻在畫面上劃了一刀。⚠️ **用
         # `grid_remove()`／`grid()`，不要 destroy、也不要改欄寬**：它與按鈕、狀態
-        # 字是**同一列的三個欄**，列高由最高的那個（按鈕 46px）決定，藏掉這條 7px
-        # 的東西**版面完全不動**（實測：actions reqheight 46→46、視窗 reqheight
-        # 426→426、狀態字 x 787→787——欄 1 的 weight 讓空間原地留白）。這正是它
-        # 可以「沒在跑就不顯示」的前提：換成 pack_forget 或整列重排，按鈕與狀態字
+        # 字是**同一列的三個欄**，列高由最高的那個（按鈕）決定，藏掉這條 7px
+        # 的東西**版面完全不動**（欄 1 的 weight 讓空間原地留白）。這正是它可以
+        # 「沒在跑就不顯示」的前提：換成 pack_forget 或整列重排，按鈕與狀態字
         # 就會在按下去的瞬間跳位。
         self.progress = ttk.Progressbar(actions, mode="determinate", value=0)
         self.progress.grid(row=0, column=1, sticky="ew", padx=p(SP_LG))
         self.progress.grid_remove()
-        self.status = ttk.Label(actions, text="就緒", style="Status.TLabel",
+        # ⚠️ 樣式要是 `.Card.TLabel` 那一支：顏色是 _set_status 動態換的，但
+        # **底色**得跟著卡片，否則它是一塊灰矩形浮在白卡上
+        self.status = ttk.Label(actions, text="就緒",
+                                style="CardStatus.Card.TLabel",
                                 anchor="e", foreground=self.pal["ok"])
         self.status.grid(row=0, column=2, sticky="e")
         actions.columnconfigure(1, weight=1)
@@ -1350,24 +1440,50 @@ class App(tk.Tk):
         # 進度條的右端就會在「就緒」與「載入 OCR 引擎…」之間左右抽動。
         actions.columnconfigure(2, minsize=self._status_width() + p(SP_XS))
 
+        # ---- 結果列（動作卡片的第二列，跑完才出現）----
+        # ⚠️ 取代舊版的「完成」對話框（`askyesno("要開啟所在資料夾嗎？")`）。
+        # 那個框有一個當時就寫在註解裡的毛病：它正好蓋在日誌最後一行的降級
+        # WARNING 上面，而按完「否」就再也不會有人往下看——於是「有幾頁沒轉成
+        # 文字」這件最該知道的事被一個問句擋掉了。現在頁碼直接寫在這一列上。
+        # ⚠️ 用 `grid_remove()` 藏、不要 `pack_forget()`：它是卡片裡的一列，
+        # grid 會把整列從高度計算裡拿掉（舊版那個「空掉的槽把高度永久留下」的坑
+        # ——見 _collapse_slot——只發生在 pack 的容器上）。
+        res = self.result_row = ttk.Frame(actions, style="CardBody.TFrame")
+        res.grid(row=1, column=0, columnspan=3, sticky="ew",
+                 pady=(p(SP_XL), 0))
+        self.result_lbl = ttk.Label(res, anchor="w", wraplength=p(560),
+                                    justify="left",
+                                    style="CardStatus.Card.TLabel")
+        self.result_lbl.grid(row=0, column=0, sticky="ew")
+        self.open_deck_btn = ttk.Button(res, text="開啟簡報",
+                                        style="Small.TButton",
+                                        command=self._open_deck)
+        self.open_deck_btn.grid(row=0, column=1, padx=(p(SP_SM), 0))
+        self.open_dir_btn = ttk.Button(res, text="開啟資料夾",
+                                       style="Small.TButton",
+                                       command=self._open_result_folder)
+        self.open_dir_btn.grid(row=0, column=2, padx=(p(SP_SM), 0))
+        res.columnconfigure(0, weight=1)
+        res.grid_remove()
+
         # ---- 選項區的收合按鈕 ----
-        toggle_row = ttk.Frame(root)
+        toggle_row = ttk.Frame(root, style="Page.TFrame")
         # ⚠️ 收合鈕是它底下那一區的**區段標題**，所以跟著它的是 SP_SM（近）、
-        # 而不是區塊之間的 SP_LG——標題離自己管的內容近、離別人遠
+        # 而不是卡片之間的 CARD_GAP——標題離自己管的內容近、離別人遠
         toggle_row.pack(fill="x", pady=(0, p(SP_SM)))
         self.adv_toggle = ttk.Button(toggle_row, text=CHEV_SHOW + ADV_LABEL,
-                                     style="Adv.TButton",
+                                     style=ADV_STYLE,
                                      command=self._toggle_advanced)
         # 整條寬：舊版是寫死 34 字寬的一顆鈕，右半邊永遠空著，看起來像一個
         # 停用的輸入框而不是可以按的區段標題
         self.adv_toggle.pack(fill="x")
         # 展開的兩區插進這個空槽（就在收合按鈕正下方）。⚠️ 用空槽、不要用
-        # `before=某個控制項`：結果列與日誌區都會來來去去，`before` 的目標一旦
-        # 被 pack_forget 掉，pack 會安靜地把展開的區塊丟到整個視窗的最下面。
-        self.adv_slot = ttk.Frame(root)
+        # `before=某個控制項`：日誌區會來來去去，`before` 的目標一旦被
+        # pack_forget 掉，pack 會安靜地把展開的區塊丟到整個視窗的最下面。
+        self.adv_slot = ttk.Frame(root, style="Page.TFrame")
         self.adv_slot.pack(fill="x")
 
-        # ---- 轉檔選項（就這五個）----
+        # ---- 卡片三：轉檔選項（就這五個）----
         # ⚠️ **只有這五個**（使用者 2026-08-25 指示）：頁碼、保留浮水印、關閉
         # 簡體混入修正、色塊獨立畫成矩形、保留圖表內小字。刪掉的是「改了會讓結
         # 果差很多，或根本用不到」的那些——中文字型／渲染 DPI／最低信心分數是校
@@ -1377,17 +1493,15 @@ class App(tk.Tk):
         # 的預設值（要調就用命令列，README 的選項表是完整的）。
         # ⚠️ 舊版是「常用選項」＋「進階開關」兩個 LabelFrame；剩五項還分兩區，
         # 只是讓一件小事看起來像兩件事。
-        # ⚠️ 這一區**不掛 LabelFrame 的標題**：它就貼在收合鈕正下方，而那顆鈕上
-        # 已經寫著「轉檔選項（…）」，再寫一次等於同一句話說兩遍。改用 Sun Valley
-        # 的 `Card.TFrame`（一張淡色卡片）純粹當視覺容器 —— ttk 的樣式名是可繼承
-        # 的，載不到 sv_ttk 時它會自動退回 `TFrame`，不會炸（實測過）。
+        # ⚠️ 這一區**不掛標題**：它就貼在收合鈕正下方，而那顆鈕上已經寫著
+        # 「轉檔選項（…）」，再寫一次等於同一句話說兩遍。
         opt = self.opt_frame = ttk.Frame(self.adv_slot, style="Card.TFrame",
-                                         padding=p(SP_LG))
+                                         padding=p(CARD_PAD))
 
         # 頁碼自己一行排在最上面：五個裡面只有它是「每次可能不一樣」的值，
         # 其餘四個是開關
-        ttk.Label(opt, text="頁碼（例 1-5,8，留空＝全部）").grid(
-            row=0, column=0, sticky="w")
+        ttk.Label(opt, text="頁碼（例 1-5,8，留空＝全部）",
+                  style="Card.TLabel").grid(row=0, column=0, sticky="w")
         pages_entry = ttk.Entry(opt, textvariable=self.pages, width=18)
         pages_entry.grid(row=0, column=1, sticky="w", padx=(p(SP_MD), 0))
         self._inputs.append(pages_entry)
@@ -1402,79 +1516,67 @@ class App(tk.Tk):
         # 最小寬度，在 125%／150% 顯示縮放下右欄的選項會被擠出可見範圍
         # ⚠️ 行距是 SP_SM 不是 2px：四個核取方塊擠成 4px 一行時，它們看起來
         # 像一段文字而不是四個可以按的東西
+        # ⚠️ 樣式要是 `.Card.TCheckbutton` 那一支：ttk 的 Checkbutton 跟 Label
+        # 一樣是實色底的，坐在白卡上不指定就是四塊淺灰矩形
         for i, (label, var) in enumerate(checks):
-            cb = ttk.Checkbutton(opt, text=label, variable=var)
+            cb = ttk.Checkbutton(opt, text=label, variable=var,
+                                 style="Card.TCheckbutton")
             cb.grid(row=1 + i, column=0, columnspan=2, sticky="w",
                     pady=(p(SP_LG) if i == 0 else p(SP_SM), 0))
             self._inputs.append(cb)
 
-        # ---- 結果列 ----
-        # ⚠️ 取代舊版的「完成」對話框（`askyesno("要開啟所在資料夾嗎？")`）。
-        # 那個框有一個當時就寫在註解裡的毛病：它正好蓋在日誌最後一行的降級
-        # WARNING 上面，而按完「否」就再也不會有人往下看——於是「有幾頁沒轉成
-        # 文字」這件最該知道的事被一個問句擋掉了。現在頁碼直接寫在這一列上。
-        self.result_slot = ttk.Frame(root)
-        self.result_slot.pack(fill="x")
-        res = self.result_row = ttk.Frame(self.result_slot)
-        self.result_lbl = ttk.Label(res, anchor="w", wraplength=p(560),
-                                    justify="left", style="Status.TLabel")
-        self.result_lbl.grid(row=0, column=0, sticky="ew")
-        self.open_deck_btn = ttk.Button(res, text="開啟簡報",
-                                        style="Small.TButton",
-                                        command=self._open_deck)
-        self.open_deck_btn.grid(row=0, column=1, padx=(p(SP_SM), 0))
-        self.open_dir_btn = ttk.Button(res, text="開啟資料夾",
-                                       style="Small.TButton",
-                                       command=self._open_result_folder)
-        self.open_dir_btn.grid(row=0, column=2, padx=(p(SP_SM), 0))
-        res.columnconfigure(0, weight=1)
-
-        # ---- 詳細訊息（預設收起來）----
+        # ---- 詳細訊息的收合列（預設收起來）----
         # ⚠️ 舊版這一區是**開著**的，而且是唯一 expand=True 的東西：閒置時整個
         # 視窗有 51% 是一個只有兩行字的白盒子（2026-08-25 量的）。收起來之後，
         # 「開始轉檔」會自己把它打開（見 _start）——要看的時候它就在。
-        log_row = self.log_row = ttk.Frame(root)
+        log_row = self.log_row = ttk.Frame(root, style="Page.TFrame")
         log_row.pack(fill="x", pady=(0, p(SP_SM)))
         self.log_toggle = ttk.Button(log_row, text=CHEV_SHOW + LOG_LABEL,
-                                     style="Adv.TButton",
+                                     style=ADV_STYLE,
                                      command=self._toggle_log)
         self.log_toggle.pack(side="left", fill="x", expand=True)
         # 紀錄檔的完整路徑不再印在日誌區裡（在這個寬度下會折成兩行），改成一顆
-        # 按鈕。⚠️ 開不起來紀錄檔時它要是灰的，不是按了沒反應
+        # 按鈕。⚠️ 開不起來紀錄檔時它要是灰的，不是按了沒反應。
+        # ⚠️ 它跟收合鈕同一列、同樣坐在視窗底上，所以走同一張低調皮
         self.open_log_btn = ttk.Button(log_row, text="開啟紀錄",
-                                       style="Small.TButton",
+                                       style=SUBTLE_STYLE,
                                        command=self._open_log)
         self.open_log_btn.pack(side="right", padx=(p(SP_SM), 0))
         if self._log_path is None:
             self.open_log_btn.state(["disabled"])
 
-        # ---- 日誌 ----
+        # ---- 卡片四：日誌 ----
         # ⚠️ 永遠 pack 在最後（不帶 before=）：它是唯一 expand=True 的區塊，也就是
         # _fit_window 鉗高度時唯一縮得動的那一個
-        logframe = self.logframe = ttk.Frame(root)
+        # ⚠️ 內距是 SP_MD 不是 CARD_PAD：這張卡片只裝一個滿版的日誌槽，而槽自己
+        # 又有 SP_SM 的內距（兩層加起來已經 20），照 24 給的話同樣高度少讀兩行
+        logframe = self.logframe = ttk.Frame(root, style="Card.TFrame",
+                                             padding=p(SP_MD))
+        # 圓角**由這一層畫**：`tk.Text` 是 classic 控制項，沒有 ttk 樣式、做不到
+        # 圓角（換皮之後畫面上唯一還是方角的東西就是它）。Text 縮在裡面，四周留
+        # SP_SM —— 只要內距大於圓角半徑的 0.29 倍，方角就不會伸進弧裡
+        well = ttk.Frame(logframe, style="Sunken.TFrame", padding=p(SP_SM))
+        well.pack(fill="both", expand=True)
         # tk.Text 是 classic 控制項，佈景挑不動它 —— 顏色要自己餵
-        self.log = tk.Text(logframe, height=10, wrap="word",
+        self.log = tk.Text(well, height=10, wrap="word",
                            font=(self.ui_font, 10),
                            relief="flat", borderwidth=0,
-                           highlightthickness=p(1),
-                           highlightbackground=self.pal["border"],
-                           highlightcolor=self.pal["border"],
-                           padx=p(8), pady=p(6),
+                           # 邊框與圓角都由外層那張底板畫，這裡不要再描一圈——
+                           # 兩圈疊起來是「框中框」，而且內圈是方的
+                           highlightthickness=0,
+                           padx=p(SP_SM), pady=p(SP_XS),
                            background=self.pal["log_bg"],
                            foreground=self.pal["log_fg"],
                            insertbackground=self.pal["log_fg"],
                            selectbackground=self.pal["log_sel"],
                            selectforeground=self.pal["log_fg"])
         self.log.pack(side="left", fill="both", expand=True)
-        sb = ttk.Scrollbar(logframe, command=self.log.yview)
+        sb = ttk.Scrollbar(well, command=self.log.yview)
         sb.pack(side="right", fill="y")
         self.log.config(yscrollcommand=sb.set)
         self._append("提示：首次轉檔會自動下載 OCR 模型（約數十 MB），"
                      "期間進度條不會報頁數，請耐心等候。\n")
 
-        # 結果列與日誌區預設都不在畫面上
-        self.result_row.pack_forget()
-        _collapse_slot(self.result_slot)
         # 拖放：接得上就把提示換成拖放版（_refresh_input_state 讀這個旗標）
         self.dnd_ok = enable_file_drop(
             (root, files, self.in_entry), self._on_files_dropped)
@@ -1852,8 +1954,7 @@ class App(tk.Tk):
         self.run_btn.state(["!disabled"])
         self._set_status("準備中…", self.pal["warn"])
         # 上一趟的結果留在畫面上會被當成這一趟的
-        self.result_row.pack_forget()
-        _collapse_slot(self.result_slot)
+        self.result_row.grid_remove()
         self._scan_buf = ""
         self._pages_done = self._pages_total = 0
         self._last_warning = ""
@@ -2072,7 +2173,7 @@ class App(tk.Tk):
         for btn in (self.open_deck_btn, self.open_dir_btn):
             btn.grid() if has_file else btn.grid_remove()
         self._result_path = out if has_file else None
-        self.result_row.pack(fill="x", **self._pad)
+        self.result_row.grid()
 
     def _open_deck(self) -> None:
         path = getattr(self, "_result_path", None)

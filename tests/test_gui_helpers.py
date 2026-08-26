@@ -51,3 +51,66 @@ def test_shortening_a_path_never_eats_the_file_name():
     # 放得下就原樣，不要為了縮而縮
     plain = Path(r"C:\decks\a.pptx")
     assert G._shorten_path(plain) == str(plain)
+
+
+# --------------------------------------------------------------------------- #
+#  皮膚資產（assets/skin/）
+# --------------------------------------------------------------------------- #
+# ⚠️ 這兩支守的是**截圖才看得出來的兩種壞法**，而截圖不在自動化測試裡：
+#   · 新增一張底板時忘了指定「它坐在什麼顏色上」→ 圓角外側露出一塊實心方角。
+#   · 改了 `tools/make_skin.py` 卻沒重跑 → 資產與程式碼各說各話，而 GUI 有資產
+#     時走資產、沒有時當場畫，於是同一支程式在兩台機器上長得不一樣。
+def _skin_meta():
+    import json
+    return json.loads(
+        (G.SKIN_DIR / "sprites.json").read_text(encoding="utf-8"))
+
+
+def test_every_skin_plate_declares_what_it_sits_on():
+    """每個元件都要記下自己坐在什麼底色上（`make_skin.plate` 的 `on`）。
+
+    ttk 是先用樣式的 `background` 填滿整塊、再把九宮格圖畫上去的，所以圓角外側
+    那圈透明區露出來的是那個 background，不是父容器的顏色——底板一律畫成不透明、
+    把外側色畫進圖裡。漏掉的症狀是「白卡上浮出一塊灰色方角」。"""
+    missing = [f"{key} / {name}"
+               for key, var in _skin_meta()["variants"].items()
+               for name, elem in var["elements"].items()
+               if not elem.get("on")]
+    assert not missing, "這些元件沒說自己坐在什麼顏色上：\n  " + "\n  ".join(missing)
+
+
+def test_the_shipped_skin_matches_what_the_generator_draws_today():
+    """`assets/skin/` 必須是**現在這份** `tools/make_skin.py` 的產物。
+
+    GUI 有資產就讀資產、沒有才 import 產生器當場畫（`SquircleSkin._drawn`），
+    所以兩者一旦漂開，同一支程式在「完整複製」與「只有原始碼」的兩台機器上就會
+    長得不一樣——而且都不會報錯。改了那支腳本要重跑再提交。"""
+    import sys
+    sys.path.insert(0, str(G.PROJECT_DIR / "tools"))
+    try:
+        import make_skin
+    finally:
+        sys.path.pop(0)
+    from PIL import Image
+
+    meta = _skin_meta()
+    stale = []
+    for theme in ("light", "dark"):
+        for scale in make_skin.SCALES:
+            var = meta["variants"][f"{theme}@{scale:g}"]
+            imgs, elems = make_skin.build_variant(theme, scale)
+            sheet, rects = make_skin.pack(imgs)
+            if rects != {k: list(v) for k, v in var["sprites"].items()}:
+                stale.append(f"{theme}@{scale:g}：sprite 的位置或名單變了")
+                continue
+            shipped = Image.open(G.SKIN_DIR / var["file"]).convert("RGBA")
+            if shipped.tobytes() != sheet.tobytes():
+                stale.append(f"{theme}@{scale:g}：{var['file']} 的像素變了")
+            if {n: {k: v for k, v in e.items() if k != "states"}
+                    for n, e in elems.items()} != \
+               {n: {k: v for k, v in e.items() if k != "states"}
+                    for n, e in var["elements"].items()}:
+                stale.append(f"{theme}@{scale:g}：元件定義變了")
+    assert not stale, ("assets/skin/ 不是現在這份 make_skin.py 的產物，"
+                       "請重跑 `uv run python tools/make_skin.py`：\n  "
+                       + "\n  ".join(stale))

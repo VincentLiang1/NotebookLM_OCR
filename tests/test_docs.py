@@ -180,8 +180,12 @@ def test_documented_symbols_exist_in_the_code():
 
     重構改了名字而沒改文件時，那句指路就再也帶不到人——這正是把規則寫下來的
     整個用意所在。"""
+    # ⚠️ `tools/` 也要掃（2026-08-26 補的，與 MODULES 那份名單同一個理由）：
+    # 圖示與皮膚的產生器同樣被 docs/dev 逐條指路，而它們的私有函式漏在外面時，
+    # 那句指路照樣帶不到人——`_sq_points` 就是這樣才被發現沒人守。
     src = "\n".join(p.read_text(encoding="utf-8")
-                    for p in (ROOT / "pdf2ppt").glob("*.py"))
+                    for p in (*(ROOT / "pdf2ppt").glob("*.py"),
+                              *(ROOT / "tools").glob("*.py")))
     src += "\n" + GUI_PY
     problems = []
     cited = set()

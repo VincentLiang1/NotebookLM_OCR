@@ -87,7 +87,7 @@ uv run python pdf2ppt_gui_2.py
 
 在專案根目錄執行即可（它會自己找到同目錄的 `pdf2ppt` 套件）。挑一份 PDF——**或直接把 PDF 拖進視窗**——然後按「開始轉檔」。它做的事就是把選項組成命令列，然後在背景執行緒呼叫同一支 `pdf2ppt.cli.main()`。
 
-介面採 **Sun Valley** 佈景（模仿 Windows 11 Fluent／WinUI 的外觀），按鈕、輸入框、核取方塊與進度條再換成 **squircle（連續圓角）** 的實色底板、配 Apple 的色票（主要動作是 Apple 藍、停止是紅），字型 Microsoft JhengHei UI，**亮／暗自動跟隨 Windows 的「應用程式模式」**（要固定的話設環境變數 `NOTEBOOKLM_PDF2PPT_THEME=light` 或 `dark`），並已開啟 DPI 感知，在 125%／150% 顯示縮放下不會糊。
+介面採 **Sun Valley** 佈景（模仿 Windows 11 Fluent／WinUI 的外觀），版面是由上而下的**四張圓角卡片**（檔案／進度與動作／轉檔選項／詳細訊息，後兩張預設收起來），按鈕、輸入框、核取方塊與進度條也都是圓角的實色底板、配 Apple 的色票（主要動作是 Apple 藍、停止是紅），字型 Microsoft JhengHei UI，**亮／暗自動跟隨 Windows 的「應用程式模式」**（要固定的話設環境變數 `NOTEBOOKLM_PDF2PPT_THEME=light` 或 `dark`），並已開啟 DPI 感知，在 125%／150% 顯示縮放下不會糊。
 
 **主畫面只留一件事**：選一份輸入 PDF。輸出檔名自動帶成同名的 `.pptx`（顯示在下面一行，要改按「變更…」）。
 
