@@ -245,18 +245,21 @@ def build_variant(theme: str, scale: float) -> tuple[dict, dict]:
         border=r + 1, width=2 * (r + 1) + 1, height=h,
         padding=px(SQ_PAD, scale), sticky="nswe", on=p["card"])
 
-    # ---- 低調按鈕：兩顆收合鈕與「開啟紀錄」（坐在**視窗底**上，卡片之外）----
-    # ⚠️ 靜止態就是視窗底色本身：那三顆讀起來要像區段標題而不是三條灰色橫槓
+    # ---- 低調按鈕：兩張可收合卡片的標題列，與「開啟紀錄」----
+    # ⚠️ 靜止態就是**卡片底色本身**：那三顆讀起來要像區段標題而不是三條灰色橫槓
     # （收合鈕整條寬，做成實底就是畫面上最重的三個元素）。滑過才浮出灰底——
     # 這正是 Fluent 的 Subtle button。
-    for key, fill in (("subtle-rest", p["page"]), ("subtle-dis", p["page"]),
+    # ⚠️ `on` 是 `card` 不是 `page`：2026-08-26 使用者指定「展開的內容不要用另外
+    # 一張卡片，應該是同一張」，收合鈕於是從卡片之外搬進卡片裡當標題列，靜止色與
+    # 外側色都得跟著換——留在 `page` 的話，白卡上會浮出一條視窗底色的灰橫槓。
+    for key, fill in (("subtle-rest", p["card"]), ("subtle-dis", p["card"]),
                       ("subtle-pressed", p["btn_lo"]), ("subtle-hover", p["btn"])):
-        imgs[key] = plate(w, h, r, fill, on=p["page"])
+        imgs[key] = plate(w, h, r, fill, on=p["card"])
     elems["Sq.subtle"] = dict(
         states=[["", "subtle-rest"], ["disabled", "subtle-dis"],
                 ["pressed", "subtle-pressed"], ["active", "subtle-hover"]],
         border=r + 1, width=2 * (r + 1) + 1, height=h,
-        padding=px(SQ_PAD, scale), sticky="nswe", on=p["page"])
+        padding=px(SQ_PAD, scale), sticky="nswe", on=p["card"])
 
     # ---- 版面的卡片 ----
     # ⚠️ **內距給 0**：卡片的內距是版面的一把尺（GUI 的 CARD_PAD，要過 App.px()
@@ -269,6 +272,19 @@ def build_variant(theme: str, scale: float) -> tuple[dict, dict]:
         states=[["", "card-rest"]],
         border=cr + 1, width=2 * (cr + 1) + 1, height=2 * (cr + 1) + 1,
         padding=0, sticky="nswe", on=p["page"])
+
+    # ---- 內框：可收合卡片展開之後，裝內容的那一圈 ----
+    # ⚠️ **底色與卡片相同、只有一圈邊框**：它坐在卡片上，而卡片裡的控制項（輸入框、
+    # 核取方塊）的底板都是照 `card` 畫外側色的——內框如果自己換一種底色，那些控制項
+    # 的圓角外就會露出一圈白方角。所以這一層只負責「把展開的內容框起來」，不負責
+    # 換一階明度（要凹下去的是日誌槽，見下面那張）。
+    ir = px(SQ_R_BOX, scale)
+    iw, ih = block(ir)      # 展開的內容會長高，見 block() 的說明
+    imgs["inner-rest"] = plate(iw, ih, ir, p["card"], p["card_line"], on=p["card"])
+    elems["Sq.inner"] = dict(
+        states=[["", "inner-rest"]],
+        border=ir + 1, width=2 * (ir + 1) + 1, height=2 * (ir + 1) + 1,
+        padding=0, sticky="nswe", on=p["card"])
 
     # ---- 日誌槽：卡片裡凹下去的那一層 ----
     # ⚠️ 圓角**由這一層畫**：`tk.Text` 是 classic 控制項，沒有 ttk 樣式、做不到

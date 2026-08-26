@@ -41,8 +41,8 @@ docs/dev/windows-環境與入口.md 5.1。
 版面：由上而下是**四張卡片**（檔案／進度與動作／轉檔選項／詳細訊息），後兩張
 預設收起來、由自己頭上那顆整條寬的收合鈕開關。主畫面只留輸入／輸出檔，那五個
 選項全部收在「轉檔選項」區（_toggle_advanced）。主線的終點「開始轉檔」排在檔案區
-正下方、收合按鈕**之上**（使用者 2026-08-25 指示），展開的那一區插在收合按鈕正
-下方的 adv_slot 裡。
+正下方、收合按鈕**之上**（使用者 2026-08-25 指示）。⚠️ 收合鈕就是那張卡片自己的
+標題列，展開的內容長在**同一張卡片裡**（使用者 2026-08-26 指示）。
 
 ⚠️ 卡片是 2026-08-26 加的（使用者「參考 MP4-2-SRT UI 的圓角、卡片、顏色」）：
 底色分三階 page → card → field（唯一真值在 pdf2ppt/palette.py），圓角底板由
@@ -549,6 +549,9 @@ SKIN_SWAPS = (
 SKIN_FRAMES = (
     # (樣式, 底板元件, 沒有皮膚時它自己的底色)
     ("Card.TFrame", "Sq.card", "card"),
+    # 可收合卡片展開之後，裝內容的那一圈。⚠️ 底色與卡片相同、只有一圈邊框——
+    # 它坐在卡片上，而卡片裡的控制項底板都是照 `card` 畫外側色的
+    ("Inner.TFrame", "Sq.inner", "card"),
     # 日誌槽：`tk.Text` 是 classic 控制項、**做不到圓角**——所以圓角由外面這層
     # Frame 畫，Text 縮在它裡面（內距 ≥ 圓角半徑，方角才不會伸進弧裡）
     ("Sunken.TFrame", "Sq.sunken", "field"),
@@ -753,7 +756,10 @@ def apply_ui_style(root: tk.Misc,
     # 一顆浮在半空中的按鈕。⚠️ 它坐在**卡片之外**，走的是低調皮（見 ADV_STYLE）。
     # ⚠️ 內距要撐得起「這是一條區段標題」：(10,6) 時它比上下的卡片都薄，看起來
     # 像夾在兩塊板子中間的縫，而不是可以按的東西
-    st.configure(ADV_STYLE, padding=(px(SP_MD), px(SP_MD - 2)), anchor="w")
+    # ⚠️ 左右內距是 SP_SM 而上下是 SP_MD-2，兩者**刻意不同**：底板自己還帶著
+    # `SQ_PAD`(4)，所以左邊實際是 8+4=12，加卡片的 SP_MD(12) 正好 24 ——與卡片一
+    # 的 CARD_PAD 對齊。給 SP_MD 的話標題文字會比它底下的內容右移 4px。
+    st.configure(ADV_STYLE, padding=(px(SP_SM), px(SP_MD - 2)), anchor="w")
     # 次要動作（變更…、開啟簡報、開啟資料夾）：比主要動作小一號
     st.configure("Small.TButton", padding=(px(10), px(3)))
     # 「開啟紀錄」：與收合鈕同一列、同樣坐在視窗底上，所以走同一張低調皮，
@@ -997,25 +1003,6 @@ def _fmt_degraded(warning: str) -> str:
         groups.setdefault(how, []).append(page)
     return "；".join(f"第 {'、'.join(pages)} 頁{_DEGRADE_ZH[how]}"
                      for how, pages in groups.items())
-
-
-def _collapse_slot(slot: "ttk.Frame") -> None:
-    """把一個「已經沒有東西在裡面」的容器縮回零高度。
-
-    ⚠️ **Tk 的坑，而且是靜默的**：容器**最後一個** slave 被 `pack_forget()` 掉
-    之後，容器自己的 requested size **不會**跟著回到 1x1 —— geometry manager 只
-    在「還有 slave 可以算」的時候才更新它，於是空掉的槽把上一次的高度永久留在
-    版面上。2026-08-25 實測：收合進階區之後畫面正中央留下一塊 667px 的空白，
-    而 `pack_slaves()` 是空的、子控制項也確實 `winfo_ismapped()==0`——版面看起來
-    壞掉，但每一個「這東西在不在」的檢查都說沒事。
-
-    沒有 slave 的時候 `configure(height=1)` 說得算；下一次 pack 進 slave，
-    propagation 會自己接手把它算回去（實測 1 → 58 → 1 → 58）。"""
-    try:
-        if not slot.pack_slaves():
-            slot.configure(height=1)
-    except tk.TclError:
-        pass
 
 
 def _shorten_path(path: Path, budget: int = 52) -> str:
@@ -1447,7 +1434,7 @@ class App(tk.Tk):
         # 文字」這件最該知道的事被一個問句擋掉了。現在頁碼直接寫在這一列上。
         # ⚠️ 用 `grid_remove()` 藏、不要 `pack_forget()`：它是卡片裡的一列，
         # grid 會把整列從高度計算裡拿掉（舊版那個「空掉的槽把高度永久留下」的坑
-        # ——見 _collapse_slot——只發生在 pack 的容器上）。
+        # ——只發生在 pack 的容器上，沿革見 docs/dev §5.4）。
         res = self.result_row = ttk.Frame(actions, style="CardBody.TFrame")
         res.grid(row=1, column=0, columnspan=3, sticky="ew",
                  pady=(p(SP_XL), 0))
@@ -1466,37 +1453,39 @@ class App(tk.Tk):
         res.columnconfigure(0, weight=1)
         res.grid_remove()
 
-        # ---- 選項區的收合按鈕 ----
-        toggle_row = ttk.Frame(root, style="Page.TFrame")
-        # ⚠️ 收合鈕是它底下那一區的**區段標題**，所以跟著它的是 SP_SM（近）、
-        # 而不是卡片之間的 CARD_GAP——標題離自己管的內容近、離別人遠
-        toggle_row.pack(fill="x", pady=(0, p(SP_SM)))
-        self.adv_toggle = ttk.Button(toggle_row, text=CHEV_SHOW + ADV_LABEL,
-                                     style=ADV_STYLE,
-                                     command=self._toggle_advanced)
-        # 整條寬：舊版是寫死 34 字寬的一顆鈕，右半邊永遠空著，看起來像一個
-        # 停用的輸入框而不是可以按的區段標題
-        self.adv_toggle.pack(fill="x")
-        # 展開的兩區插進這個空槽（就在收合按鈕正下方）。⚠️ 用空槽、不要用
-        # `before=某個控制項`：日誌區會來來去去，`before` 的目標一旦被
-        # pack_forget 掉，pack 會安靜地把展開的區塊丟到整個視窗的最下面。
-        self.adv_slot = ttk.Frame(root, style="Page.TFrame")
-        self.adv_slot.pack(fill="x")
-
         # ---- 卡片三：轉檔選項（就這五個）----
-        # ⚠️ **只有這五個**（使用者 2026-08-25 指示）：頁碼、保留浮水印、關閉
+        # ⚠️ **收合鈕就是這張卡片的標題列，展開的內容在同一張卡片裡**（使用者
+        # 2026-08-26 指示，附了 meeting-scribe 那張網頁截圖）。舊版是「卡片外一顆
+        # 整條寬的鈕 ＋ 底下另外長出一張卡片」，兩者之間還有一道 SP_SM 的縫——讀
+        # 起來是兩塊東西，而它們講的是同一件事。
+        # ⚠️ 卡片的內距是 SP_MD 不是 CARD_PAD：標題列自己已經有 (12,10) 的內距
+        # （撐得起「這是一條區段標題」），兩份疊起來上緣就有 34px。取 SP_MD 之後
+        # 標題文字與內框內容的左緣都落在 12+12＝24，**與上面兩張卡片的 CARD_PAD
+        # 對得齊**——這正是挑這個數字的理由，不是「看起來差不多」。
+        # ⚠️ **只有五個選項**（使用者 2026-08-25 指示）：頁碼、保留浮水印、關閉
         # 簡體混入修正、色塊獨立畫成矩形、保留圖表內小字。刪掉的是「改了會讓結
         # 果差很多，或根本用不到」的那些——中文字型／渲染 DPI／最低信心分數是校
         # 準值（200 DPI ＋ Microsoft YaHei 是整條管線唯一校準過的作業點）、粗體
         # 模式與快速模型會整份換掉判別依據、推論裝置有 auto、辨識語言預設就是
         # 中英、行合併與除錯資料是開發用的。它們**連變數都不留**，直接吃 cli.py
         # 的預設值（要調就用命令列，README 的選項表是完整的）。
-        # ⚠️ 舊版是「常用選項」＋「進階開關」兩個 LabelFrame；剩五項還分兩區，
-        # 只是讓一件小事看起來像兩件事。
-        # ⚠️ 這一區**不掛標題**：它就貼在收合鈕正下方，而那顆鈕上已經寫著
-        # 「轉檔選項（…）」，再寫一次等於同一句話說兩遍。
-        opt = self.opt_frame = ttk.Frame(self.adv_slot, style="Card.TFrame",
-                                         padding=p(CARD_PAD))
+        adv_card = ttk.Frame(root, style="Card.TFrame", padding=p(SP_MD))
+        adv_card.pack(fill="x", **pad)
+        adv_card.columnconfigure(0, weight=1)
+        self.adv_toggle = ttk.Button(adv_card, text=CHEV_SHOW + ADV_LABEL,
+                                     style=ADV_STYLE,
+                                     command=self._toggle_advanced)
+        # 整條寬：舊版是寫死 34 字寬的一顆鈕，右半邊永遠空著，看起來像一個
+        # 停用的輸入框而不是可以按的區段標題
+        self.adv_toggle.grid(row=0, column=0, sticky="ew")
+        # 展開的內容。⚠️ 用 `grid_remove()` 收、不要 `pack_forget()`：grid 會把
+        # 整列從卡片的高度計算裡拿掉，卡片自己就縮回只剩標題列。舊版那個「空掉的
+        # 容器把高度永久留在版面上」的坑（沿革見 docs/dev §5.4）**只發生在 pack
+        # 的容器**，換成 grid 之後在定義上就不會發生。
+        opt = self.opt_frame = ttk.Frame(adv_card, style="Inner.TFrame",
+                                         padding=p(SP_MD))
+        opt.grid(row=1, column=0, sticky="ew", pady=(p(SP_MD), 0))
+        opt.grid_remove()
 
         # 頁碼自己一行排在最上面：五個裡面只有它是「每次可能不一樣」的值，
         # 其餘四個是開關
@@ -1517,7 +1506,7 @@ class App(tk.Tk):
         # ⚠️ 行距是 SP_SM 不是 2px：四個核取方塊擠成 4px 一行時，它們看起來
         # 像一段文字而不是四個可以按的東西
         # ⚠️ 樣式要是 `.Card.TCheckbutton` 那一支：ttk 的 Checkbutton 跟 Label
-        # 一樣是實色底的，坐在白卡上不指定就是四塊淺灰矩形
+        # 一樣是實色底的，坐在卡片上不指定就是四塊淺灰矩形
         for i, (label, var) in enumerate(checks):
             cb = ttk.Checkbutton(opt, text=label, variable=var,
                                  style="Card.TCheckbutton")
@@ -1525,46 +1514,52 @@ class App(tk.Tk):
                     pady=(p(SP_LG) if i == 0 else p(SP_SM), 0))
             self._inputs.append(cb)
 
-        # ---- 詳細訊息的收合列（預設收起來）----
+        # ---- 卡片四：詳細訊息（預設收起來）----
         # ⚠️ 舊版這一區是**開著**的，而且是唯一 expand=True 的東西：閒置時整個
         # 視窗有 51% 是一個只有兩行字的白盒子（2026-08-25 量的）。收起來之後，
         # 「開始轉檔」會自己把它打開（見 _start）——要看的時候它就在。
-        log_row = self.log_row = ttk.Frame(root, style="Page.TFrame")
-        log_row.pack(fill="x", pady=(0, p(SP_SM)))
-        self.log_toggle = ttk.Button(log_row, text=CHEV_SHOW + LOG_LABEL,
+        # ⚠️ 這張卡片**常駐**，`expand` 是動態切的（見 _set_log_shown）：收起來時
+        # 若還 expand=True，剩下的高度會全灌進一張只有標題列的空卡片。
+        log_card = self.log_card = ttk.Frame(root, style="Card.TFrame",
+                                             padding=p(SP_MD))
+        log_card.pack(fill="x")
+        log_card.columnconfigure(0, weight=1)
+        log_card.rowconfigure(1, weight=1)
+        head = ttk.Frame(log_card, style="CardBody.TFrame")
+        head.grid(row=0, column=0, sticky="ew")
+        self.log_toggle = ttk.Button(head, text=CHEV_SHOW + LOG_LABEL,
                                      style=ADV_STYLE,
                                      command=self._toggle_log)
         self.log_toggle.pack(side="left", fill="x", expand=True)
         # 紀錄檔的完整路徑不再印在日誌區裡（在這個寬度下會折成兩行），改成一顆
         # 按鈕。⚠️ 開不起來紀錄檔時它要是灰的，不是按了沒反應。
-        # ⚠️ 它跟收合鈕同一列、同樣坐在視窗底上，所以走同一張低調皮
-        self.open_log_btn = ttk.Button(log_row, text="開啟紀錄",
+        # ⚠️ 它跟收合鈕同一列、同樣坐在卡片上，所以走同一張低調皮
+        self.open_log_btn = ttk.Button(head, text="開啟紀錄",
                                        style=SUBTLE_STYLE,
                                        command=self._open_log)
         self.open_log_btn.pack(side="right", padx=(p(SP_SM), 0))
         if self._log_path is None:
             self.open_log_btn.state(["disabled"])
 
-        # ---- 卡片四：日誌 ----
-        # ⚠️ 永遠 pack 在最後（不帶 before=）：它是唯一 expand=True 的區塊，也就是
-        # _fit_window 鉗高度時唯一縮得動的那一個
-        # ⚠️ 內距是 SP_MD 不是 CARD_PAD：這張卡片只裝一個滿版的日誌槽，而槽自己
-        # 又有 SP_SM 的內距（兩層加起來已經 20），照 24 給的話同樣高度少讀兩行
-        logframe = self.logframe = ttk.Frame(root, style="Card.TFrame",
-                                             padding=p(SP_MD))
-        # 圓角**由這一層畫**：`tk.Text` 是 classic 控制項，沒有 ttk 樣式、做不到
-        # 圓角（換皮之後畫面上唯一還是方角的東西就是它）。Text 縮在裡面，四周留
-        # SP_SM —— 只要內距大於圓角半徑的 0.29 倍，方角就不會伸進弧裡
-        well = ttk.Frame(logframe, style="Sunken.TFrame", padding=p(SP_SM))
-        well.pack(fill="both", expand=True)
+        # 日誌槽。圓角**由這一層畫**：`tk.Text` 是 classic 控制項，沒有 ttk 樣式、
+        # 做不到圓角（換皮之後畫面上唯一還是方角的東西就是它）。Text 縮在裡面，
+        # 四周留 SP_SM —— 只要內距大於圓角半徑的 0.29 倍，方角就不會伸進弧裡。
+        # ⚠️ 這一層與選項的內框**刻意不同色**：日誌是「內容區」，走三階的最底下
+        # 那一階（凹陷）；選項的內框只是把幾個控制項框起來，跟卡片同色。
+        well = self.logframe = ttk.Frame(log_card, style="Sunken.TFrame",
+                                         padding=p(SP_SM))
+        well.grid(row=1, column=0, sticky="nsew", pady=(p(SP_MD), 0))
+        well.grid_remove()
         # tk.Text 是 classic 控制項，佈景挑不動它 —— 顏色要自己餵
+        # ⚠️ `padx` 是 SP_XS：12（卡片）+ 8（槽）+ 4 ＝ 24，與上面幾張卡片的
+        # CARD_PAD 對齊
         self.log = tk.Text(well, height=10, wrap="word",
                            font=(self.ui_font, 10),
                            relief="flat", borderwidth=0,
                            # 邊框與圓角都由外層那張底板畫，這裡不要再描一圈——
                            # 兩圈疊起來是「框中框」，而且內圈是方的
                            highlightthickness=0,
-                           padx=p(SP_SM), pady=p(SP_XS),
+                           padx=p(SP_XS), pady=p(SP_XS),
                            background=self.pal["log_bg"],
                            foreground=self.pal["log_fg"],
                            insertbackground=self.pal["log_fg"],
@@ -1608,12 +1603,13 @@ class App(tk.Tk):
         if show == self.show_advanced.get() and not fit:
             return
         self.show_advanced.set(show)
+        # ⚠️ `grid()`／`grid_remove()`，不是 `pack`：內容是卡片裡的一列，grid 會把
+        # 整列從卡片的高度計算裡拿掉，卡片自己就縮回只剩標題列
         if show:
-            self.opt_frame.pack(fill="x", **self._pad)
+            self.opt_frame.grid()
             self._set_log_shown(False, fit=False)
         else:
-            self.opt_frame.pack_forget()
-            _collapse_slot(self.adv_slot)
+            self.opt_frame.grid_remove()
         self.adv_toggle.config(
             text=(CHEV_HIDE if show else CHEV_SHOW) + ADV_LABEL)
         if fit:
@@ -1621,13 +1617,18 @@ class App(tk.Tk):
 
     def _set_log_shown(self, show: bool, fit: bool = True) -> None:
         self.show_log.set(show)
+        # ⚠️ 卡片**常駐**，動的是槽與卡片自己的 `expand`：日誌是版面上唯一撐得開
+        # 的東西（`_fit_window` 鉗高度時唯一縮得動的那一個），但收起來時若還
+        # expand=True，剩下的高度會全灌進一張只有標題列的空卡片。
+        # ⚠️ 日誌卡片**不吃 `_pad` 的下緣間距**：它是最後一個區塊，root 的
+        # padding 已經給了下邊界，再加一次會在視窗底部留一條雙倍的白
         if show:
-            # ⚠️ 日誌區**不吃 `_pad` 的下緣間距**：它是最後一個區塊，root 的
-            # padding 已經給了下邊界，再加一次會在視窗底部留一條雙倍的白
-            self.logframe.pack(fill="both", expand=True, padx=0)
+            self.logframe.grid()
+            self.log_card.pack_configure(fill="both", expand=True)
             self._set_advanced(False, fit=False)
         else:
-            self.logframe.pack_forget()
+            self.logframe.grid_remove()
+            self.log_card.pack_configure(fill="x", expand=False)
         self.log_toggle.config(
             text=(CHEV_HIDE if show else CHEV_SHOW) + LOG_LABEL)
         if fit:
