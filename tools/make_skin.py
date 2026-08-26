@@ -245,6 +245,28 @@ def build_variant(theme: str, scale: float) -> tuple[dict, dict]:
         border=r + 1, width=2 * (r + 1) + 1, height=h,
         padding=px(SQ_PAD, scale), sticky="nswe", on=p["card"])
 
+    # ---- 次要動作鈕，滑過去整顆翻成主色：「瀏覽…／變更…」----
+    # ⚠️ **只有這兩顆**（使用者 2026-08-27 指定，比照 apple.com 那顆「預購」鈕）：
+    # 它們是「選檔」這條主線上的兩顆，值得在滑鼠經過時明確地說「按這裡」；
+    # 「開啟簡報／開啟資料夾」是跑完之後的分岔，維持一般按鈕的灰。
+    # ⚠️ **靜止是「白底藍框」不是灰底實心**（使用者 2026-08-27 更正，指的是那一頁上
+    # 「查看價格」那顆而不是「進一步了解」）：底色就是卡片本身，只有一圈線與字是藍的。
+    # ⚠️ 三個藍不可互換：線框走 `cta_fg`（深色要亮一階才讀得到）、翻過去的底走
+    # `cta_hi`（兩模式同值），理由都在色票。
+    # ⚠️ 線寬跟著顯示縮放走（輸入框那圈是固定 1px）：這一圈是**強調**，200% 下留 1
+    # 實體像素會細到看不出它是個按鈕。
+    lw = max(1, px(1, scale))
+    imgs["cta-rest"] = plate(w, h, r, p["card"], p["cta_fg"], lw=lw, on=p["card"])
+    # 停用：淡框淡字，看得出「這裡本來有顆鈕，但現在按不動」
+    imgs["cta-dis"] = plate(w, h, r, p["card"], p["line_off"], lw=lw, on=p["card"])
+    imgs["cta-pressed"] = plate(w, h, r, shade(p["cta_hi"], -0.12), on=p["card"])
+    imgs["cta-hover"] = plate(w, h, r, p["cta_hi"], on=p["card"])
+    elems["Sq.cta"] = dict(
+        states=[["", "cta-rest"], ["disabled", "cta-dis"],
+                ["pressed", "cta-pressed"], ["active", "cta-hover"]],
+        border=r + 1, width=2 * (r + 1) + 1, height=h,
+        padding=px(SQ_PAD, scale), sticky="nswe", on=p["card"])
+
     # ---- 低調按鈕：兩張可收合卡片的標題列，與「開啟紀錄」----
     # ⚠️ 靜止態就是**卡片底色本身**：那三顆讀起來要像區段標題而不是三條灰色橫槓
     # （收合鈕整條寬，做成實底就是畫面上最重的三個元素）。滑過才浮出灰底——

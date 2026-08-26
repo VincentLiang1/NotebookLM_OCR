@@ -170,6 +170,17 @@ STOP_STYLE = "Stop.Run.Accent.TButton"
 ADV_STYLE = "Adv.TButton"       # 整條寬的收合鈕（區段標題）
 SUBTLE_STYLE = "Subtle.TButton"  # 同一張皮、小一號的內距（開啟紀錄）
 
+# 「選檔」那條主線上的兩顆鈕：靜止時是一般的灰底鈕，**滑鼠經過就整顆翻成主色
+# 藍、文字轉白**（使用者 2026-08-27 指定，比照 apple.com 那顆「預購」鈕）。
+# ⚠️ **只有這兩顆**：「開啟簡報／開啟資料夾」是跑完之後的分岔，維持一般的灰
+# ——同一種強調用在每一顆上，就等於沒有強調。
+# ⚠️ 兩份樣式名是因為兩顆的**內距不同**（「瀏覽…」吃佈景預設、「變更…」小一
+# 號），而 ttk 是照後綴一層層往上找的：`Small.Cta.TButton` → `Cta.TButton`，
+# 所以 layout 與前景色的 map 設在後者一份就夠。⚠️ 它**繼承不到** `Small.TButton`
+# （那要剝掉的是後綴不是前綴），內距得自己再設一次。
+CTA_STYLE = "Cta.TButton"
+CTA_SMALL_STYLE = "Small.Cta.TButton"
+
 # 狀態字會出現的**所有**長相。用途是量出右欄要保留多寬——⚠️ 這一格的寬度必須
 # 釘住（不然「就緒」換成「載入 OCR 引擎…」時進度條的右端會跟著左右抽動），但
 # **要用量的、不要用猜的**：2026-08-25 一開始寫死 `width=20` 個字元，結果進度條
@@ -529,6 +540,7 @@ SKIN_SWAPS = (
       "Horizontal.Progressbar.pbar": "Sq.pbar"}),
     (RUN_STYLE, "Accent.TButton", {"AccentButton.button": "Sq.accent"}),
     (STOP_STYLE, "Accent.TButton", {"AccentButton.button": "Sq.stop"}),
+    (CTA_STYLE, "TButton", {"Button.button": "Sq.cta"}),
     (ADV_STYLE, "TButton", {"Button.button": "Sq.subtle"}),
     (SUBTLE_STYLE, "TButton", {"Button.button": "Sq.subtle"}),
 )
@@ -765,6 +777,18 @@ def apply_ui_style(root: tk.Misc,
     # 「開啟紀錄」：與收合鈕同一列、同樣坐在視窗底上，所以走同一張低調皮，
     # 只是內距比照 Small
     st.configure(SUBTLE_STYLE, padding=(px(10), px(3)))
+    # 「瀏覽…／變更…」：靜止是白底藍框，所以字也要是藍的；滑過去整顆翻藍，
+    # **文字要在同一刻翻白**（見 CTA_STYLE）。
+    st.configure(CTA_STYLE, foreground=pal["cta_fg"])
+    # ⚠️ `map` 不會與 `TButton` 的合併、是整個取代，所以 `disabled` 也要自己列
+    # ——漏掉的話轉檔中被鎖起來的那兩顆會是一般的黑字，看起來還能按。
+    # ⚠️ `pressed` 要排在 `active` 前面：按住不放時兩個狀態同時成立，而 ttk 取的
+    # 是第一個對上的。
+    st.map(CTA_STYLE,
+           foreground=[("disabled", pal["run_off_fg"]),
+                       ("pressed", pal["on_accent"]),
+                       ("active", pal["on_accent"])])
+    st.configure(CTA_SMALL_STYLE, padding=(px(10), px(3)))
     st.configure("Muted.TLabel", foreground=pal["muted"])
     # 視窗第一句說明（副標）：粗體（使用者 2026-08-25 晚指示）。
     # ⚠️ 樣式名**必須以 `.Muted.TLabel` 結尾**才繼承得到說明文字的前景色——ttk
@@ -1342,7 +1366,8 @@ class App(tk.Tk):
         self.in_entry.grid(row=1, column=0, sticky="ew", pady=(p(SP_MD), 0))
         # ⚠️ 這一欄的兩顆鈕（瀏覽…／變更…）都要 `sticky="ew"`：同一欄裡一顆
         # `w`、一顆 `w` 時欄寬由較寬的決定，另一顆的右緣就會短一截、看起來沒對齊
-        browse = ttk.Button(files, text="瀏覽…", command=self._pick_input)
+        browse = ttk.Button(files, text="瀏覽…", style=CTA_STYLE,
+                            command=self._pick_input)
         browse.grid(row=1, column=1, sticky="ew", padx=(p(SP_SM), 0),
                     pady=(p(SP_MD), 0))
         self._inputs += [self.in_entry, browse]
@@ -1368,7 +1393,7 @@ class App(tk.Tk):
                   style="CardHint.Card.TLabel", anchor="w",
                   wraplength=p(700)).grid(
             row=3, column=0, sticky="ew", pady=(p(SP_XL), 0))
-        change = ttk.Button(files, text="變更…", style="Small.TButton",
+        change = ttk.Button(files, text="變更…", style=CTA_SMALL_STYLE,
                             command=self._pick_output)
         change.grid(row=3, column=1, sticky="ew", padx=(p(SP_SM), 0),
                     pady=(p(SP_XL), 0))
