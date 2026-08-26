@@ -756,10 +756,10 @@ def apply_ui_style(root: tk.Misc,
     # 一顆浮在半空中的按鈕。⚠️ 它坐在**卡片之外**，走的是低調皮（見 ADV_STYLE）。
     # ⚠️ 內距要撐得起「這是一條區段標題」：(10,6) 時它比上下的卡片都薄，看起來
     # 像夾在兩塊板子中間的縫，而不是可以按的東西
-    # ⚠️ 左右內距是 SP_SM 而上下是 SP_MD-2，兩者**刻意不同**：底板自己還帶著
-    # `SQ_PAD`(4)，所以左邊實際是 8+4=12，加卡片的 SP_MD(12) 正好 24 ——與卡片一
-    # 的 CARD_PAD 對齊。給 SP_MD 的話標題文字會比它底下的內容右移 4px。
-    st.configure(ADV_STYLE, padding=(px(SP_SM), px(SP_MD - 2)), anchor="w")
+    # ⚠️ **左右內距是 0**：這顆鈕的底板左緣就是卡片內距的邊界（見 _build_ui 那段
+    # 「每一個直接子元件的左緣都落在同一條線上」），左右再給內距就等於把它推進去
+    # 一截、白邊比隔壁卡片寬。文字仍然離邊 4px——那是底板自帶的 `SQ_PAD`。
+    st.configure(ADV_STYLE, padding=(0, px(SP_MD - 2)), anchor="w")
     # 次要動作（變更…、開啟簡報、開啟資料夾）：比主要動作小一號
     st.configure("Small.TButton", padding=(px(10), px(3)))
     # 「開啟紀錄」：與收合鈕同一列、同樣坐在視窗底上，所以走同一張低調皮，
@@ -1458,10 +1458,16 @@ class App(tk.Tk):
         # 2026-08-26 指示，附了 meeting-scribe 那張網頁截圖）。舊版是「卡片外一顆
         # 整條寬的鈕 ＋ 底下另外長出一張卡片」，兩者之間還有一道 SP_SM 的縫——讀
         # 起來是兩塊東西，而它們講的是同一件事。
-        # ⚠️ 卡片的內距是 SP_MD 不是 CARD_PAD：標題列自己已經有 (12,10) 的內距
-        # （撐得起「這是一條區段標題」），兩份疊起來上緣就有 34px。取 SP_MD 之後
-        # 標題文字與內框內容的左緣都落在 12+12＝24，**與上面兩張卡片的 CARD_PAD
-        # 對得齊**——這正是挑這個數字的理由，不是「看起來差不多」。
+        # ⚠️ **內距左右是 CARD_PAD、上下是 SP_MD，兩邊刻意不同**（2026-08-26 晚，
+        # 使用者圈了三張卡片的左邊那圈白說寬度不一致、要以 MP4-2-SRT 為準）：
+        #   左右 24 —— 卡片裡**每一個直接子元件的左緣都落在同一條線上**（輸入框、
+        #     開始轉檔鈕、收合鈕的底板、內框、日誌槽），量出來全是 24。⚠️ 對齊的
+        #     是**元件邊緣**不是文字：卡片一裡「輸入 PDF」那行字（24）與輸入框裡的
+        #     字（約 31）本來就不同，因為後者還隔著底板自己的內距。
+        #   上下 12 —— 標題列自己已經有 10 的內距，兩份疊起來上緣就有 34px。給 12
+        #     之後標題文字距卡片頂是 12+10＝22，與另外兩張卡片的 24 幾乎同一條線，
+        #     而且**卡片高度不變**（一度想上下也給 24，兩張可收合卡片各長高 24px，
+        #     選項展開時 reqheight 會來到 841——1080p@125% 的工作區只有約 810）。
         # ⚠️ **只有五個選項**（使用者 2026-08-25 指示）：頁碼、保留浮水印、關閉
         # 簡體混入修正、色塊獨立畫成矩形、保留圖表內小字。刪掉的是「改了會讓結
         # 果差很多，或根本用不到」的那些——中文字型／渲染 DPI／最低信心分數是校
@@ -1469,7 +1475,8 @@ class App(tk.Tk):
         # 模式與快速模型會整份換掉判別依據、推論裝置有 auto、辨識語言預設就是
         # 中英、行合併與除錯資料是開發用的。它們**連變數都不留**，直接吃 cli.py
         # 的預設值（要調就用命令列，README 的選項表是完整的）。
-        adv_card = ttk.Frame(root, style="Card.TFrame", padding=p(SP_MD))
+        adv_card = ttk.Frame(root, style="Card.TFrame",
+                             padding=(p(CARD_PAD), p(SP_MD)))
         adv_card.pack(fill="x", **pad)
         adv_card.columnconfigure(0, weight=1)
         self.adv_toggle = ttk.Button(adv_card, text=CHEV_SHOW + ADV_LABEL,
@@ -1520,8 +1527,8 @@ class App(tk.Tk):
         # 「開始轉檔」會自己把它打開（見 _start）——要看的時候它就在。
         # ⚠️ 這張卡片**常駐**，`expand` 是動態切的（見 _set_log_shown）：收起來時
         # 若還 expand=True，剩下的高度會全灌進一張只有標題列的空卡片。
-        log_card = self.log_card = ttk.Frame(root, style="Card.TFrame",
-                                             padding=p(SP_MD))
+        log_card = self.log_card = ttk.Frame(
+            root, style="Card.TFrame", padding=(p(CARD_PAD), p(SP_MD)))
         log_card.pack(fill="x")
         log_card.columnconfigure(0, weight=1)
         log_card.rowconfigure(1, weight=1)
