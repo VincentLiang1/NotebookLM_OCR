@@ -393,7 +393,22 @@ Windows 對這件事有兩個原生答案，`pdf2ppt_gui_2.py` 兩個都用：
 
 ### 做法：ttk 的 image element
 
-Pillow 畫 PNG → base64 → `tk.PhotoImage` → `Style.element_create(..., "image", ...)` → 把 sv_ttk layout 裡的背景元件換成它（`SquircleSkin._swap` 是遞迴複製 layout、只改元件名字，其餘結構原封不動）。sv_ttk 自己整套佈景就是一堆 PNG，所以這條路一定走得通。
+PNG → base64 → `tk.PhotoImage` → `Style.element_create(..., "image", ...)` → 把 sv_ttk layout 裡的背景元件換成它（`SquircleSkin._swap` 是遞迴複製 layout、只改元件名字，其餘結構原封不動）。sv_ttk 自己整套佈景就是一張 spritesheet 這樣掛上去的，所以這條路一定走得通。
+
+⚠️ **PNG 從哪來，有兩條路，都要通：**
+
+| 來源 | 什麼時候 | 成本 |
+| --- | --- | --- |
+| `assets/skin/`（打包好的） | 有資產就走這條 | `install()` 約 5ms，**不需要 Pillow** |
+| 當場畫（import `tools/make_skin.py`） | 資產不在或壞了 | 首次約 47ms（含 Pillow import），之後約 8ms |
+
+資產是 `tools/make_skin.py` 的產物：十組（深淺 × 五種顯示縮放）sprite sheet 加一份 `sprites.json`，合計約 105KB。⚠️ **形狀、圓角半徑、色票、內距的唯一真值在那支腳本**——改了要重跑再提交，不要手改產物（與 `tools/make_icon.py` 同一條原則）。⚠️ **資產不在就當場畫**（使用者 2026-08-26 指示）：那支工具可以直接 import，`build_variant()` 回傳的東西與資產同構，所以三種情況都活得下去——有資產、只有原始碼、兩者皆無（最後一種才放棄換皮）。實測兩條路畫出來的畫面**逐像素相同**（四個狀態各比一次，差異像素 0）。
+
+⚠️ 兩個小地方：切 sprite 時 **`-compositingrule set` 不可省**（預設是 overlay，會把來源疊上去而不是覆蓋，半透明的角落會被疊成不透明）；讀圖一律走 **base64 而不是 `-file`**，順手避開「專案放在非 ASCII 路徑」那一類麻煩。
+
+### 為什麼要五種縮放
+
+資產是固定像素，顯示縮放不是。五檔（100%／125%／150%／175%／200%）正好對上 Windows 顯示設定裡的那五個值，載入時挑最接近的——實務上永遠是精確匹配，所以圓角與內距不會互相錯開。⚠️ 當場畫那條路用的是**實際**倍率，本來就沒有這個限制。
 
 | 控制項 | 換掉的元件 | 圖片 |
 | --- | --- | --- |

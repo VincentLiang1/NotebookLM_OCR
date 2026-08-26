@@ -72,7 +72,7 @@ SYMBOL_DOCS = {**RULE_DOCS,
 # 一樣是校準結果、一樣寫進了 docs/dev，少了它那些數字就沒人守。
 MODULES = ["pdf2ppt.style", "pdf2ppt.blocks", "pdf2ppt.builder",
            "pdf2ppt.ocr", "pdf2ppt.cli", "pdf2ppt.models", "pdf2ppt.render",
-           "tools.make_icon",
+           "tools.make_icon", "tools.make_skin",
            # GUI 也在裡面：它的 SELF_REPORTED_RC 是與「啟動.vbs」講好的暗號，
            # CLAUDE.md 引用了那個數字。import 它只會定義常數與類別（Tk 是
            # App() 才建的），不會開視窗。

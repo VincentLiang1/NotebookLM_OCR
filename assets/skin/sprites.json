@@ -1,0 +1,2952 @@
+{
+ "scales": [
+  1.0,
+  1.25,
+  1.5,
+  1.75,
+  2.0
+ ],
+ "variants": {
+  "dark@1": {
+   "elements": {
+    "Sq.accent": {
+     "border": 13,
+     "height": 27,
+     "padding": 4,
+     "states": [
+      [
+       "",
+       "accent-rest"
+      ],
+      [
+       "disabled",
+       "accent-dis"
+      ],
+      [
+       "pressed",
+       "accent-pressed"
+      ],
+      [
+       "active",
+       "accent-hover"
+      ]
+     ],
+     "sticky": "nswe",
+     "width": 27
+    },
+    "Sq.button": {
+     "border": 11,
+     "height": 23,
+     "padding": 4,
+     "states": [
+      [
+       "",
+       "button-rest"
+      ],
+      [
+       "disabled",
+       "button-dis"
+      ],
+      [
+       "pressed",
+       "button-pressed"
+      ],
+      [
+       "active",
+       "button-hover"
+      ]
+     ],
+     "sticky": "nswe",
+     "width": 23
+    },
+    "Sq.check": {
+     "border": 0,
+     "height": 20,
+     "padding": 0,
+     "states": [
+      [
+       "",
+       "check-off"
+      ],
+      [
+       "disabled selected",
+       "check-on-dis"
+      ],
+      [
+       "disabled",
+       "check-off-dis"
+      ],
+      [
+       "selected",
+       "check-on"
+      ]
+     ],
+     "sticky": "",
+     "width": 28
+    },
+    "Sq.field": {
+     "border": 11,
+     "height": 23,
+     "padding": 5,
+     "states": [
+      [
+       "",
+       "field-rest"
+      ],
+      [
+       "disabled",
+       "field-dis"
+      ],
+      [
+       "focus",
+       "field-focus"
+      ]
+     ],
+     "sticky": "nswe",
+     "width": 23
+    },
+    "Sq.pbar": {
+     "border": [
+      4,
+      0,
+      4,
+      0
+     ],
+     "height": 7,
+     "padding": 0,
+     "states": [
+      [
+       "",
+       "pbar"
+      ]
+     ],
+     "sticky": "nswe",
+     "width": 10
+    },
+    "Sq.stop": {
+     "border": 13,
+     "height": 27,
+     "padding": 4,
+     "states": [
+      [
+       "",
+       "stop-rest"
+      ],
+      [
+       "disabled",
+       "stop-dis"
+      ],
+      [
+       "pressed",
+       "stop-pressed"
+      ],
+      [
+       "active",
+       "stop-hover"
+      ]
+     ],
+     "sticky": "nswe",
+     "width": 27
+    },
+    "Sq.trough": {
+     "border": [
+      4,
+      0,
+      4,
+      0
+     ],
+     "height": 7,
+     "padding": 0,
+     "states": [
+      [
+       "",
+       "trough"
+      ]
+     ],
+     "sticky": "nswe",
+     "width": 10
+    }
+   },
+   "fg": {
+    "on_accent": "#ffffff",
+    "run_off": "#7c7c80"
+   },
+   "file": "skin-dark@1x.png",
+   "sprites": {
+    "accent-dis": [
+     0,
+     0,
+     122,
+     27
+    ],
+    "accent-hover": [
+     0,
+     27,
+     122,
+     27
+    ],
+    "accent-pressed": [
+     0,
+     54,
+     122,
+     27
+    ],
+    "accent-rest": [
+     0,
+     81,
+     122,
+     27
+    ],
+    "button-dis": [
+     0,
+     108,
+     118,
+     23
+    ],
+    "button-hover": [
+     0,
+     131,
+     118,
+     23
+    ],
+    "button-pressed": [
+     0,
+     154,
+     118,
+     23
+    ],
+    "button-rest": [
+     0,
+     177,
+     118,
+     23
+    ],
+    "check-off": [
+     0,
+     200,
+     28,
+     20
+    ],
+    "check-off-dis": [
+     0,
+     220,
+     28,
+     20
+    ],
+    "check-on": [
+     0,
+     240,
+     28,
+     20
+    ],
+    "check-on-dis": [
+     0,
+     260,
+     28,
+     20
+    ],
+    "field-dis": [
+     0,
+     280,
+     118,
+     23
+    ],
+    "field-focus": [
+     0,
+     303,
+     118,
+     23
+    ],
+    "field-rest": [
+     0,
+     326,
+     118,
+     23
+    ],
+    "pbar": [
+     0,
+     349,
+     105,
+     7
+    ],
+    "stop-dis": [
+     0,
+     356,
+     122,
+     27
+    ],
+    "stop-hover": [
+     0,
+     383,
+     122,
+     27
+    ],
+    "stop-pressed": [
+     0,
+     410,
+     122,
+     27
+    ],
+    "stop-rest": [
+     0,
+     437,
+     122,
+     27
+    ],
+    "trough": [
+     0,
+     464,
+     105,
+     7
+    ]
+   }
+  },
+  "dark@1.25": {
+   "elements": {
+    "Sq.accent": {
+     "border": 16,
+     "height": 33,
+     "padding": 5,
+     "states": [
+      [
+       "",
+       "accent-rest"
+      ],
+      [
+       "disabled",
+       "accent-dis"
+      ],
+      [
+       "pressed",
+       "accent-pressed"
+      ],
+      [
+       "active",
+       "accent-hover"
+      ]
+     ],
+     "sticky": "nswe",
+     "width": 33
+    },
+    "Sq.button": {
+     "border": 13,
+     "height": 27,
+     "padding": 5,
+     "states": [
+      [
+       "",
+       "button-rest"
+      ],
+      [
+       "disabled",
+       "button-dis"
+      ],
+      [
+       "pressed",
+       "button-pressed"
+      ],
+      [
+       "active",
+       "button-hover"
+      ]
+     ],
+     "sticky": "nswe",
+     "width": 27
+    },
+    "Sq.check": {
+     "border": 0,
+     "height": 25,
+     "padding": 0,
+     "states": [
+      [
+       "",
+       "check-off"
+      ],
+      [
+       "disabled selected",
+       "check-on-dis"
+      ],
+      [
+       "disabled",
+       "check-off-dis"
+      ],
+      [
+       "selected",
+       "check-on"
+      ]
+     ],
+     "sticky": "",
+     "width": 35
+    },
+    "Sq.field": {
+     "border": 13,
+     "height": 27,
+     "padding": 6,
+     "states": [
+      [
+       "",
+       "field-rest"
+      ],
+      [
+       "disabled",
+       "field-dis"
+      ],
+      [
+       "focus",
+       "field-focus"
+      ]
+     ],
+     "sticky": "nswe",
+     "width": 27
+    },
+    "Sq.pbar": {
+     "border": [
+      5,
+      0,
+      5,
+      0
+     ],
+     "height": 9,
+     "padding": 0,
+     "states": [
+      [
+       "",
+       "pbar"
+      ]
+     ],
+     "sticky": "nswe",
+     "width": 12
+    },
+    "Sq.stop": {
+     "border": 16,
+     "height": 33,
+     "padding": 5,
+     "states": [
+      [
+       "",
+       "stop-rest"
+      ],
+      [
+       "disabled",
+       "stop-dis"
+      ],
+      [
+       "pressed",
+       "stop-pressed"
+      ],
+      [
+       "active",
+       "stop-hover"
+      ]
+     ],
+     "sticky": "nswe",
+     "width": 33
+    },
+    "Sq.trough": {
+     "border": [
+      5,
+      0,
+      5,
+      0
+     ],
+     "height": 9,
+     "padding": 0,
+     "states": [
+      [
+       "",
+       "trough"
+      ]
+     ],
+     "sticky": "nswe",
+     "width": 12
+    }
+   },
+   "fg": {
+    "on_accent": "#ffffff",
+    "run_off": "#7c7c80"
+   },
+   "file": "skin-dark@1.25x.png",
+   "sprites": {
+    "accent-dis": [
+     0,
+     0,
+     152,
+     33
+    ],
+    "accent-hover": [
+     0,
+     33,
+     152,
+     33
+    ],
+    "accent-pressed": [
+     0,
+     66,
+     152,
+     33
+    ],
+    "accent-rest": [
+     0,
+     99,
+     152,
+     33
+    ],
+    "button-dis": [
+     0,
+     132,
+     146,
+     27
+    ],
+    "button-hover": [
+     0,
+     159,
+     146,
+     27
+    ],
+    "button-pressed": [
+     0,
+     186,
+     146,
+     27
+    ],
+    "button-rest": [
+     0,
+     213,
+     146,
+     27
+    ],
+    "check-off": [
+     0,
+     240,
+     35,
+     25
+    ],
+    "check-off-dis": [
+     0,
+     265,
+     35,
+     25
+    ],
+    "check-on": [
+     0,
+     290,
+     35,
+     25
+    ],
+    "check-on-dis": [
+     0,
+     315,
+     35,
+     25
+    ],
+    "field-dis": [
+     0,
+     340,
+     146,
+     27
+    ],
+    "field-focus": [
+     0,
+     367,
+     146,
+     27
+    ],
+    "field-rest": [
+     0,
+     394,
+     146,
+     27
+    ],
+    "pbar": [
+     0,
+     421,
+     131,
+     9
+    ],
+    "stop-dis": [
+     0,
+     430,
+     152,
+     33
+    ],
+    "stop-hover": [
+     0,
+     463,
+     152,
+     33
+    ],
+    "stop-pressed": [
+     0,
+     496,
+     152,
+     33
+    ],
+    "stop-rest": [
+     0,
+     529,
+     152,
+     33
+    ],
+    "trough": [
+     0,
+     562,
+     131,
+     9
+    ]
+   }
+  },
+  "dark@1.5": {
+   "elements": {
+    "Sq.accent": {
+     "border": 19,
+     "height": 39,
+     "padding": 6,
+     "states": [
+      [
+       "",
+       "accent-rest"
+      ],
+      [
+       "disabled",
+       "accent-dis"
+      ],
+      [
+       "pressed",
+       "accent-pressed"
+      ],
+      [
+       "active",
+       "accent-hover"
+      ]
+     ],
+     "sticky": "nswe",
+     "width": 39
+    },
+    "Sq.button": {
+     "border": 16,
+     "height": 33,
+     "padding": 6,
+     "states": [
+      [
+       "",
+       "button-rest"
+      ],
+      [
+       "disabled",
+       "button-dis"
+      ],
+      [
+       "pressed",
+       "button-pressed"
+      ],
+      [
+       "active",
+       "button-hover"
+      ]
+     ],
+     "sticky": "nswe",
+     "width": 33
+    },
+    "Sq.check": {
+     "border": 0,
+     "height": 30,
+     "padding": 0,
+     "states": [
+      [
+       "",
+       "check-off"
+      ],
+      [
+       "disabled selected",
+       "check-on-dis"
+      ],
+      [
+       "disabled",
+       "check-off-dis"
+      ],
+      [
+       "selected",
+       "check-on"
+      ]
+     ],
+     "sticky": "",
+     "width": 42
+    },
+    "Sq.field": {
+     "border": 16,
+     "height": 33,
+     "padding": 8,
+     "states": [
+      [
+       "",
+       "field-rest"
+      ],
+      [
+       "disabled",
+       "field-dis"
+      ],
+      [
+       "focus",
+       "field-focus"
+      ]
+     ],
+     "sticky": "nswe",
+     "width": 33
+    },
+    "Sq.pbar": {
+     "border": [
+      6,
+      0,
+      6,
+      0
+     ],
+     "height": 10,
+     "padding": 0,
+     "states": [
+      [
+       "",
+       "pbar"
+      ]
+     ],
+     "sticky": "nswe",
+     "width": 13
+    },
+    "Sq.stop": {
+     "border": 19,
+     "height": 39,
+     "padding": 6,
+     "states": [
+      [
+       "",
+       "stop-rest"
+      ],
+      [
+       "disabled",
+       "stop-dis"
+      ],
+      [
+       "pressed",
+       "stop-pressed"
+      ],
+      [
+       "active",
+       "stop-hover"
+      ]
+     ],
+     "sticky": "nswe",
+     "width": 39
+    },
+    "Sq.trough": {
+     "border": [
+      6,
+      0,
+      6,
+      0
+     ],
+     "height": 10,
+     "padding": 0,
+     "states": [
+      [
+       "",
+       "trough"
+      ]
+     ],
+     "sticky": "nswe",
+     "width": 13
+    }
+   },
+   "fg": {
+    "on_accent": "#ffffff",
+    "run_off": "#7c7c80"
+   },
+   "file": "skin-dark@1.5x.png",
+   "sprites": {
+    "accent-dis": [
+     0,
+     0,
+     182,
+     39
+    ],
+    "accent-hover": [
+     0,
+     39,
+     182,
+     39
+    ],
+    "accent-pressed": [
+     0,
+     78,
+     182,
+     39
+    ],
+    "accent-rest": [
+     0,
+     117,
+     182,
+     39
+    ],
+    "button-dis": [
+     0,
+     156,
+     176,
+     33
+    ],
+    "button-hover": [
+     0,
+     189,
+     176,
+     33
+    ],
+    "button-pressed": [
+     0,
+     222,
+     176,
+     33
+    ],
+    "button-rest": [
+     0,
+     255,
+     176,
+     33
+    ],
+    "check-off": [
+     0,
+     288,
+     42,
+     30
+    ],
+    "check-off-dis": [
+     0,
+     318,
+     42,
+     30
+    ],
+    "check-on": [
+     0,
+     348,
+     42,
+     30
+    ],
+    "check-on-dis": [
+     0,
+     378,
+     42,
+     30
+    ],
+    "field-dis": [
+     0,
+     408,
+     176,
+     33
+    ],
+    "field-focus": [
+     0,
+     441,
+     176,
+     33
+    ],
+    "field-rest": [
+     0,
+     474,
+     176,
+     33
+    ],
+    "pbar": [
+     0,
+     507,
+     156,
+     10
+    ],
+    "stop-dis": [
+     0,
+     517,
+     182,
+     39
+    ],
+    "stop-hover": [
+     0,
+     556,
+     182,
+     39
+    ],
+    "stop-pressed": [
+     0,
+     595,
+     182,
+     39
+    ],
+    "stop-rest": [
+     0,
+     634,
+     182,
+     39
+    ],
+    "trough": [
+     0,
+     673,
+     156,
+     10
+    ]
+   }
+  },
+  "dark@1.75": {
+   "elements": {
+    "Sq.accent": {
+     "border": 22,
+     "height": 45,
+     "padding": 7,
+     "states": [
+      [
+       "",
+       "accent-rest"
+      ],
+      [
+       "disabled",
+       "accent-dis"
+      ],
+      [
+       "pressed",
+       "accent-pressed"
+      ],
+      [
+       "active",
+       "accent-hover"
+      ]
+     ],
+     "sticky": "nswe",
+     "width": 45
+    },
+    "Sq.button": {
+     "border": 19,
+     "height": 39,
+     "padding": 7,
+     "states": [
+      [
+       "",
+       "button-rest"
+      ],
+      [
+       "disabled",
+       "button-dis"
+      ],
+      [
+       "pressed",
+       "button-pressed"
+      ],
+      [
+       "active",
+       "button-hover"
+      ]
+     ],
+     "sticky": "nswe",
+     "width": 39
+    },
+    "Sq.check": {
+     "border": 0,
+     "height": 35,
+     "padding": 0,
+     "states": [
+      [
+       "",
+       "check-off"
+      ],
+      [
+       "disabled selected",
+       "check-on-dis"
+      ],
+      [
+       "disabled",
+       "check-off-dis"
+      ],
+      [
+       "selected",
+       "check-on"
+      ]
+     ],
+     "sticky": "",
+     "width": 49
+    },
+    "Sq.field": {
+     "border": 19,
+     "height": 39,
+     "padding": 9,
+     "states": [
+      [
+       "",
+       "field-rest"
+      ],
+      [
+       "disabled",
+       "field-dis"
+      ],
+      [
+       "focus",
+       "field-focus"
+      ]
+     ],
+     "sticky": "nswe",
+     "width": 39
+    },
+    "Sq.pbar": {
+     "border": [
+      7,
+      0,
+      7,
+      0
+     ],
+     "height": 12,
+     "padding": 0,
+     "states": [
+      [
+       "",
+       "pbar"
+      ]
+     ],
+     "sticky": "nswe",
+     "width": 15
+    },
+    "Sq.stop": {
+     "border": 22,
+     "height": 45,
+     "padding": 7,
+     "states": [
+      [
+       "",
+       "stop-rest"
+      ],
+      [
+       "disabled",
+       "stop-dis"
+      ],
+      [
+       "pressed",
+       "stop-pressed"
+      ],
+      [
+       "active",
+       "stop-hover"
+      ]
+     ],
+     "sticky": "nswe",
+     "width": 45
+    },
+    "Sq.trough": {
+     "border": [
+      7,
+      0,
+      7,
+      0
+     ],
+     "height": 12,
+     "padding": 0,
+     "states": [
+      [
+       "",
+       "trough"
+      ]
+     ],
+     "sticky": "nswe",
+     "width": 15
+    }
+   },
+   "fg": {
+    "on_accent": "#ffffff",
+    "run_off": "#7c7c80"
+   },
+   "file": "skin-dark@1.75x.png",
+   "sprites": {
+    "accent-dis": [
+     0,
+     0,
+     212,
+     45
+    ],
+    "accent-hover": [
+     0,
+     45,
+     212,
+     45
+    ],
+    "accent-pressed": [
+     0,
+     90,
+     212,
+     45
+    ],
+    "accent-rest": [
+     0,
+     135,
+     212,
+     45
+    ],
+    "button-dis": [
+     0,
+     180,
+     206,
+     39
+    ],
+    "button-hover": [
+     0,
+     219,
+     206,
+     39
+    ],
+    "button-pressed": [
+     0,
+     258,
+     206,
+     39
+    ],
+    "button-rest": [
+     0,
+     297,
+     206,
+     39
+    ],
+    "check-off": [
+     0,
+     336,
+     49,
+     35
+    ],
+    "check-off-dis": [
+     0,
+     371,
+     49,
+     35
+    ],
+    "check-on": [
+     0,
+     406,
+     49,
+     35
+    ],
+    "check-on-dis": [
+     0,
+     441,
+     49,
+     35
+    ],
+    "field-dis": [
+     0,
+     476,
+     206,
+     39
+    ],
+    "field-focus": [
+     0,
+     515,
+     206,
+     39
+    ],
+    "field-rest": [
+     0,
+     554,
+     206,
+     39
+    ],
+    "pbar": [
+     0,
+     593,
+     182,
+     12
+    ],
+    "stop-dis": [
+     0,
+     605,
+     212,
+     45
+    ],
+    "stop-hover": [
+     0,
+     650,
+     212,
+     45
+    ],
+    "stop-pressed": [
+     0,
+     695,
+     212,
+     45
+    ],
+    "stop-rest": [
+     0,
+     740,
+     212,
+     45
+    ],
+    "trough": [
+     0,
+     785,
+     182,
+     12
+    ]
+   }
+  },
+  "dark@2": {
+   "elements": {
+    "Sq.accent": {
+     "border": 25,
+     "height": 51,
+     "padding": 8,
+     "states": [
+      [
+       "",
+       "accent-rest"
+      ],
+      [
+       "disabled",
+       "accent-dis"
+      ],
+      [
+       "pressed",
+       "accent-pressed"
+      ],
+      [
+       "active",
+       "accent-hover"
+      ]
+     ],
+     "sticky": "nswe",
+     "width": 51
+    },
+    "Sq.button": {
+     "border": 21,
+     "height": 43,
+     "padding": 8,
+     "states": [
+      [
+       "",
+       "button-rest"
+      ],
+      [
+       "disabled",
+       "button-dis"
+      ],
+      [
+       "pressed",
+       "button-pressed"
+      ],
+      [
+       "active",
+       "button-hover"
+      ]
+     ],
+     "sticky": "nswe",
+     "width": 43
+    },
+    "Sq.check": {
+     "border": 0,
+     "height": 40,
+     "padding": 0,
+     "states": [
+      [
+       "",
+       "check-off"
+      ],
+      [
+       "disabled selected",
+       "check-on-dis"
+      ],
+      [
+       "disabled",
+       "check-off-dis"
+      ],
+      [
+       "selected",
+       "check-on"
+      ]
+     ],
+     "sticky": "",
+     "width": 56
+    },
+    "Sq.field": {
+     "border": 21,
+     "height": 43,
+     "padding": 10,
+     "states": [
+      [
+       "",
+       "field-rest"
+      ],
+      [
+       "disabled",
+       "field-dis"
+      ],
+      [
+       "focus",
+       "field-focus"
+      ]
+     ],
+     "sticky": "nswe",
+     "width": 43
+    },
+    "Sq.pbar": {
+     "border": [
+      8,
+      0,
+      8,
+      0
+     ],
+     "height": 14,
+     "padding": 0,
+     "states": [
+      [
+       "",
+       "pbar"
+      ]
+     ],
+     "sticky": "nswe",
+     "width": 17
+    },
+    "Sq.stop": {
+     "border": 25,
+     "height": 51,
+     "padding": 8,
+     "states": [
+      [
+       "",
+       "stop-rest"
+      ],
+      [
+       "disabled",
+       "stop-dis"
+      ],
+      [
+       "pressed",
+       "stop-pressed"
+      ],
+      [
+       "active",
+       "stop-hover"
+      ]
+     ],
+     "sticky": "nswe",
+     "width": 51
+    },
+    "Sq.trough": {
+     "border": [
+      8,
+      0,
+      8,
+      0
+     ],
+     "height": 14,
+     "padding": 0,
+     "states": [
+      [
+       "",
+       "trough"
+      ]
+     ],
+     "sticky": "nswe",
+     "width": 17
+    }
+   },
+   "fg": {
+    "on_accent": "#ffffff",
+    "run_off": "#7c7c80"
+   },
+   "file": "skin-dark@2x.png",
+   "sprites": {
+    "accent-dis": [
+     0,
+     0,
+     242,
+     51
+    ],
+    "accent-hover": [
+     0,
+     51,
+     242,
+     51
+    ],
+    "accent-pressed": [
+     0,
+     102,
+     242,
+     51
+    ],
+    "accent-rest": [
+     0,
+     153,
+     242,
+     51
+    ],
+    "button-dis": [
+     0,
+     204,
+     234,
+     43
+    ],
+    "button-hover": [
+     0,
+     247,
+     234,
+     43
+    ],
+    "button-pressed": [
+     0,
+     290,
+     234,
+     43
+    ],
+    "button-rest": [
+     0,
+     333,
+     234,
+     43
+    ],
+    "check-off": [
+     0,
+     376,
+     56,
+     40
+    ],
+    "check-off-dis": [
+     0,
+     416,
+     56,
+     40
+    ],
+    "check-on": [
+     0,
+     456,
+     56,
+     40
+    ],
+    "check-on-dis": [
+     0,
+     496,
+     56,
+     40
+    ],
+    "field-dis": [
+     0,
+     536,
+     234,
+     43
+    ],
+    "field-focus": [
+     0,
+     579,
+     234,
+     43
+    ],
+    "field-rest": [
+     0,
+     622,
+     234,
+     43
+    ],
+    "pbar": [
+     0,
+     665,
+     208,
+     14
+    ],
+    "stop-dis": [
+     0,
+     679,
+     242,
+     51
+    ],
+    "stop-hover": [
+     0,
+     730,
+     242,
+     51
+    ],
+    "stop-pressed": [
+     0,
+     781,
+     242,
+     51
+    ],
+    "stop-rest": [
+     0,
+     832,
+     242,
+     51
+    ],
+    "trough": [
+     0,
+     883,
+     208,
+     14
+    ]
+   }
+  },
+  "light@1": {
+   "elements": {
+    "Sq.accent": {
+     "border": 13,
+     "height": 27,
+     "padding": 4,
+     "states": [
+      [
+       "",
+       "accent-rest"
+      ],
+      [
+       "disabled",
+       "accent-dis"
+      ],
+      [
+       "pressed",
+       "accent-pressed"
+      ],
+      [
+       "active",
+       "accent-hover"
+      ]
+     ],
+     "sticky": "nswe",
+     "width": 27
+    },
+    "Sq.button": {
+     "border": 11,
+     "height": 23,
+     "padding": 4,
+     "states": [
+      [
+       "",
+       "button-rest"
+      ],
+      [
+       "disabled",
+       "button-dis"
+      ],
+      [
+       "pressed",
+       "button-pressed"
+      ],
+      [
+       "active",
+       "button-hover"
+      ]
+     ],
+     "sticky": "nswe",
+     "width": 23
+    },
+    "Sq.check": {
+     "border": 0,
+     "height": 20,
+     "padding": 0,
+     "states": [
+      [
+       "",
+       "check-off"
+      ],
+      [
+       "disabled selected",
+       "check-on-dis"
+      ],
+      [
+       "disabled",
+       "check-off-dis"
+      ],
+      [
+       "selected",
+       "check-on"
+      ]
+     ],
+     "sticky": "",
+     "width": 28
+    },
+    "Sq.field": {
+     "border": 11,
+     "height": 23,
+     "padding": 5,
+     "states": [
+      [
+       "",
+       "field-rest"
+      ],
+      [
+       "disabled",
+       "field-dis"
+      ],
+      [
+       "focus",
+       "field-focus"
+      ]
+     ],
+     "sticky": "nswe",
+     "width": 23
+    },
+    "Sq.pbar": {
+     "border": [
+      4,
+      0,
+      4,
+      0
+     ],
+     "height": 7,
+     "padding": 0,
+     "states": [
+      [
+       "",
+       "pbar"
+      ]
+     ],
+     "sticky": "nswe",
+     "width": 10
+    },
+    "Sq.stop": {
+     "border": 13,
+     "height": 27,
+     "padding": 4,
+     "states": [
+      [
+       "",
+       "stop-rest"
+      ],
+      [
+       "disabled",
+       "stop-dis"
+      ],
+      [
+       "pressed",
+       "stop-pressed"
+      ],
+      [
+       "active",
+       "stop-hover"
+      ]
+     ],
+     "sticky": "nswe",
+     "width": 27
+    },
+    "Sq.trough": {
+     "border": [
+      4,
+      0,
+      4,
+      0
+     ],
+     "height": 7,
+     "padding": 0,
+     "states": [
+      [
+       "",
+       "trough"
+      ]
+     ],
+     "sticky": "nswe",
+     "width": 10
+    }
+   },
+   "fg": {
+    "on_accent": "#ffffff",
+    "run_off": "#8e8e93"
+   },
+   "file": "skin-light@1x.png",
+   "sprites": {
+    "accent-dis": [
+     0,
+     0,
+     122,
+     27
+    ],
+    "accent-hover": [
+     0,
+     27,
+     122,
+     27
+    ],
+    "accent-pressed": [
+     0,
+     54,
+     122,
+     27
+    ],
+    "accent-rest": [
+     0,
+     81,
+     122,
+     27
+    ],
+    "button-dis": [
+     0,
+     108,
+     118,
+     23
+    ],
+    "button-hover": [
+     0,
+     131,
+     118,
+     23
+    ],
+    "button-pressed": [
+     0,
+     154,
+     118,
+     23
+    ],
+    "button-rest": [
+     0,
+     177,
+     118,
+     23
+    ],
+    "check-off": [
+     0,
+     200,
+     28,
+     20
+    ],
+    "check-off-dis": [
+     0,
+     220,
+     28,
+     20
+    ],
+    "check-on": [
+     0,
+     240,
+     28,
+     20
+    ],
+    "check-on-dis": [
+     0,
+     260,
+     28,
+     20
+    ],
+    "field-dis": [
+     0,
+     280,
+     118,
+     23
+    ],
+    "field-focus": [
+     0,
+     303,
+     118,
+     23
+    ],
+    "field-rest": [
+     0,
+     326,
+     118,
+     23
+    ],
+    "pbar": [
+     0,
+     349,
+     105,
+     7
+    ],
+    "stop-dis": [
+     0,
+     356,
+     122,
+     27
+    ],
+    "stop-hover": [
+     0,
+     383,
+     122,
+     27
+    ],
+    "stop-pressed": [
+     0,
+     410,
+     122,
+     27
+    ],
+    "stop-rest": [
+     0,
+     437,
+     122,
+     27
+    ],
+    "trough": [
+     0,
+     464,
+     105,
+     7
+    ]
+   }
+  },
+  "light@1.25": {
+   "elements": {
+    "Sq.accent": {
+     "border": 16,
+     "height": 33,
+     "padding": 5,
+     "states": [
+      [
+       "",
+       "accent-rest"
+      ],
+      [
+       "disabled",
+       "accent-dis"
+      ],
+      [
+       "pressed",
+       "accent-pressed"
+      ],
+      [
+       "active",
+       "accent-hover"
+      ]
+     ],
+     "sticky": "nswe",
+     "width": 33
+    },
+    "Sq.button": {
+     "border": 13,
+     "height": 27,
+     "padding": 5,
+     "states": [
+      [
+       "",
+       "button-rest"
+      ],
+      [
+       "disabled",
+       "button-dis"
+      ],
+      [
+       "pressed",
+       "button-pressed"
+      ],
+      [
+       "active",
+       "button-hover"
+      ]
+     ],
+     "sticky": "nswe",
+     "width": 27
+    },
+    "Sq.check": {
+     "border": 0,
+     "height": 25,
+     "padding": 0,
+     "states": [
+      [
+       "",
+       "check-off"
+      ],
+      [
+       "disabled selected",
+       "check-on-dis"
+      ],
+      [
+       "disabled",
+       "check-off-dis"
+      ],
+      [
+       "selected",
+       "check-on"
+      ]
+     ],
+     "sticky": "",
+     "width": 35
+    },
+    "Sq.field": {
+     "border": 13,
+     "height": 27,
+     "padding": 6,
+     "states": [
+      [
+       "",
+       "field-rest"
+      ],
+      [
+       "disabled",
+       "field-dis"
+      ],
+      [
+       "focus",
+       "field-focus"
+      ]
+     ],
+     "sticky": "nswe",
+     "width": 27
+    },
+    "Sq.pbar": {
+     "border": [
+      5,
+      0,
+      5,
+      0
+     ],
+     "height": 9,
+     "padding": 0,
+     "states": [
+      [
+       "",
+       "pbar"
+      ]
+     ],
+     "sticky": "nswe",
+     "width": 12
+    },
+    "Sq.stop": {
+     "border": 16,
+     "height": 33,
+     "padding": 5,
+     "states": [
+      [
+       "",
+       "stop-rest"
+      ],
+      [
+       "disabled",
+       "stop-dis"
+      ],
+      [
+       "pressed",
+       "stop-pressed"
+      ],
+      [
+       "active",
+       "stop-hover"
+      ]
+     ],
+     "sticky": "nswe",
+     "width": 33
+    },
+    "Sq.trough": {
+     "border": [
+      5,
+      0,
+      5,
+      0
+     ],
+     "height": 9,
+     "padding": 0,
+     "states": [
+      [
+       "",
+       "trough"
+      ]
+     ],
+     "sticky": "nswe",
+     "width": 12
+    }
+   },
+   "fg": {
+    "on_accent": "#ffffff",
+    "run_off": "#8e8e93"
+   },
+   "file": "skin-light@1.25x.png",
+   "sprites": {
+    "accent-dis": [
+     0,
+     0,
+     152,
+     33
+    ],
+    "accent-hover": [
+     0,
+     33,
+     152,
+     33
+    ],
+    "accent-pressed": [
+     0,
+     66,
+     152,
+     33
+    ],
+    "accent-rest": [
+     0,
+     99,
+     152,
+     33
+    ],
+    "button-dis": [
+     0,
+     132,
+     146,
+     27
+    ],
+    "button-hover": [
+     0,
+     159,
+     146,
+     27
+    ],
+    "button-pressed": [
+     0,
+     186,
+     146,
+     27
+    ],
+    "button-rest": [
+     0,
+     213,
+     146,
+     27
+    ],
+    "check-off": [
+     0,
+     240,
+     35,
+     25
+    ],
+    "check-off-dis": [
+     0,
+     265,
+     35,
+     25
+    ],
+    "check-on": [
+     0,
+     290,
+     35,
+     25
+    ],
+    "check-on-dis": [
+     0,
+     315,
+     35,
+     25
+    ],
+    "field-dis": [
+     0,
+     340,
+     146,
+     27
+    ],
+    "field-focus": [
+     0,
+     367,
+     146,
+     27
+    ],
+    "field-rest": [
+     0,
+     394,
+     146,
+     27
+    ],
+    "pbar": [
+     0,
+     421,
+     131,
+     9
+    ],
+    "stop-dis": [
+     0,
+     430,
+     152,
+     33
+    ],
+    "stop-hover": [
+     0,
+     463,
+     152,
+     33
+    ],
+    "stop-pressed": [
+     0,
+     496,
+     152,
+     33
+    ],
+    "stop-rest": [
+     0,
+     529,
+     152,
+     33
+    ],
+    "trough": [
+     0,
+     562,
+     131,
+     9
+    ]
+   }
+  },
+  "light@1.5": {
+   "elements": {
+    "Sq.accent": {
+     "border": 19,
+     "height": 39,
+     "padding": 6,
+     "states": [
+      [
+       "",
+       "accent-rest"
+      ],
+      [
+       "disabled",
+       "accent-dis"
+      ],
+      [
+       "pressed",
+       "accent-pressed"
+      ],
+      [
+       "active",
+       "accent-hover"
+      ]
+     ],
+     "sticky": "nswe",
+     "width": 39
+    },
+    "Sq.button": {
+     "border": 16,
+     "height": 33,
+     "padding": 6,
+     "states": [
+      [
+       "",
+       "button-rest"
+      ],
+      [
+       "disabled",
+       "button-dis"
+      ],
+      [
+       "pressed",
+       "button-pressed"
+      ],
+      [
+       "active",
+       "button-hover"
+      ]
+     ],
+     "sticky": "nswe",
+     "width": 33
+    },
+    "Sq.check": {
+     "border": 0,
+     "height": 30,
+     "padding": 0,
+     "states": [
+      [
+       "",
+       "check-off"
+      ],
+      [
+       "disabled selected",
+       "check-on-dis"
+      ],
+      [
+       "disabled",
+       "check-off-dis"
+      ],
+      [
+       "selected",
+       "check-on"
+      ]
+     ],
+     "sticky": "",
+     "width": 42
+    },
+    "Sq.field": {
+     "border": 16,
+     "height": 33,
+     "padding": 8,
+     "states": [
+      [
+       "",
+       "field-rest"
+      ],
+      [
+       "disabled",
+       "field-dis"
+      ],
+      [
+       "focus",
+       "field-focus"
+      ]
+     ],
+     "sticky": "nswe",
+     "width": 33
+    },
+    "Sq.pbar": {
+     "border": [
+      6,
+      0,
+      6,
+      0
+     ],
+     "height": 10,
+     "padding": 0,
+     "states": [
+      [
+       "",
+       "pbar"
+      ]
+     ],
+     "sticky": "nswe",
+     "width": 13
+    },
+    "Sq.stop": {
+     "border": 19,
+     "height": 39,
+     "padding": 6,
+     "states": [
+      [
+       "",
+       "stop-rest"
+      ],
+      [
+       "disabled",
+       "stop-dis"
+      ],
+      [
+       "pressed",
+       "stop-pressed"
+      ],
+      [
+       "active",
+       "stop-hover"
+      ]
+     ],
+     "sticky": "nswe",
+     "width": 39
+    },
+    "Sq.trough": {
+     "border": [
+      6,
+      0,
+      6,
+      0
+     ],
+     "height": 10,
+     "padding": 0,
+     "states": [
+      [
+       "",
+       "trough"
+      ]
+     ],
+     "sticky": "nswe",
+     "width": 13
+    }
+   },
+   "fg": {
+    "on_accent": "#ffffff",
+    "run_off": "#8e8e93"
+   },
+   "file": "skin-light@1.5x.png",
+   "sprites": {
+    "accent-dis": [
+     0,
+     0,
+     182,
+     39
+    ],
+    "accent-hover": [
+     0,
+     39,
+     182,
+     39
+    ],
+    "accent-pressed": [
+     0,
+     78,
+     182,
+     39
+    ],
+    "accent-rest": [
+     0,
+     117,
+     182,
+     39
+    ],
+    "button-dis": [
+     0,
+     156,
+     176,
+     33
+    ],
+    "button-hover": [
+     0,
+     189,
+     176,
+     33
+    ],
+    "button-pressed": [
+     0,
+     222,
+     176,
+     33
+    ],
+    "button-rest": [
+     0,
+     255,
+     176,
+     33
+    ],
+    "check-off": [
+     0,
+     288,
+     42,
+     30
+    ],
+    "check-off-dis": [
+     0,
+     318,
+     42,
+     30
+    ],
+    "check-on": [
+     0,
+     348,
+     42,
+     30
+    ],
+    "check-on-dis": [
+     0,
+     378,
+     42,
+     30
+    ],
+    "field-dis": [
+     0,
+     408,
+     176,
+     33
+    ],
+    "field-focus": [
+     0,
+     441,
+     176,
+     33
+    ],
+    "field-rest": [
+     0,
+     474,
+     176,
+     33
+    ],
+    "pbar": [
+     0,
+     507,
+     156,
+     10
+    ],
+    "stop-dis": [
+     0,
+     517,
+     182,
+     39
+    ],
+    "stop-hover": [
+     0,
+     556,
+     182,
+     39
+    ],
+    "stop-pressed": [
+     0,
+     595,
+     182,
+     39
+    ],
+    "stop-rest": [
+     0,
+     634,
+     182,
+     39
+    ],
+    "trough": [
+     0,
+     673,
+     156,
+     10
+    ]
+   }
+  },
+  "light@1.75": {
+   "elements": {
+    "Sq.accent": {
+     "border": 22,
+     "height": 45,
+     "padding": 7,
+     "states": [
+      [
+       "",
+       "accent-rest"
+      ],
+      [
+       "disabled",
+       "accent-dis"
+      ],
+      [
+       "pressed",
+       "accent-pressed"
+      ],
+      [
+       "active",
+       "accent-hover"
+      ]
+     ],
+     "sticky": "nswe",
+     "width": 45
+    },
+    "Sq.button": {
+     "border": 19,
+     "height": 39,
+     "padding": 7,
+     "states": [
+      [
+       "",
+       "button-rest"
+      ],
+      [
+       "disabled",
+       "button-dis"
+      ],
+      [
+       "pressed",
+       "button-pressed"
+      ],
+      [
+       "active",
+       "button-hover"
+      ]
+     ],
+     "sticky": "nswe",
+     "width": 39
+    },
+    "Sq.check": {
+     "border": 0,
+     "height": 35,
+     "padding": 0,
+     "states": [
+      [
+       "",
+       "check-off"
+      ],
+      [
+       "disabled selected",
+       "check-on-dis"
+      ],
+      [
+       "disabled",
+       "check-off-dis"
+      ],
+      [
+       "selected",
+       "check-on"
+      ]
+     ],
+     "sticky": "",
+     "width": 49
+    },
+    "Sq.field": {
+     "border": 19,
+     "height": 39,
+     "padding": 9,
+     "states": [
+      [
+       "",
+       "field-rest"
+      ],
+      [
+       "disabled",
+       "field-dis"
+      ],
+      [
+       "focus",
+       "field-focus"
+      ]
+     ],
+     "sticky": "nswe",
+     "width": 39
+    },
+    "Sq.pbar": {
+     "border": [
+      7,
+      0,
+      7,
+      0
+     ],
+     "height": 12,
+     "padding": 0,
+     "states": [
+      [
+       "",
+       "pbar"
+      ]
+     ],
+     "sticky": "nswe",
+     "width": 15
+    },
+    "Sq.stop": {
+     "border": 22,
+     "height": 45,
+     "padding": 7,
+     "states": [
+      [
+       "",
+       "stop-rest"
+      ],
+      [
+       "disabled",
+       "stop-dis"
+      ],
+      [
+       "pressed",
+       "stop-pressed"
+      ],
+      [
+       "active",
+       "stop-hover"
+      ]
+     ],
+     "sticky": "nswe",
+     "width": 45
+    },
+    "Sq.trough": {
+     "border": [
+      7,
+      0,
+      7,
+      0
+     ],
+     "height": 12,
+     "padding": 0,
+     "states": [
+      [
+       "",
+       "trough"
+      ]
+     ],
+     "sticky": "nswe",
+     "width": 15
+    }
+   },
+   "fg": {
+    "on_accent": "#ffffff",
+    "run_off": "#8e8e93"
+   },
+   "file": "skin-light@1.75x.png",
+   "sprites": {
+    "accent-dis": [
+     0,
+     0,
+     212,
+     45
+    ],
+    "accent-hover": [
+     0,
+     45,
+     212,
+     45
+    ],
+    "accent-pressed": [
+     0,
+     90,
+     212,
+     45
+    ],
+    "accent-rest": [
+     0,
+     135,
+     212,
+     45
+    ],
+    "button-dis": [
+     0,
+     180,
+     206,
+     39
+    ],
+    "button-hover": [
+     0,
+     219,
+     206,
+     39
+    ],
+    "button-pressed": [
+     0,
+     258,
+     206,
+     39
+    ],
+    "button-rest": [
+     0,
+     297,
+     206,
+     39
+    ],
+    "check-off": [
+     0,
+     336,
+     49,
+     35
+    ],
+    "check-off-dis": [
+     0,
+     371,
+     49,
+     35
+    ],
+    "check-on": [
+     0,
+     406,
+     49,
+     35
+    ],
+    "check-on-dis": [
+     0,
+     441,
+     49,
+     35
+    ],
+    "field-dis": [
+     0,
+     476,
+     206,
+     39
+    ],
+    "field-focus": [
+     0,
+     515,
+     206,
+     39
+    ],
+    "field-rest": [
+     0,
+     554,
+     206,
+     39
+    ],
+    "pbar": [
+     0,
+     593,
+     182,
+     12
+    ],
+    "stop-dis": [
+     0,
+     605,
+     212,
+     45
+    ],
+    "stop-hover": [
+     0,
+     650,
+     212,
+     45
+    ],
+    "stop-pressed": [
+     0,
+     695,
+     212,
+     45
+    ],
+    "stop-rest": [
+     0,
+     740,
+     212,
+     45
+    ],
+    "trough": [
+     0,
+     785,
+     182,
+     12
+    ]
+   }
+  },
+  "light@2": {
+   "elements": {
+    "Sq.accent": {
+     "border": 25,
+     "height": 51,
+     "padding": 8,
+     "states": [
+      [
+       "",
+       "accent-rest"
+      ],
+      [
+       "disabled",
+       "accent-dis"
+      ],
+      [
+       "pressed",
+       "accent-pressed"
+      ],
+      [
+       "active",
+       "accent-hover"
+      ]
+     ],
+     "sticky": "nswe",
+     "width": 51
+    },
+    "Sq.button": {
+     "border": 21,
+     "height": 43,
+     "padding": 8,
+     "states": [
+      [
+       "",
+       "button-rest"
+      ],
+      [
+       "disabled",
+       "button-dis"
+      ],
+      [
+       "pressed",
+       "button-pressed"
+      ],
+      [
+       "active",
+       "button-hover"
+      ]
+     ],
+     "sticky": "nswe",
+     "width": 43
+    },
+    "Sq.check": {
+     "border": 0,
+     "height": 40,
+     "padding": 0,
+     "states": [
+      [
+       "",
+       "check-off"
+      ],
+      [
+       "disabled selected",
+       "check-on-dis"
+      ],
+      [
+       "disabled",
+       "check-off-dis"
+      ],
+      [
+       "selected",
+       "check-on"
+      ]
+     ],
+     "sticky": "",
+     "width": 56
+    },
+    "Sq.field": {
+     "border": 21,
+     "height": 43,
+     "padding": 10,
+     "states": [
+      [
+       "",
+       "field-rest"
+      ],
+      [
+       "disabled",
+       "field-dis"
+      ],
+      [
+       "focus",
+       "field-focus"
+      ]
+     ],
+     "sticky": "nswe",
+     "width": 43
+    },
+    "Sq.pbar": {
+     "border": [
+      8,
+      0,
+      8,
+      0
+     ],
+     "height": 14,
+     "padding": 0,
+     "states": [
+      [
+       "",
+       "pbar"
+      ]
+     ],
+     "sticky": "nswe",
+     "width": 17
+    },
+    "Sq.stop": {
+     "border": 25,
+     "height": 51,
+     "padding": 8,
+     "states": [
+      [
+       "",
+       "stop-rest"
+      ],
+      [
+       "disabled",
+       "stop-dis"
+      ],
+      [
+       "pressed",
+       "stop-pressed"
+      ],
+      [
+       "active",
+       "stop-hover"
+      ]
+     ],
+     "sticky": "nswe",
+     "width": 51
+    },
+    "Sq.trough": {
+     "border": [
+      8,
+      0,
+      8,
+      0
+     ],
+     "height": 14,
+     "padding": 0,
+     "states": [
+      [
+       "",
+       "trough"
+      ]
+     ],
+     "sticky": "nswe",
+     "width": 17
+    }
+   },
+   "fg": {
+    "on_accent": "#ffffff",
+    "run_off": "#8e8e93"
+   },
+   "file": "skin-light@2x.png",
+   "sprites": {
+    "accent-dis": [
+     0,
+     0,
+     242,
+     51
+    ],
+    "accent-hover": [
+     0,
+     51,
+     242,
+     51
+    ],
+    "accent-pressed": [
+     0,
+     102,
+     242,
+     51
+    ],
+    "accent-rest": [
+     0,
+     153,
+     242,
+     51
+    ],
+    "button-dis": [
+     0,
+     204,
+     234,
+     43
+    ],
+    "button-hover": [
+     0,
+     247,
+     234,
+     43
+    ],
+    "button-pressed": [
+     0,
+     290,
+     234,
+     43
+    ],
+    "button-rest": [
+     0,
+     333,
+     234,
+     43
+    ],
+    "check-off": [
+     0,
+     376,
+     56,
+     40
+    ],
+    "check-off-dis": [
+     0,
+     416,
+     56,
+     40
+    ],
+    "check-on": [
+     0,
+     456,
+     56,
+     40
+    ],
+    "check-on-dis": [
+     0,
+     496,
+     56,
+     40
+    ],
+    "field-dis": [
+     0,
+     536,
+     234,
+     43
+    ],
+    "field-focus": [
+     0,
+     579,
+     234,
+     43
+    ],
+    "field-rest": [
+     0,
+     622,
+     234,
+     43
+    ],
+    "pbar": [
+     0,
+     665,
+     208,
+     14
+    ],
+    "stop-dis": [
+     0,
+     679,
+     242,
+     51
+    ],
+    "stop-hover": [
+     0,
+     730,
+     242,
+     51
+    ],
+    "stop-pressed": [
+     0,
+     781,
+     242,
+     51
+    ],
+    "stop-rest": [
+     0,
+     832,
+     242,
+     51
+    ],
+    "trough": [
+     0,
+     883,
+     208,
+     14
+    ]
+   }
+  }
+ },
+ "version": 1
+}
