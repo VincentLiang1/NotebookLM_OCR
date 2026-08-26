@@ -245,10 +245,10 @@ def build_variant(theme: str, scale: float) -> tuple[dict, dict]:
         border=r + 1, width=2 * (r + 1) + 1, height=h,
         padding=px(SQ_PAD, scale), sticky="nswe", on=p["card"])
 
-    # ---- 次要動作鈕，滑過去整顆翻成主色：「瀏覽…／變更…」----
-    # ⚠️ **只有這兩顆**（使用者 2026-08-27 指定，比照 apple.com 那顆「預購」鈕）：
-    # 它們是「選檔」這條主線上的兩顆，值得在滑鼠經過時明確地說「按這裡」；
-    # 「開啟簡報／開啟資料夾」是跑完之後的分岔，維持一般按鈕的灰。
+    # ---- 線框鈕：「瀏覽…」----
+    # ⚠️ **整個畫面只有這一顆**（使用者 2026-08-27）：它是「選檔」這條主線的起點，
+    # 值得在滑鼠經過時明確地說「按這裡」。「變更…」一度也套上去、當場被要求還原
+    # ——**主要焦點只有一個**；「開啟簡報／開啟資料夾」是跑完之後的分岔。
     # ⚠️ **靜止是「白底藍框」不是灰底實心**（使用者 2026-08-27 更正，指的是那一頁上
     # 「查看價格」那顆而不是「進一步了解」）：底色就是卡片本身，只有一圈線與字是藍的。
     # ⚠️ 三個藍不可互換：線框走 `cta_fg`（深色要亮一階才讀得到）、翻過去的底走
@@ -294,19 +294,6 @@ def build_variant(theme: str, scale: float) -> tuple[dict, dict]:
         states=[["", "card-rest"]],
         border=cr + 1, width=2 * (cr + 1) + 1, height=2 * (cr + 1) + 1,
         padding=0, sticky="nswe", on=p["page"])
-
-    # ---- 內框：可收合卡片展開之後，裝內容的那一圈 ----
-    # ⚠️ **底色與卡片相同、只有一圈邊框**：它坐在卡片上，而卡片裡的控制項（輸入框、
-    # 核取方塊）的底板都是照 `card` 畫外側色的——內框如果自己換一種底色，那些控制項
-    # 的圓角外就會露出一圈白方角。所以這一層只負責「把展開的內容框起來」，不負責
-    # 換一階明度（要凹下去的是日誌槽，見下面那張）。
-    ir = px(SQ_R_BOX, scale)
-    iw, ih = block(ir)      # 展開的內容會長高，見 block() 的說明
-    imgs["inner-rest"] = plate(iw, ih, ir, p["card"], p["card_line"], on=p["card"])
-    elems["Sq.inner"] = dict(
-        states=[["", "inner-rest"]],
-        border=ir + 1, width=2 * (ir + 1) + 1, height=2 * (ir + 1) + 1,
-        padding=0, sticky="nswe", on=p["card"])
 
     # ---- 日誌槽：卡片裡凹下去的那一層 ----
     # ⚠️ 圓角**由這一層畫**：`tk.Text` 是 classic 控制項，沒有 ttk 樣式、做不到

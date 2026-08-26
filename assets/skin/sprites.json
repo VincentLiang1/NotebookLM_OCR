@@ -149,20 +149,6 @@
      "sticky": "nswe",
      "width": 23
     },
-    "Sq.inner": {
-     "border": 11,
-     "height": 23,
-     "on": "#2c2c2e",
-     "padding": 0,
-     "states": [
-      [
-       "",
-       "inner-rest"
-      ]
-     ],
-     "sticky": "nswe",
-     "width": 23
-    },
     "Sq.pbar": {
      "border": [
       4,
@@ -394,75 +380,69 @@
      118,
      23
     ],
-    "inner-rest": [
-     0,
-     579,
-     118,
-     118
-    ],
     "pbar": [
      0,
-     697,
+     579,
      105,
      7
     ],
     "stop-dis": [
      0,
-     704,
+     586,
      122,
      27
     ],
     "stop-hover": [
      0,
-     731,
+     613,
      122,
      27
     ],
     "stop-pressed": [
      0,
-     758,
+     640,
      122,
      27
     ],
     "stop-rest": [
      0,
-     785,
+     667,
      122,
      27
     ],
     "subtle-dis": [
      0,
-     812,
+     694,
      118,
      23
     ],
     "subtle-hover": [
      0,
-     835,
+     717,
      118,
      23
     ],
     "subtle-pressed": [
      0,
-     858,
+     740,
      118,
      23
     ],
     "subtle-rest": [
      0,
-     881,
+     763,
      118,
      23
     ],
     "sunken-rest": [
      0,
-     904,
+     786,
      118,
      118
     ],
     "trough": [
      0,
-     1022,
+     904,
      105,
      7
     ]
@@ -605,20 +585,6 @@
       [
        "focus",
        "field-focus"
-      ]
-     ],
-     "sticky": "nswe",
-     "width": 27
-    },
-    "Sq.inner": {
-     "border": 13,
-     "height": 27,
-     "on": "#2c2c2e",
-     "padding": 0,
-     "states": [
-      [
-       "",
-       "inner-rest"
       ]
      ],
      "sticky": "nswe",
@@ -855,75 +821,69 @@
      146,
      27
     ],
-    "inner-rest": [
-     0,
-     701,
-     146,
-     146
-    ],
     "pbar": [
      0,
-     847,
+     701,
      131,
      9
     ],
     "stop-dis": [
      0,
-     856,
+     710,
      152,
      33
     ],
     "stop-hover": [
      0,
-     889,
+     743,
      152,
      33
     ],
     "stop-pressed": [
      0,
-     922,
+     776,
      152,
      33
     ],
     "stop-rest": [
      0,
-     955,
+     809,
      152,
      33
     ],
     "subtle-dis": [
      0,
-     988,
+     842,
      146,
      27
     ],
     "subtle-hover": [
      0,
-     1015,
+     869,
      146,
      27
     ],
     "subtle-pressed": [
      0,
-     1042,
+     896,
      146,
      27
     ],
     "subtle-rest": [
      0,
-     1069,
+     923,
      146,
      27
     ],
     "sunken-rest": [
      0,
-     1096,
+     950,
      146,
      146
     ],
     "trough": [
      0,
-     1242,
+     1096,
      131,
      9
     ]
@@ -1066,20 +1026,6 @@
       [
        "focus",
        "field-focus"
-      ]
-     ],
-     "sticky": "nswe",
-     "width": 33
-    },
-    "Sq.inner": {
-     "border": 16,
-     "height": 33,
-     "on": "#2c2c2e",
-     "padding": 0,
-     "states": [
-      [
-       "",
-       "inner-rest"
       ]
      ],
      "sticky": "nswe",
@@ -1316,75 +1262,69 @@
      176,
      33
     ],
-    "inner-rest": [
-     0,
-     845,
-     176,
-     176
-    ],
     "pbar": [
      0,
-     1021,
+     845,
      156,
      10
     ],
     "stop-dis": [
      0,
-     1031,
+     855,
      182,
      39
     ],
     "stop-hover": [
      0,
-     1070,
+     894,
      182,
      39
     ],
     "stop-pressed": [
      0,
-     1109,
+     933,
      182,
      39
     ],
     "stop-rest": [
      0,
-     1148,
+     972,
      182,
      39
     ],
     "subtle-dis": [
      0,
-     1187,
+     1011,
      176,
      33
     ],
     "subtle-hover": [
      0,
-     1220,
+     1044,
      176,
      33
     ],
     "subtle-pressed": [
      0,
-     1253,
+     1077,
      176,
      33
     ],
     "subtle-rest": [
      0,
-     1286,
+     1110,
      176,
      33
     ],
     "sunken-rest": [
      0,
-     1319,
+     1143,
      176,
      176
     ],
     "trough": [
      0,
-     1495,
+     1319,
      156,
      10
     ]
@@ -1527,20 +1467,6 @@
       [
        "focus",
        "field-focus"
-      ]
-     ],
-     "sticky": "nswe",
-     "width": 39
-    },
-    "Sq.inner": {
-     "border": 19,
-     "height": 39,
-     "on": "#2c2c2e",
-     "padding": 0,
-     "states": [
-      [
-       "",
-       "inner-rest"
       ]
      ],
      "sticky": "nswe",
@@ -1777,75 +1703,69 @@
      206,
      39
     ],
-    "inner-rest": [
-     0,
-     989,
-     206,
-     206
-    ],
     "pbar": [
      0,
-     1195,
+     989,
      182,
      12
     ],
     "stop-dis": [
      0,
-     1207,
+     1001,
      212,
      45
     ],
     "stop-hover": [
      0,
-     1252,
+     1046,
      212,
      45
     ],
     "stop-pressed": [
      0,
-     1297,
+     1091,
      212,
      45
     ],
     "stop-rest": [
      0,
-     1342,
+     1136,
      212,
      45
     ],
     "subtle-dis": [
      0,
-     1387,
+     1181,
      206,
      39
     ],
     "subtle-hover": [
      0,
-     1426,
+     1220,
      206,
      39
     ],
     "subtle-pressed": [
      0,
-     1465,
+     1259,
      206,
      39
     ],
     "subtle-rest": [
      0,
-     1504,
+     1298,
      206,
      39
     ],
     "sunken-rest": [
      0,
-     1543,
+     1337,
      206,
      206
     ],
     "trough": [
      0,
-     1749,
+     1543,
      182,
      12
     ]
@@ -1988,20 +1908,6 @@
       [
        "focus",
        "field-focus"
-      ]
-     ],
-     "sticky": "nswe",
-     "width": 43
-    },
-    "Sq.inner": {
-     "border": 21,
-     "height": 43,
-     "on": "#2c2c2e",
-     "padding": 0,
-     "states": [
-      [
-       "",
-       "inner-rest"
       ]
      ],
      "sticky": "nswe",
@@ -2238,75 +2144,69 @@
      234,
      43
     ],
-    "inner-rest": [
-     0,
-     1111,
-     234,
-     234
-    ],
     "pbar": [
      0,
-     1345,
+     1111,
      208,
      14
     ],
     "stop-dis": [
      0,
-     1359,
+     1125,
      242,
      51
     ],
     "stop-hover": [
      0,
-     1410,
+     1176,
      242,
      51
     ],
     "stop-pressed": [
      0,
-     1461,
+     1227,
      242,
      51
     ],
     "stop-rest": [
      0,
-     1512,
+     1278,
      242,
      51
     ],
     "subtle-dis": [
      0,
-     1563,
+     1329,
      234,
      43
     ],
     "subtle-hover": [
      0,
-     1606,
+     1372,
      234,
      43
     ],
     "subtle-pressed": [
      0,
-     1649,
+     1415,
      234,
      43
     ],
     "subtle-rest": [
      0,
-     1692,
+     1458,
      234,
      43
     ],
     "sunken-rest": [
      0,
-     1735,
+     1501,
      234,
      234
     ],
     "trough": [
      0,
-     1969,
+     1735,
      208,
      14
     ]
@@ -2449,20 +2349,6 @@
       [
        "focus",
        "field-focus"
-      ]
-     ],
-     "sticky": "nswe",
-     "width": 23
-    },
-    "Sq.inner": {
-     "border": 11,
-     "height": 23,
-     "on": "#ffffff",
-     "padding": 0,
-     "states": [
-      [
-       "",
-       "inner-rest"
       ]
      ],
      "sticky": "nswe",
@@ -2699,75 +2585,69 @@
      118,
      23
     ],
-    "inner-rest": [
-     0,
-     579,
-     118,
-     118
-    ],
     "pbar": [
      0,
-     697,
+     579,
      105,
      7
     ],
     "stop-dis": [
      0,
-     704,
+     586,
      122,
      27
     ],
     "stop-hover": [
      0,
-     731,
+     613,
      122,
      27
     ],
     "stop-pressed": [
      0,
-     758,
+     640,
      122,
      27
     ],
     "stop-rest": [
      0,
-     785,
+     667,
      122,
      27
     ],
     "subtle-dis": [
      0,
-     812,
+     694,
      118,
      23
     ],
     "subtle-hover": [
      0,
-     835,
+     717,
      118,
      23
     ],
     "subtle-pressed": [
      0,
-     858,
+     740,
      118,
      23
     ],
     "subtle-rest": [
      0,
-     881,
+     763,
      118,
      23
     ],
     "sunken-rest": [
      0,
-     904,
+     786,
      118,
      118
     ],
     "trough": [
      0,
-     1022,
+     904,
      105,
      7
     ]
@@ -2910,20 +2790,6 @@
       [
        "focus",
        "field-focus"
-      ]
-     ],
-     "sticky": "nswe",
-     "width": 27
-    },
-    "Sq.inner": {
-     "border": 13,
-     "height": 27,
-     "on": "#ffffff",
-     "padding": 0,
-     "states": [
-      [
-       "",
-       "inner-rest"
       ]
      ],
      "sticky": "nswe",
@@ -3160,75 +3026,69 @@
      146,
      27
     ],
-    "inner-rest": [
-     0,
-     701,
-     146,
-     146
-    ],
     "pbar": [
      0,
-     847,
+     701,
      131,
      9
     ],
     "stop-dis": [
      0,
-     856,
+     710,
      152,
      33
     ],
     "stop-hover": [
      0,
-     889,
+     743,
      152,
      33
     ],
     "stop-pressed": [
      0,
-     922,
+     776,
      152,
      33
     ],
     "stop-rest": [
      0,
-     955,
+     809,
      152,
      33
     ],
     "subtle-dis": [
      0,
-     988,
+     842,
      146,
      27
     ],
     "subtle-hover": [
      0,
-     1015,
+     869,
      146,
      27
     ],
     "subtle-pressed": [
      0,
-     1042,
+     896,
      146,
      27
     ],
     "subtle-rest": [
      0,
-     1069,
+     923,
      146,
      27
     ],
     "sunken-rest": [
      0,
-     1096,
+     950,
      146,
      146
     ],
     "trough": [
      0,
-     1242,
+     1096,
      131,
      9
     ]
@@ -3371,20 +3231,6 @@
       [
        "focus",
        "field-focus"
-      ]
-     ],
-     "sticky": "nswe",
-     "width": 33
-    },
-    "Sq.inner": {
-     "border": 16,
-     "height": 33,
-     "on": "#ffffff",
-     "padding": 0,
-     "states": [
-      [
-       "",
-       "inner-rest"
       ]
      ],
      "sticky": "nswe",
@@ -3621,75 +3467,69 @@
      176,
      33
     ],
-    "inner-rest": [
-     0,
-     845,
-     176,
-     176
-    ],
     "pbar": [
      0,
-     1021,
+     845,
      156,
      10
     ],
     "stop-dis": [
      0,
-     1031,
+     855,
      182,
      39
     ],
     "stop-hover": [
      0,
-     1070,
+     894,
      182,
      39
     ],
     "stop-pressed": [
      0,
-     1109,
+     933,
      182,
      39
     ],
     "stop-rest": [
      0,
-     1148,
+     972,
      182,
      39
     ],
     "subtle-dis": [
      0,
-     1187,
+     1011,
      176,
      33
     ],
     "subtle-hover": [
      0,
-     1220,
+     1044,
      176,
      33
     ],
     "subtle-pressed": [
      0,
-     1253,
+     1077,
      176,
      33
     ],
     "subtle-rest": [
      0,
-     1286,
+     1110,
      176,
      33
     ],
     "sunken-rest": [
      0,
-     1319,
+     1143,
      176,
      176
     ],
     "trough": [
      0,
-     1495,
+     1319,
      156,
      10
     ]
@@ -3832,20 +3672,6 @@
       [
        "focus",
        "field-focus"
-      ]
-     ],
-     "sticky": "nswe",
-     "width": 39
-    },
-    "Sq.inner": {
-     "border": 19,
-     "height": 39,
-     "on": "#ffffff",
-     "padding": 0,
-     "states": [
-      [
-       "",
-       "inner-rest"
       ]
      ],
      "sticky": "nswe",
@@ -4082,75 +3908,69 @@
      206,
      39
     ],
-    "inner-rest": [
-     0,
-     989,
-     206,
-     206
-    ],
     "pbar": [
      0,
-     1195,
+     989,
      182,
      12
     ],
     "stop-dis": [
      0,
-     1207,
+     1001,
      212,
      45
     ],
     "stop-hover": [
      0,
-     1252,
+     1046,
      212,
      45
     ],
     "stop-pressed": [
      0,
-     1297,
+     1091,
      212,
      45
     ],
     "stop-rest": [
      0,
-     1342,
+     1136,
      212,
      45
     ],
     "subtle-dis": [
      0,
-     1387,
+     1181,
      206,
      39
     ],
     "subtle-hover": [
      0,
-     1426,
+     1220,
      206,
      39
     ],
     "subtle-pressed": [
      0,
-     1465,
+     1259,
      206,
      39
     ],
     "subtle-rest": [
      0,
-     1504,
+     1298,
      206,
      39
     ],
     "sunken-rest": [
      0,
-     1543,
+     1337,
      206,
      206
     ],
     "trough": [
      0,
-     1749,
+     1543,
      182,
      12
     ]
@@ -4293,20 +4113,6 @@
       [
        "focus",
        "field-focus"
-      ]
-     ],
-     "sticky": "nswe",
-     "width": 43
-    },
-    "Sq.inner": {
-     "border": 21,
-     "height": 43,
-     "on": "#ffffff",
-     "padding": 0,
-     "states": [
-      [
-       "",
-       "inner-rest"
       ]
      ],
      "sticky": "nswe",
@@ -4543,75 +4349,69 @@
      234,
      43
     ],
-    "inner-rest": [
-     0,
-     1111,
-     234,
-     234
-    ],
     "pbar": [
      0,
-     1345,
+     1111,
      208,
      14
     ],
     "stop-dis": [
      0,
-     1359,
+     1125,
      242,
      51
     ],
     "stop-hover": [
      0,
-     1410,
+     1176,
      242,
      51
     ],
     "stop-pressed": [
      0,
-     1461,
+     1227,
      242,
      51
     ],
     "stop-rest": [
      0,
-     1512,
+     1278,
      242,
      51
     ],
     "subtle-dis": [
      0,
-     1563,
+     1329,
      234,
      43
     ],
     "subtle-hover": [
      0,
-     1606,
+     1372,
      234,
      43
     ],
     "subtle-pressed": [
      0,
-     1649,
+     1415,
      234,
      43
     ],
     "subtle-rest": [
      0,
-     1692,
+     1458,
      234,
      43
     ],
     "sunken-rest": [
      0,
-     1735,
+     1501,
      234,
      234
     ],
     "trough": [
      0,
-     1969,
+     1735,
      208,
      14
     ]

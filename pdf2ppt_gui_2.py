@@ -170,16 +170,13 @@ STOP_STYLE = "Stop.Run.Accent.TButton"
 ADV_STYLE = "Adv.TButton"       # 整條寬的收合鈕（區段標題）
 SUBTLE_STYLE = "Subtle.TButton"  # 同一張皮、小一號的內距（開啟紀錄）
 
-# 「選檔」那條主線上的兩顆鈕：靜止時是一般的灰底鈕，**滑鼠經過就整顆翻成主色
-# 藍、文字轉白**（使用者 2026-08-27 指定，比照 apple.com 那顆「預購」鈕）。
-# ⚠️ **只有這兩顆**：「開啟簡報／開啟資料夾」是跑完之後的分岔，維持一般的灰
-# ——同一種強調用在每一顆上，就等於沒有強調。
-# ⚠️ 兩份樣式名是因為兩顆的**內距不同**（「瀏覽…」吃佈景預設、「變更…」小一
-# 號），而 ttk 是照後綴一層層往上找的：`Small.Cta.TButton` → `Cta.TButton`，
-# 所以 layout 與前景色的 map 設在後者一份就夠。⚠️ 它**繼承不到** `Small.TButton`
-# （那要剝掉的是後綴不是前綴），內距得自己再設一次。
+# 「選檔」那條主線的起點：靜止是**白底藍框藍字**，滑鼠經過**整顆翻成藍底白字**
+# （使用者 2026-08-27 指定，比照 apple.com 那一頁「查看價格」那顆）。
+# ⚠️ **整個畫面只有這一顆**。「變更…」一度也套上去，使用者當場要求還原成一般的
+# 灰底鈕：**主要焦點只有一個**——輸出檔名程式自己帶得出來，改它是例外不是主線；
+# 「開啟簡報／開啟資料夾」則是跑完之後的分岔。同一種強調用在每一顆上，就等於
+# 沒有強調。
 CTA_STYLE = "Cta.TButton"
-CTA_SMALL_STYLE = "Small.Cta.TButton"
 
 # 狀態字會出現的**所有**長相。用途是量出右欄要保留多寬——⚠️ 這一格的寬度必須
 # 釘住（不然「就緒」換成「載入 OCR 引擎…」時進度條的右端會跟著左右抽動），但
@@ -561,9 +558,6 @@ SKIN_SWAPS = (
 SKIN_FRAMES = (
     # (樣式, 底板元件, 沒有皮膚時它自己的底色)
     ("Card.TFrame", "Sq.card", "card"),
-    # 可收合卡片展開之後，裝內容的那一圈。⚠️ 底色與卡片相同、只有一圈邊框——
-    # 它坐在卡片上，而卡片裡的控制項底板都是照 `card` 畫外側色的
-    ("Inner.TFrame", "Sq.inner", "card"),
     # 日誌槽：`tk.Text` 是 classic 控制項、**做不到圓角**——所以圓角由外面這層
     # Frame 畫，Text 縮在它裡面（內距 ≥ 圓角半徑，方角才不會伸進弧裡）
     ("Sunken.TFrame", "Sq.sunken", "field"),
@@ -788,7 +782,6 @@ def apply_ui_style(root: tk.Misc,
            foreground=[("disabled", pal["run_off_fg"]),
                        ("pressed", pal["on_accent"]),
                        ("active", pal["on_accent"])])
-    st.configure(CTA_SMALL_STYLE, padding=(px(10), px(3)))
     st.configure("Muted.TLabel", foreground=pal["muted"])
     # 視窗第一句說明（副標）：粗體（使用者 2026-08-25 晚指示）。
     # ⚠️ 樣式名**必須以 `.Muted.TLabel` 結尾**才繼承得到說明文字的前景色——ttk
@@ -1393,7 +1386,7 @@ class App(tk.Tk):
                   style="CardHint.Card.TLabel", anchor="w",
                   wraplength=p(700)).grid(
             row=3, column=0, sticky="ew", pady=(p(SP_XL), 0))
-        change = ttk.Button(files, text="變更…", style=CTA_SMALL_STYLE,
+        change = ttk.Button(files, text="變更…", style="Small.TButton",
                             command=self._pick_output)
         change.grid(row=3, column=1, sticky="ew", padx=(p(SP_SM), 0),
                     pady=(p(SP_XL), 0))
@@ -1486,7 +1479,7 @@ class App(tk.Tk):
         # ⚠️ **內距左右是 CARD_PAD、上下是 SP_MD，兩邊刻意不同**（2026-08-26 晚，
         # 使用者圈了三張卡片的左邊那圈白說寬度不一致、要以 MP4-2-SRT 為準）：
         #   左右 24 —— 卡片裡**每一個直接子元件的左緣都落在同一條線上**（輸入框、
-        #     開始轉檔鈕、收合鈕的底板、內框、日誌槽），量出來全是 24。⚠️ 對齊的
+        #     開始轉檔鈕、收合鈕的底板、展開的選項區、日誌槽），量出來全是 24。⚠️ 對齊
         #     是**元件邊緣**不是文字：卡片一裡「輸入 PDF」那行字（24）與輸入框裡的
         #     字（約 31）本來就不同，因為後者還隔著底板自己的內距。
         #   上下 12 —— 標題列自己已經有 10 的內距，兩份疊起來上緣就有 34px。給 12
@@ -1514,9 +1507,16 @@ class App(tk.Tk):
         # 整列從卡片的高度計算裡拿掉，卡片自己就縮回只剩標題列。舊版那個「空掉的
         # 容器把高度永久留在版面上」的坑（沿革見 docs/dev §5.4）**只發生在 pack
         # 的容器**，換成 grid 之後在定義上就不會發生。
-        opt = self.opt_frame = ttk.Frame(adv_card, style="Inner.TFrame",
-                                         padding=p(SP_MD))
-        opt.grid(row=1, column=0, sticky="ew", pady=(p(SP_MD), 0))
+        # ⚠️ **內容直接坐在卡片上，不要再框一圈**（使用者 2026-08-27 圈了那條灰
+        # 線說「請消失」）。一度做成一張「與卡片同色、只有一圈 `card_line`」的底板
+        # （`Sq.inner`），想法是把展開的內容框起來——但卡片自己已經是一個框了，
+        # 框裡再一個框只是多一條線。⚠️ 連帶：那張底板整個刪掉，不要留著沒人用
+        # ——沒有邊框的它與 `CardBody.TFrame` 完全同義。
+        # ⚠️ 下緣要自己補一份 `SP_MD`：卡片的上下內距是 12（標題列自己有 10，見
+        # 上面那段），但展開之後**底部沒有標題列來補那一截**，不補的話最後一個
+        # 核取方塊離卡片底只有 12、比左右的 24 窄一半。
+        opt = self.opt_frame = ttk.Frame(adv_card, style="CardBody.TFrame")
+        opt.grid(row=1, column=0, sticky="ew", pady=p(SP_MD))
         opt.grid_remove()
 
         # 頁碼自己一行排在最上面：五個裡面只有它是「每次可能不一樣」的值，
@@ -1576,8 +1576,8 @@ class App(tk.Tk):
         # 日誌槽。圓角**由這一層畫**：`tk.Text` 是 classic 控制項，沒有 ttk 樣式、
         # 做不到圓角（換皮之後畫面上唯一還是方角的東西就是它）。Text 縮在裡面，
         # 四周留 SP_SM —— 只要內距大於圓角半徑的 0.29 倍，方角就不會伸進弧裡。
-        # ⚠️ 這一層與選項的內框**刻意不同色**：日誌是「內容區」，走三階的最底下
-        # 那一階（凹陷）；選項的內框只是把幾個控制項框起來，跟卡片同色。
+        # ⚠️ 這是版面上**唯一**凹下去的那一層（三階的最底下一階）：日誌是「內容
+        # 區」，值得與卡片分開；轉檔選項那一區則是直接坐在卡片上（見上面那段）。
         well = self.logframe = ttk.Frame(log_card, style="Sunken.TFrame",
                                          padding=p(SP_SM))
         well.grid(row=1, column=0, sticky="nsew", pady=(p(SP_MD), 0))
