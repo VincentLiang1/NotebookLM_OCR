@@ -59,8 +59,8 @@ meeting-scribe 那張截圖相同」）換成了正圓。**畫面上不要有兩
    時又依 alpha 混第二次，四個角就各浮出一圈比底色深的邊。
 4. **第 1 點有垂直版**（`block()`）。卡片與日誌槽會被撐到好幾百 px 高，而只留
    1px 高的中段就是垂直幾百次 × 水平十幾次的繪製呼叫。會被撐得又寬又高的東西
-   一律用 `block()`（兩個方向都留中段），只被水平拉開的（按鈕、輸入框、進度條）
-   用 `wide()` 就好。
+   一律用 `block()`（兩個方向都留中段）；只被水平拉開、高度釘死的（按鈕、輸入框、
+   進度條）走 `pill()`，那一路垂直根本不切。
 5. **第 2 點有第二個上限：`border` 也不可超過「用它的那個元件」高度的一半。**
    第 2 點講的是圖片自己切不切得開（切不開會卡死），這一點講的是切得開、但畫不
    下：`2(r+1)` 超過元件實際高度時，Tk 把上下兩個圓角**畫到框外**，形狀變成兩個
@@ -99,34 +99,38 @@ SQ_N = 2.0            # 角落的曲線指數：**2.0 就是正圓弧**（見檔
 SQ_SS = 4             # 遮罩超取樣倍率（畫 4× 再縮回來，這就是抗鋸齒）
 SQ_STEPS = 24         # 每個角取樣幾個點（再多肉眼看不出來，只是變慢）
 
-# 圓角半徑（邏輯 px）。⚠️ 半徑是**新的一把尺**，不要拿版面的 SP_* 那把來湊——
-# 間距與圓角在版面上管的是兩件事。
+# ---------------------------------------------------------------------------
+# 按鈕與輸入框：**高度**（邏輯 px），半徑不再是自己一把尺
+# ---------------------------------------------------------------------------
+# ⚠️ 使用者 2026-08-27 指定「做成 https://www.apple.com/ 那樣的」——那一頁的按鈕是
+# `border-radius: 980px` 的完整膠囊：**兩端各一個完整半圓**，不是「圓角比較大的
+# 矩形」。所以半徑不再由這裡指定，它恆等於圖高的一半（見 `pill()`）；這裡指定的
+# 是**高度**，而高度會透過元件的 `height` 把控制項**釘死**。
 #
-# ⚠️ **按鈕與輸入框走膠囊：半徑就是那一類元件自己高度的一半**（使用者 2026-08-27
-# 指定，理由是正圓角接直邊時曲率從 1/r 掉到 0、交界處看得出一個轉折，而膠囊的
-# 弧走完 90 度才碰到直邊，沒有交界）。所以這裡**不是一個共用的數字**，而是每一類
-# 各有一個：底板被誰用、那一類自然多高，半徑就跟著誰。
+# ⚠️ **釘死不是副作用，是這條路的入場費。** 垂直方向不切九宮格才拿得到完整半圓，
+# 而不切的代價是圖高必須精確等於元件高度——矮了垂直重複貼、高了下緣被裁掉，兩種
+# 都是靜默的（見檔頭第 5 點的實測）。好處是按鈕高度從此**跨 DPI 與字型一致**，
+# 不再被字型度量牽著走（同一顆鈕的邏輯高度本來在 40.0~41.0 之間漂）。
 #
-# ⚠️ **不可以直接寫成「高度的一半」。** 九宮格的上下兩塊各佔 `border`＝`r+1`，
-# `2(r+1)` 一旦超過元件的實際高度，Tk 會把上下兩個圓角**畫到框外**——形狀當場
-# 變成兩個半圓疊在一起、左右鼓出來（2026-08-27 實測：r=29 配 47px 高的按鈕就是
-# 這個樣子，r=40 更誇張；r=22 配同一顆則是完美膠囊）。所以取 `r ≤ H/2 − 1`，
-# 並且留餘裕給字型度量的機器差異。剩下的 `H − 2(r+1)` 是中段那幾列直邊，實測
-# 只佔高度的 7~9%，看起來就是膠囊。
+# ⚠️ **配套：那一類樣式的垂直 padding 必須讓內容矮於這裡的高度。** 元件高度取
+# 「內容需求」與 `height` 的較大者，內容一旦撐過頭就變成「圖比元件矮」那個壞法。
+# GUI 那幾行 `st.configure(..., padding=(水平, 垂直))` 因此跟著這裡一起調過，
+# 逐檔驗算的餘裕是 5~11 實體像素（量法與表格見
+# `docs/dev/windows-環境與入口.md` §5.11）。**動任何一邊都要重跑那個驗算。**
 #
-# 自然高度（邏輯 px，五個縮放檔各量一次取**最小**的那一檔；量法見
-# `docs/dev/windows-環境與入口.md` §5.11）與本檔取值：
-#   主要動作鈕 40.0 → 18　收合鈕 44.7 → 20　開啟紀錄 30.0 → 13
-#   一般按鈕・線框鈕 27.4 → 12　輸入框 28.6 → 12（與按鈕並排，同值才對得齊）
-# 逐檔驗算的餘裕是 3~13 實體像素，沒有一檔是零。
+# 取值貼著改版前的自然高度，版面才不會跑掉（實體像素差 0~+3）：
+#   主要動作鈕 40（原 40.0~41.0）　收合鈕 45（原 44.7~45.5）
+#   開啟紀錄 31（原 30.0~32.0）　一般按鈕・線框鈕・輸入框 30
+# ⚠️ 最後那三個**刻意統一**：改版前是 30/31/30（實體 42/45/44 @150%），
+# 「瀏覽…」「變更…」與它們中間那個輸入框並排卻各差幾 px，那是沒有人選過的。
 #
 # ⚠️ 卡片與日誌槽**不走膠囊**：它們沒有「一種高度」（會被內容撐到幾百 px），而且
 # 膠囊在一整塊內容區上讀起來不是容器、是藥丸。那兩個維持逐像素量自 MP4-2-SRT
-# 參考畫面的 20／10。
-SQ_R = 12             # 一般按鈕、線框鈕、輸入框（三者共用，取最矮的 27.4）
-SQ_R_RUN = 18         # 主要動作鈕（開始／停止）
-SQ_R_ADV = 20         # 收合鈕（兩張可收合卡片的標題列）
-SQ_R_SUB = 13         # 開啟紀錄（同一張低調皮的小號版，見 build_variant）
+# 參考畫面的 20／10（`SQ_R_CARD`／`SQ_R_BOX`），仍然走四角九宮格。
+SQ_H = 30             # 一般按鈕、線框鈕、輸入框（三者從此同高）
+SQ_H_RUN = 40         # 主要動作鈕（開始／停止）
+SQ_H_ADV = 45         # 收合鈕（兩張可收合卡片的標題列）
+SQ_H_SUB = 31         # 開啟紀錄（同一張低調皮的小號版，見 build_variant）
 SQ_R_BOX = 10         # 日誌槽（不是膠囊，見上）
 SQ_R_CHK = 5          # 核取方塊（不是膠囊：正圓會讀成 radio button）
 # 卡片。**比它裡面的框大一號**：圓角一層套一層時內外同半徑會看起來內圈比較胖
@@ -275,19 +279,36 @@ def build_variant(theme: str, scale: float) -> tuple[dict, dict]:
     imgs: dict[str, Image.Image] = {}
     elems: dict[str, dict] = {}
 
-    def wide(r: int) -> tuple[int, int]:
-        """底板的寬高：高剛好包得住兩個圓角，寬再多留 SQ_MID 的中段。
+    def pill(h_logical: int) -> tuple[int, int, float, int]:
+        """膠囊底板：左右兩端各**一個完整半圓**，中間一段純色。
 
-        給**高度固定**的東西用（按鈕、輸入框、進度條）：它們只會被水平拉開，
-        垂直方向重複貼一兩次而已。"""
-        return 2 * (r + 1) + mid, 2 * (r + 1) + 1
+        回傳 `(圖寬, 圖高, 半徑, 水平 border)`。半徑就是圖高的一半——這是
+        apple.com 那種 `border-radius: 980px` 的長相，弧走完 90 度、切線已經水平了
+        才碰到上下那條直線，所以沒有交界。
+
+        ⚠️ **垂直方向不切九宮格**（`border` 的上下兩格給 0），因為切了就等於在圖裡
+        留一段直邊，半徑再也大不過 `H/2 − 1`。代價是**圖高必須精確等於元件高度**，
+        三種情況實測過（2026-08-27，見檔頭第 5 點）：圖比元件矮 → 垂直**重複貼**，
+        底部長出第二段；圖比元件高 → **裁切**，下緣被削平；相等 → 完美膠囊。
+
+        ⚠️ 所以元件的 `height` 要給圖高、把元件**釘死**在這個高度（進度條一直是
+        這樣做的），而那一類按鈕自己的內容（字 + 樣式的垂直 padding）**必須矮於
+        圖高**，否則元件被內容撐過頭、變成上面那個「裁切」的情況。GUI 那幾行
+        `st.configure(..., padding=(水平, 垂直))` 因此要留餘裕，見 SQ_H_* 那段。
+
+        ⚠️ `border` 取 `ceil(H/2)` 不是 `H/2`：H 是奇數時半圓會多佔半欄，border
+        少一欄的話中段第一欄不是純色，水平重複貼就會透出一條細紋。
+        """
+        h = px(h_logical, scale)
+        br = (h + 1) // 2
+        return 2 * br + mid, h, h / 2.0, br
 
     def block(r: int) -> tuple[int, int]:
         """兩個方向都留中段。給**會被撐得又寬又高**的東西用（卡片、日誌槽）。
 
-        ⚠️ 這是檔頭第 1 點的垂直版（第 4 點），而且它比水平版痛得多：`wide()` 的
-        中段高只有 1px，填一張 400px 高的卡片就是垂直三百多次 × 水平十幾次的繪製
-        呼叫，而畫面上有四張卡片加一個日誌槽。代價是圖片面積變大，但那是實色圓角、
+        ⚠️ 這是檔頭第 1 點的垂直版（第 4 點），而且它比水平版痛得多：中段高只有
+        1px 的話，填一張 400px 高的卡片就是垂直三百多次 × 水平十幾次的繪製呼叫，
+        而畫面上有四張卡片加一個日誌槽。代價是圖片面積變大，但那是實色圓角、
         PNG 壓得掉。
 
         ⚠️ 元件的 `width`／`height` **不可以跟著改成圖片邊長**——那兩個是「最小
@@ -297,15 +318,14 @@ def build_variant(theme: str, scale: float) -> tuple[dict, dict]:
     # ---- 一般按鈕：瀏覽…／變更…／開啟簡報／開啟資料夾（都坐在卡片上）----
     # ⚠️ **不描邊**：灰底本身就跟白卡分得開，再加一圈線就變成「框中框」（卡片
     # 一圈、按鈕一圈），meeting-scribe 的按鈕也是無框的
-    r = px(SQ_R, scale)
-    w, h = wide(r)
+    w, h, r, br_ = pill(SQ_H)
     for key, fill in (("button-rest", p["btn"]), ("button-dis", p["btn_off"]),
                       ("button-pressed", p["btn_lo"]), ("button-hover", p["btn_hi"])):
         imgs[key] = plate(w, h, r, fill, on=p["card"])
     elems["Sq.button"] = dict(
         states=[["", "button-rest"], ["disabled", "button-dis"],
                 ["pressed", "button-pressed"], ["active", "button-hover"]],
-        border=r + 1, width=2 * (r + 1) + 1, height=h,
+        border=[br_, 0, br_, 0], width=2 * br_ + 1, height=h,
         padding=px(SQ_PAD, scale), sticky="nswe", on=p["card"])
 
     # ---- 線框鈕：「瀏覽…」----
@@ -327,7 +347,7 @@ def build_variant(theme: str, scale: float) -> tuple[dict, dict]:
     elems["Sq.cta"] = dict(
         states=[["", "cta-rest"], ["disabled", "cta-dis"],
                 ["pressed", "cta-pressed"], ["active", "cta-hover"]],
-        border=r + 1, width=2 * (r + 1) + 1, height=h,
+        border=[br_, 0, br_, 0], width=2 * br_ + 1, height=h,
         padding=px(SQ_PAD, scale), sticky="nswe", on=p["card"])
 
     # ---- 低調按鈕：兩張可收合卡片的標題列，與「開啟紀錄」----
@@ -337,15 +357,13 @@ def build_variant(theme: str, scale: float) -> tuple[dict, dict]:
     # ⚠️ `on` 是 `card` 不是 `page`：2026-08-26 使用者指定「展開的內容不要用另外
     # 一張卡片，應該是同一張」，收合鈕於是從卡片之外搬進卡片裡當標題列，靜止色與
     # 外側色都得跟著換——留在 `page` 的話，白卡上會浮出一條視窗底色的灰橫槓。
-    # ⚠️ **兩個尺寸各一張**（2026-08-27 膠囊化時拆的）：收合鈕整條寬、自然高 44.7
-    # 邏輯 px，「開啟紀錄」只有 30。膠囊的半徑是**各自高度**的一半，共用一張就等於
-    # 讓其中一顆不是膠囊——照 30 取，收合鈕會留 19px 直邊（佔高度四成）；照 45 取，
-    # 「開啟紀錄」的 `2(r+1)` 超過它自己的高度，上下圓角會被畫到框外、形狀當場壞掉
-    # （見 SQ_R 那段的實測）。
-    for elem, prefix, rad in (("Sq.subtle", "subtle", SQ_R_ADV),
-                              ("Sq.subtlesm", "subtlesm", SQ_R_SUB)):
-        sr = px(rad, scale)
-        sw, sh = wide(sr)
+    # ⚠️ **兩個尺寸各一張**（2026-08-27 膠囊化時拆的）：收合鈕整條寬、高 45 邏輯
+    # px，「開啟紀錄」只有 31。膠囊的半徑恆等於**自己**圖高的一半，而圖高又必須
+    # 等於元件高度（見 `pill()`），所以兩種高度就是兩張圖——共用一張的話，矮的那顆
+    # 會被高的圖裁掉下緣，高的那顆會把矮的圖垂直重複貼。
+    for elem, prefix, hh in (("Sq.subtle", "subtle", SQ_H_ADV),
+                             ("Sq.subtlesm", "subtlesm", SQ_H_SUB)):
+        sw, sh, sr, sbr = pill(hh)
         for key, fill in ((f"{prefix}-rest", p["card"]),
                           (f"{prefix}-dis", p["card"]),
                           (f"{prefix}-pressed", p["btn_lo"]),
@@ -355,7 +373,7 @@ def build_variant(theme: str, scale: float) -> tuple[dict, dict]:
             states=[["", f"{prefix}-rest"], ["disabled", f"{prefix}-dis"],
                     ["pressed", f"{prefix}-pressed"],
                     ["active", f"{prefix}-hover"]],
-            border=sr + 1, width=2 * (sr + 1) + 1, height=sh,
+            border=[sbr, 0, sbr, 0], width=2 * sbr + 1, height=sh,
             padding=px(SQ_PAD, scale), sticky="nswe", on=p["card"])
 
     # ---- 版面的卡片 ----
@@ -389,7 +407,7 @@ def build_variant(theme: str, scale: float) -> tuple[dict, dict]:
     elems["Sq.field"] = dict(
         states=[["", "field-rest"], ["disabled", "field-dis"],
                 ["focus", "field-focus"]],
-        border=r + 1, width=2 * (r + 1) + 1, height=h,
+        border=[br_, 0, br_, 0], width=2 * br_ + 1, height=h,
         padding=px(SQ_PAD_FIELD, scale), sticky="nswe", on=p["card"])
 
     # ---- 核取方塊：沒勾是凹下去的空框，勾了才上色（Apple 自己的用法）----
@@ -438,8 +456,7 @@ def build_variant(theme: str, scale: float) -> tuple[dict, dict]:
     imgs["chev-down"] = _pad_right(chevron(cv, p["ink"], True), cg)
 
     # ---- 主要動作鈕的兩張皮：開始是 Apple 藍、停止是深紅 ----
-    rr = px(SQ_R_RUN, scale)
-    rw, rh = wide(rr)
+    rw, rh, rr, rbr = pill(SQ_H_RUN)
     for kind, hover in (("accent", p["accent_hi"]), ("stop", None)):
         imgs[f"{kind}-rest"] = plate(rw, rh, rr, p[kind], on=p["card"])
         imgs[f"{kind}-dis"] = plate(rw, rh, rr, p["run_off"], on=p["card"])
@@ -450,7 +467,7 @@ def build_variant(theme: str, scale: float) -> tuple[dict, dict]:
         elems[f"Sq.{kind}"] = dict(
             states=[["", f"{kind}-rest"], ["disabled", f"{kind}-dis"],
                     ["pressed", f"{kind}-pressed"], ["active", f"{kind}-hover"]],
-            border=rr + 1, width=2 * (rr + 1) + 1, height=rh,
+            border=[rbr, 0, rbr, 0], width=2 * rbr + 1, height=rh,
             padding=px(SQ_PAD, scale), sticky="nswe", on=p["card"])
 
     return imgs, elems

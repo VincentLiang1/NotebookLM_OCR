@@ -782,8 +782,14 @@ def apply_ui_style(root: tk.Misc,
     # 主要動作鈕：吃佈景的 Accent（Fluent 的藍底圓角鈕），只加大字與內距。
     # ⚠️ 樣式名要以 .Accent.TButton 結尾才繼承得到那組圖片元件。
     # ⚠️ 字級與內距對齊姊妹專案 MP4-2-SRT（使用者 2026-08-26「按鈕都請依照
-    # MP4-2-SRT 樣式」）：11pt／(20,7)，比舊值 12pt／(22,9) 收斂一點。
-    st.configure(RUN_STYLE, font=(fam, 11, "bold"), padding=(px(20), px(7)))
+    # MP4-2-SRT 樣式」）：11pt／(20,7)，比舊值 12pt／(22,9) 收斂一點。⚠️ 垂直那個
+    # 2026-08-27 從 7 降到 4，**按鈕沒有因此變矮**——高度改由底板釘死（見下）。
+    # ⚠️ **垂直內距是膠囊底板的配套，不是自由參數**（2026-08-27）：底板高度由
+    # `tools/make_skin.py` 的 `SQ_H_*` 釘死，而元件高度取「內容需求」與底板高度的
+    # 較大者——垂直內距一旦讓內容撐過底板高度，Tk 就改成**裁掉底板下緣**，膠囊的
+    # 下半個圓當場被削平（不報錯，只有截圖看得出來）。動這幾個數字或字級之前，先讀
+    # `docs/dev/windows-環境與入口.md` §5.11 並重跑那裡的驗算。
+    st.configure(RUN_STYLE, font=(fam, 11, "bold"), padding=(px(20), px(4)))
     # 轉檔選項／詳細訊息的收合鈕：整條寬 + anchor="w"，讀起來像區段標題而不是
     # 一顆浮在半空中的按鈕。⚠️ 它坐在**卡片之外**，走的是低調皮（見 ADV_STYLE）。
     # ⚠️ 內距要撐得起「這是一條區段標題」：(10,6) 時它比上下的卡片都薄，看起來
@@ -794,15 +800,21 @@ def apply_ui_style(root: tk.Misc,
     # ＝卡片色），畫面上真正讀得到的是三角形，而它離卡片邊只剩底板自帶的 4px。
     # ⚠️ 內距不會動到底板的位置，所以那條「六個直接子元件左緣都是 24」仍然成立
     # ——量的是元件邊緣，這裡加的是元件**裡面**的留白。
-    st.configure(ADV_STYLE, padding=(px(SP_SM), px(SP_MD - 2)), anchor="w")
+    # ⚠️ 垂直從 SP_MD-2（10）降到 7 是膠囊底板的配套（見上），高度仍由底板釘死。
+    st.configure(ADV_STYLE, padding=(px(SP_SM), px(7)), anchor="w")
     # 次要動作（變更…、開啟簡報、開啟資料夾）：比主要動作小一號
-    st.configure("Small.TButton", padding=(px(10), px(3)))
+    st.configure("Small.TButton", padding=(px(10), px(1)))
     # 「開啟紀錄」：與收合鈕同一列、同樣坐在視窗底上，所以走同一張低調皮，
     # 只是內距比照 Small
-    st.configure(SUBTLE_STYLE, padding=(px(10), px(3)))
+    st.configure(SUBTLE_STYLE, padding=(px(10), px(1)))
     # 「瀏覽…／變更…」：靜止是白底藍框，所以字也要是藍的；滑過去整顆翻藍，
     # **文字要在同一刻翻白**（見 CTA_STYLE）。
-    st.configure(CTA_STYLE, foreground=pal["cta_fg"])
+    # ⚠️ 內距 2026-08-27 起**明寫**：不寫就是吃 sv_ttk 的 `8 2 8 3`，而那個垂直值
+    # 會把內容撐到只剩 0 實體像素的餘裕（@100%），下一版佈景或換台機器就把膠囊底板
+    # 的下緣裁掉（見上）。⚠️ 水平取 `px(8)` ＝ **sv_ttk 那個 8，但跟著 DPI 走**
+    # ——照抄成固定 8 的話 200% 下只有一半該有的寬度（那是 sv_ttk 自己的漏，它整組
+    # padding 都是寫死像素）。寫成 `px(10)` 試過，這顆會寬 14px，沒有理由動它。
+    st.configure(CTA_STYLE, foreground=pal["cta_fg"], padding=(px(8), px(1)))
     # ⚠️ `map` 不會與 `TButton` 的合併、是整個取代，所以 `disabled` 也要自己列
     # ——漏掉的話轉檔中被鎖起來的那兩顆會是一般的黑字，看起來還能按。
     # ⚠️ `pressed` 要排在 `active` 前面：按住不放時兩個狀態同時成立，而 ttk 取的
