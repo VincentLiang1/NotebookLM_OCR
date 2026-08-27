@@ -1456,6 +1456,17 @@ class QueueWriter(io.TextIOBase):
 class App(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
+        # ⚠️ **建介面的整段期間都不要顯示**（2026-08-27 使用者回報「先出現一個小
+        # 畫面，然後再擴大」）：Tk 的根視窗會在**第一次 update_idletasks()** 就被
+        # map 到螢幕上，而這支程式在建完介面之前就有兩處非做不可的 update——
+        # apply_ui_style() 要送 <<ThemeChanged>>、use_dark_titlebar() 要 HWND。
+        # 於是使用者先看到一個 WIN_H0(460) 的空視窗，等 _fit_window() 量完
+        # reqheight 才跳成 549。withdraw 到 __init__ 最後一行才 deiconify，中間
+        # 那些 update 全部發生在螢幕外，只會出現最終尺寸的那一幀。
+        # ⚠️ 這與「絕對不要把視窗搶到前景」那條（見工作列那一段）**不衝突**：
+        # 那條講的是轉檔中／收工時不可以 deiconify 打斷使用者手上的事，這裡是
+        # 使用者自己剛啟動的視窗第一次現身。
+        self.withdraw()
         self.title(APP_TITLE)
         self._apply_window_icon()
         # DPI 縮放倍率：enable_dpi_awareness() 之後這裡量到的是真實 DPI，
@@ -1524,6 +1535,14 @@ class App(tk.Tk):
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self.after(80, self._drain_log)
         self._refresh_input_state()
+        # 先把高度設對、再現身，最後才鉗工作區——⚠️ 這三步的**順序**就是
+        # 「不要先閃一個小畫面」的全部：第一次 _fit_window() 跑在 withdraw 底下
+        # （走它自己的未 map 分支，只設高度），deiconify() 出來時已經是最終尺寸；
+        # 標題列高度與視窗實際落點要等 map 之後才量得到，所以鉗制與「掉出工作區
+        # 就往上移」交給第二次。第二次通常什麼都不會改（target == cur），只有在
+        # 工作區裝不下 reqheight 的小螢幕上才會動。
+        self._fit_window()
+        self.deiconify()
         self._fit_window()
 
     # ---- 外觀 ----
@@ -2079,6 +2098,17 @@ class App(tk.Tk):
         self.update_idletasks()
         cur = self.winfo_height()
         need = self.winfo_reqheight()
+        if not self.winfo_ismapped():
+            # 啟動期間，視窗還 withdraw 著（見 __init__ 尾端那三步）。⚠️ 這時
+            # winfo_y() 是 0 而 winfo_rooty() 是殘值，chrome 會算成 135（map 之後
+            # 實測 31），工作區鉗制與「往上移」在這裡都算不得——交給 deiconify()
+            # 之後那一次。⚠️ 而且 geometry() 設完 winfo_height() **還是舊值**
+            # （ConfigureNotify 要 map 了才來，實測設完仍讀到 460），所以 _auto_h
+            # 要記 target 自己：記成量回來的 460 的話，deiconify 之後那 89px 落差
+            # 會被下一次 _fit_window 讀成「使用者自己拉過視窗」，從此不再收合。
+            self.geometry(f"{self.winfo_width()}x{need}")
+            self._auto_h = need
+            return
         user_sized = self._auto_h is not None and abs(cur - self._auto_h) > 8
         target = need
         work = self._work_area()
