@@ -151,7 +151,7 @@
      ],
      "height": 30,
      "on": "#2c2c2e",
-     "padding": 5,
+     "padding": 4,
      "states": [
       [
        "",
@@ -689,7 +689,7 @@
      ],
      "height": 38,
      "on": "#2c2c2e",
-     "padding": 6,
+     "padding": 5,
      "states": [
       [
        "",
@@ -1227,7 +1227,7 @@
      ],
      "height": 45,
      "on": "#2c2c2e",
-     "padding": 8,
+     "padding": 6,
      "states": [
       [
        "",
@@ -1765,7 +1765,7 @@
      ],
      "height": 52,
      "on": "#2c2c2e",
-     "padding": 9,
+     "padding": 7,
      "states": [
       [
        "",
@@ -2303,7 +2303,7 @@
      ],
      "height": 60,
      "on": "#2c2c2e",
-     "padding": 10,
+     "padding": 8,
      "states": [
       [
        "",
@@ -2841,7 +2841,7 @@
      ],
      "height": 30,
      "on": "#ffffff",
-     "padding": 5,
+     "padding": 4,
      "states": [
       [
        "",
@@ -3379,7 +3379,7 @@
      ],
      "height": 38,
      "on": "#ffffff",
-     "padding": 6,
+     "padding": 5,
      "states": [
       [
        "",
@@ -3917,7 +3917,7 @@
      ],
      "height": 45,
      "on": "#ffffff",
-     "padding": 8,
+     "padding": 6,
      "states": [
       [
        "",
@@ -4455,7 +4455,7 @@
      ],
      "height": 52,
      "on": "#ffffff",
-     "padding": 9,
+     "padding": 7,
      "states": [
       [
        "",
@@ -4993,7 +4993,7 @@
      ],
      "height": 60,
      "on": "#ffffff",
-     "padding": 10,
+     "padding": 8,
      "states": [
       [
        "",

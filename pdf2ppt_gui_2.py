@@ -541,6 +541,9 @@ def flash_taskbar(root: tk.Misc) -> None:
 
 SKIN_DIR = PROJECT_DIR / "assets" / "skin"
 
+# 資產的縮放檔與這台機器的實際縮放要**幾乎相等**才用得上（見 `_from_assets`）。
+SKIN_SCALE_TOL = 0.01
+
 # 把 sv_ttk layout 裡的背景元件換成我們的。第二欄是**要從哪個樣式抄 layout**
 # ——主要動作鈕的兩張皮都是從 `Accent.TButton` 複製出來的（`Run.…` 與 `Stop.…`
 # 各要一份自己的 layout 才分得開，字級與內距則靠樣式名的後綴繼承）；兩種低調鈕
@@ -661,9 +664,18 @@ class SquircleSkin:
         """讀 `assets/skin/`。⚠️ 任何一步不對就回 None 交給當場畫，不要丟例外。"""
         try:
             meta = json.loads((SKIN_DIR / "sprites.json").read_text("utf-8"))
-            # 資產是固定像素、顯示縮放不是，挑最接近的那一檔（那五檔正好對上
-            # Windows 的 100%／125%／150%／175%／200%，實務上都是精確匹配）
+            # 資產是固定像素、顯示縮放不是，挑最接近的那一檔。
+            # ⚠️ **只有「幾乎精確」才收**（2026-08-27 晚補）：膠囊化之後底板的高度就是
+            # 元件的高度，而樣式內距與點數字型走的是**真實 DPI**——貼齊到隔壁那一檔
+            # 等於讓元件比底板高，下半個圓被裁掉。實測 250% 貼 2.0x 檔時 Run 83 對
+            # 底板 80、Adv 94 對 90、輸入框 65 對 60，300% 更差到 +18。Windows 在高
+            # DPI 面板上本來就給 225／250／300%，自訂縮放更是任意值。
+            # ⚠️ 對不上就回 None 交給 `_drawn()`——**那條路用的是實際縮放倍率**，
+            # 任何 DPI 都畫得對（見它的 docstring）。改版前四邊九宮格有 1px 中段可以
+            # 重複貼，縮放對不上完全無害，所以這個把關是膠囊化才需要的。
             best = min(meta["scales"], key=lambda s: abs(s - self.scale))
+            if abs(best - self.scale) > SKIN_SCALE_TOL:
+                return None
             var = meta["variants"][f"{self.mode}@{best:g}"]
             sheet = self._photo(
                 data=base64.b64encode((SKIN_DIR / var["file"]).read_bytes()))
@@ -815,6 +827,13 @@ def apply_ui_style(root: tk.Misc,
     # ——照抄成固定 8 的話 200% 下只有一半該有的寬度（那是 sv_ttk 自己的漏，它整組
     # padding 都是寫死像素）。寫成 `px(10)` 試過，這顆會寬 14px，沒有理由動它。
     st.configure(CTA_STYLE, foreground=pal["cta_fg"], padding=(px(8), px(1)))
+    # ⚠️ **基底 `TButton` 也要明寫**（2026-08-27 晚，被新測試抓出來的）：`Sq.button`
+    # 這張膠囊底板是掛在 `TButton` 的 layout 上，而基底自己吃的是 sv_ttk 的
+    # `8 2 8 3`——垂直 2+3 讓內容剛好等於底板高度，**餘裕 0**。現在畫面上每顆鈕都
+    # 指定了樣式（`Small.`／`Cta.`／`Adv.`／`Subtle.`／`Run.`），所以還沒踩到；但
+    # 只要有人加一顆不帶 `style=` 的 `ttk.Button`，或加一個沒覆寫內距的新樣式，
+    # 那顆鈕的下半個圓就會被裁掉。把基底補齊，這一類就不可能再發生。
+    st.configure("TButton", padding=(px(8), px(1)))
     # ⚠️ `map` 不會與 `TButton` 的合併、是整個取代，所以 `disabled` 也要自己列
     # ——漏掉的話轉檔中被鎖起來的那兩顆會是一般的黑字，看起來還能按。
     # ⚠️ `pressed` 要排在 `active` 前面：按住不放時兩個狀態同時成立，而 ttk 取的
@@ -860,7 +879,41 @@ def apply_ui_style(root: tk.Misc,
     # ⚠️ 一定要在 sv_ttk 切完佈景**之後**：image element 是建在「當下這個
     # 佈景」裡的，`ttk::style theme use` 一換就整批不見了。
     skin = SquircleSkin(root, scale, mode)
-    return fam, pal, (skin if skin.install() else None)
+    if skin.install():
+        return fam, pal, skin
+    # ⚠️ **沒有底板就沒有東西釘住高度，垂直內距要還原**（見 `_relax_pill_padding`）。
+    _relax_pill_padding(st, px)
+    return fam, pal, None
+
+
+def _relax_pill_padding(st: ttk.Style, px) -> None:
+    """皮膚裝不起來時，把垂直內距還原成膠囊化之前的值。
+
+    ⚠️ **膠囊的垂直內距是底板的配套，不是獨立的設計選擇。** `apply_ui_style` 把它們
+    砍到 4／7／1 的前提是「按鈕沒有因此變矮，高度改由底板釘死」——而底板只有
+    `SquircleSkin.install()` 成功時才存在。sv_ttk 載不起來會在更前面就 return（那條
+    路沒動過內距，安全），但**sv_ttk 載得起來、皮膚卻裝不起來**是另一條：資產與
+    Pillow 都沒有、`sprites.json` 壞掉、換了 ttk 版本讓 `element_create`／`layout`
+    丟例外。`SquircleSkin` 的 docstring 把「只有原始碼」與「兩者皆無」列為支援狀態，
+    所以這是會出貨的路，不是假想。
+
+    ⚠️ 不還原的話，內距是砍過的、卻沒有底板補回高度：實測 100% 下五個樣式全部塌成
+    27px（改版前是 39／45／31／30／31），150% 下收合鈕少 28px，而且主要動作鈕、區段
+    標題鈕、次要小鈕的高度階層被抹平成同一個數。那違反這支檔案自己的承諾——「裝不
+    起來就回 None，畫面留在原本的長相」。
+
+    ⚠️ **只還原垂直值，水平維持 `apply_ui_style` 那幾行的數字。** 水平那幾個（尤其
+    `CTA_STYLE` 的 `px(8)`）修的是 sv_ttk 寫死像素、不跟 DPI 走的老問題，與膠囊
+    無關，還原回去等於把另一個 bug 放回來。
+    """
+    for style, pad in ((RUN_STYLE, (px(20), px(7))),
+                       (ADV_STYLE, (px(SP_SM), px(SP_MD - 2))),
+                       ("Small.TButton", (px(10), px(3))),
+                       (SUBTLE_STYLE, (px(10), px(3))),
+                       # 這兩個膠囊化之前都沒明寫內距、吃 sv_ttk 的 `8 2 8 3`
+                       (CTA_STYLE, (px(8), px(3))),
+                       ("TButton", (px(8), px(3)))):
+        st.configure(style, padding=pad)
 
 # 轉檔結束代碼裡的這一個代表「檔案有了，但至少一頁降級」（cli.py 的
 # PARTIAL_RC）。⚠️ 手抄過來的常數，tests/test_docs.py 釘著兩邊一致 ——

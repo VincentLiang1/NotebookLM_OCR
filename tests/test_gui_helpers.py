@@ -8,7 +8,11 @@
 釘著，這裡補上「認出來之後講成什麼樣子」。
 
 ⚠️ import 這支 GUI 只會定義常數與函式（Tk 是 `App()` 才建的），不會開視窗。
+⚠️ **檔尾那三支膠囊測試是例外**：要量 requested size 就得真的建一個 Tk root，不過
+一律 `withdraw()`，畫面上不會有視窗閃出來；開不了 Tk 的機器會 skip 而不是紅。
 """
+import pytest
+
 import pdf2ppt_gui_2 as G
 from pathlib import Path
 
@@ -114,3 +118,159 @@ def test_the_shipped_skin_matches_what_the_generator_draws_today():
     assert not stale, ("assets/skin/ 不是現在這份 make_skin.py 的產物，"
                        "請重跑 `uv run python tools/make_skin.py`：\n  "
                        + "\n  ".join(stale))
+
+
+# ---------------------------------------------------------------------------
+# 膠囊：底板圖高就是元件高度
+# ---------------------------------------------------------------------------
+# 底下三支釘的是 2026-08-27 膠囊化引進的那條規則：垂直方向不切九宮格，所以**圖高
+# 必須等於元件高度**——矮了整張底板垂直重複貼，高了下緣被裁掉、膠囊的下半個圓當場
+# 被削平。⚠️ 兩種都**不當掉、不報錯、不丟例外**，`reqheight` 也看不出來（它已經是
+# max(內容需求, height)），在這之前唯一的守門員是人工重跑 `docs/dev/windows-環境與
+# 入口.md` §5.11 那兩項。
+#
+# ⚠️ **測試開得了 Tk。** §5.11 一度寫「`tests/` 那一套是純文字的，開不了 Tk」而把這
+# 兩項留給人工——那句話是錯的：`tk.Tk()` 在 pytest 裡建得起來，`withdraw()` 之後畫面
+# 上不會有東西閃出來，五個縮放檔全跑約 2 秒。
+#
+# ⚠️ **量法照 §5.11**：`tk scaling` 是 dpi/72、`App.ui_scale` 是 dpi/96，兩個分母不
+# 一樣，混用會量到另一個縮放檔的數字（第一次量就踩到過）。
+
+_PILL_WIDGETS = (
+    # (樣式, tools/make_skin.py 裡的高度常數)
+    (G.RUN_STYLE, "SQ_H_RUN"),
+    (G.STOP_STYLE, "SQ_H_RUN"),
+    (G.ADV_STYLE, "SQ_H_ADV"),
+    (G.SUBTLE_STYLE, "SQ_H_SUB"),
+    (G.CTA_STYLE, "SQ_H"),
+    ("Small.TButton", "SQ_H"),
+    ("TButton", "SQ_H"),
+)
+
+
+def _make_skin():
+    import sys
+    sys.path.insert(0, str(G.PROJECT_DIR / "tools"))
+    try:
+        import make_skin
+    finally:
+        sys.path.pop(0)
+    return make_skin
+
+
+def _measure_pills(scale: float, pin_height: bool = True) -> dict:
+    """回傳 {樣式: (量到的高度, 底板圖高)}。開不了 Tk 或裝不上皮膚就 skip。
+
+    ⚠️ `pin_height=False` 會把每個元件的 `height` 覆寫成 1，量到的於是是**純內容
+    需求**（§5.11 驗收 6 的量法）。少了這一步就看不到安全邊界：`reqheight` 平常是
+    max(內容, height)，內容就算只差 1px 就要爆，驗收 5 照樣是綠的。
+    """
+    import tkinter as tk
+    from tkinter import ttk
+
+    make_skin = _make_skin()
+    try:
+        root = tk.Tk()
+    except tk.TclError as exc:                    # 沒有顯示裝置
+        pytest.skip(f"這台機器開不了 Tk：{exc}")
+    orig = G.SquircleSkin._from_assets
+    try:
+        root.withdraw()
+        root.tk.call("tk", "scaling", scale * 96.0 / 72.0)
+        if not pin_height:
+            def unpinned(self):
+                spec = orig(self)
+                if spec is None:
+                    return None
+                elems, fg = spec
+                return {n: dict(e, height=1) for n, e in elems.items()}, fg
+            G.SquircleSkin._from_assets = unpinned
+        try:
+            _fam, _pal, skin = G.apply_ui_style(root, scale)
+        finally:
+            G.SquircleSkin._from_assets = orig
+        if skin is None:
+            pytest.skip("這台機器裝不上 squircle 皮膚（多半是沒有 sv_ttk）")
+        frame = ttk.Frame(root)
+        out = {}
+        for style, const in _PILL_WIDGETS:
+            btn = ttk.Button(frame, text="開始轉檔 Ag", style=style)
+            root.update_idletasks()
+            out[style] = (btn.winfo_reqheight(),
+                          make_skin.px(getattr(make_skin, const), scale))
+            btn.destroy()
+        # 輸入框走 `Sq.field`，與一般按鈕同一張 `pill(SQ_H)` 底板
+        entry = ttk.Entry(frame)
+        root.update_idletasks()
+        out["TEntry"] = (entry.winfo_reqheight(),
+                         make_skin.px(make_skin.SQ_H, scale))
+        return out
+    finally:
+        G.SquircleSkin._from_assets = orig
+        root.destroy()
+
+
+def test_every_pill_widget_is_exactly_as_tall_as_its_plate():
+    """§5.11 驗收 5：元件高度 ＝ 底板圖高，八種控制項 × 五個縮放檔逐格比。"""
+    bad = []
+    for scale in _make_skin().SCALES:
+        for style, (got, plate) in _measure_pills(scale).items():
+            if got != plate:
+                how = "下緣被裁掉" if got > plate else "底板垂直重複貼"
+                bad.append(f"{style} @{scale:g}x：元件 {got} vs 底板 {plate}"
+                           f"（{how}）")
+    assert not bad, (
+        "膠囊的圖高必須等於元件高度（tools/make_skin.py 的 `pill()`）：\n  "
+        + "\n  ".join(bad))
+
+
+def test_every_pill_widget_keeps_a_margin_under_its_plate():
+    """§5.11 驗收 6：純內容需求要**矮於**底板圖高，貼齊（餘裕 0）就算不過。
+
+    ⚠️ 餘裕 0 不是「剛好」而是「已經沒有退路」：`ui_font_family()` 在沒裝
+    Microsoft JhengHei (UI) 的機器上會退到 Segoe UI，字型度量一換就直接超出。
+    2026-08-27 `Sq.field` 就是這樣——`SQ_PAD_FIELD` 留著一個理由已經失效的 +1px，
+    五檔餘裕 0/1/1/2/2，而 Segoe UI 在 150% 下要 47、底板只有 45。
+    """
+    tight = []
+    for scale in _make_skin().SCALES:
+        for style, (need, plate) in _measure_pills(
+                scale, pin_height=False).items():
+            if need >= plate:
+                tight.append(f"{style} @{scale:g}x：內容 {need} vs 底板 {plate}"
+                             f"（餘裕 {plate - need}）")
+    assert not tight, (
+        "這些控制項的內容撐到底板高度了，換個字型或字級就會把下半個圓削平——"
+        "調樣式的垂直 padding 或 SQ_H_*：\n  " + "\n  ".join(tight))
+
+
+def test_pill_plates_are_sliced_horizontally_only():
+    """膠囊底板的幾何不變量，這一支不必開 Tk，所以永遠跑得到。
+
+    三條：垂直 `border` 要是 0（切了就留下直邊、半徑再也大不過 H/2−1）、元件的
+    `height` 要等於圖高（不等就是重複貼或裁切）、水平 `border` 不得小於
+    `ceil(圖高/2)`（少一欄的話中段第一欄不是純色，水平重複貼會透出一條細紋），
+    而且切得開（左＋右要小於圖寬，否則 ttk 在幾何計算裡原地打轉、事件迴圈當場
+    卡死）。⚠️ 進度條的軌道與填充條也是這個形狀，一起驗。
+    """
+    bad = []
+    for key, var in _skin_meta()["variants"].items():
+        for name, elem in var["elements"].items():
+            border = elem["border"]
+            if not isinstance(border, list):
+                continue        # 卡片／日誌槽／核取方塊走四邊九宮格，不是膠囊
+            _x, _y, sw, sh = var["sprites"][elem["states"][0][1]]
+            need = -(-sh // 2)          # ceil(sh / 2)
+            if border[1] or border[3]:
+                bad.append(f"{key} / {name}：垂直 border 不是 0（{border}）")
+            if elem["height"] != sh:
+                bad.append(f"{key} / {name}：height {elem['height']} != 圖高 {sh}")
+            if border[0] != border[2]:
+                bad.append(f"{key} / {name}：左右 border 不對稱（{border}）")
+            if border[0] < need:
+                bad.append(f"{key} / {name}：水平 border {border[0]} < "
+                           f"ceil(圖高/2)＝{need}，中段第一欄不是純色")
+            if border[0] + border[2] >= sw:
+                bad.append(f"{key} / {name}：左＋右 {border[0] + border[2]} "
+                           f">= 圖寬 {sw}，ttk 會卡死")
+    assert not bad, "膠囊底板的幾何壞了：\n  " + "\n  ".join(bad)

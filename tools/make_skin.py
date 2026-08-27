@@ -115,8 +115,11 @@ SQ_STEPS = 24         # 每個角取樣幾個點（再多肉眼看不出來，�
 # ⚠️ **配套：那一類樣式的垂直 padding 必須讓內容矮於這裡的高度。** 元件高度取
 # 「內容需求」與 `height` 的較大者，內容一旦撐過頭就變成「圖比元件矮」那個壞法。
 # GUI 那幾行 `st.configure(..., padding=(水平, 垂直))` 因此跟著這裡一起調過，
-# 逐檔驗算的餘裕是 5~11 實體像素（量法與表格見
-# `docs/dev/windows-環境與入口.md` §5.11）。**動任何一邊都要重跑那個驗算。**
+# 逐檔驗算的餘裕是 **2~12 實體像素**，最小的是 100% 下的輸入框（量法與表格見
+# `docs/dev/windows-環境與入口.md` §5.11）。⚠️ 這個數字一度寫成「5~11」而且**兩端
+# 都不對**：漏量了輸入框與基底 `TButton`（當時兩格都是 0，見 `SQ_PAD_FIELD`）。
+# ⚠️ **現在不必再靠人工重跑**：`tests/test_gui_helpers.py` 的三支膠囊測試把「元件
+# 高度＝圖高」「餘裕不得為 0」「底板幾何」釘住了，`uv run pytest` 就會說話。
 #
 # 取值貼著改版前的自然高度，版面才不會跑掉（實體像素差 0~+3）：
 #   主要動作鈕 40（原 40.0~41.0）　收合鈕 45（原 44.7~45.5）
@@ -152,7 +155,15 @@ SQ_MID = 96           # 底板中段的寬度（見檔頭第 1、4 點，不可�
 # 到 387（2026-08-26 用皮膚開／關逐個量 requested size 量出來的：按鈕與收合鈕一律
 # 差 8×8，輸入框差 10 寬 7 高）。控制項自己的內距仍然歸 GUI 那幾行樣式設定管。
 SQ_PAD = 4            # 按鈕
-SQ_PAD_FIELD = 5      # 輸入框（比按鈕多 1px，才跟按鈕一樣高）
+# ⚠️ **輸入框從 5 降回 4（2026-08-27 晚）：那個「多 1px」的理由已經死了。** 舊註解
+# 寫的是「比按鈕多 1px，才跟按鈕一樣高」——那是高度還由內容決定的年代；膠囊化之後
+# 輸入框與按鈕共用同一張 `pill(SQ_H)` 底板、`height` 一樣，多出來的 1px 不再換到
+# 任何東西，只是把上下各吃掉 1px。⚠️ 代價很實在：它讓 `Sq.field` 成為全畫面**唯一
+# 餘裕為 0** 的膠囊（五檔量到 0/1/1/2/2，按鈕是 3~12），而 `ui_font_family()` 在沒裝
+# Microsoft JhengHei (UI) 的機器上會退到 Segoe UI，那條路在 150% 下輸入框要 47 而
+# 底板只有 45——**下半個圓當場被削平，今天就在發生**。
+SQ_PAD_FIELD = 4      # 輸入框（與按鈕同一張底板，就跟按鈕同一個內距）
+SQ_PAD_SUNKEN = 5     # 日誌槽（不是膠囊，內距與輸入框無關，2026-08-27 拆開）
 
 
 def px(n: float, scale: float) -> int:
@@ -397,7 +408,7 @@ def build_variant(theme: str, scale: float) -> tuple[dict, dict]:
     elems["Sq.sunken"] = dict(
         states=[["", "sunken-rest"]],
         border=br + 1, width=2 * (br + 1) + 1, height=2 * (br + 1) + 1,
-        padding=px(SQ_PAD_FIELD, scale), sticky="nswe", on=p["card"])
+        padding=px(SQ_PAD_SUNKEN, scale), sticky="nswe", on=p["card"])
 
     # ---- 輸入框：取得焦點時描邊換成 accent 並加粗到 2px ----
     imgs["field-rest"] = plate(w, h, r, p["field"], p["line"], on=p["card"])
