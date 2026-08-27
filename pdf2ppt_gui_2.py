@@ -556,7 +556,11 @@ SKIN_SWAPS = (
     (STOP_STYLE, "Accent.TButton", {"AccentButton.button": "Sq.stop"}),
     (CTA_STYLE, "TButton", {"Button.button": "Sq.cta"}),
     (ADV_STYLE, "TButton", {"Button.button": "Sq.subtle"}),
-    (SUBTLE_STYLE, "TButton", {"Button.button": "Sq.subtle"}),
+    # ⚠️ **「開啟紀錄」走小一號的低調皮**（`Sq.subtlesm`，2026-08-27 膠囊化時拆
+    # 開）：底板的圓角是那一類元件**自己高度**的一半，而收合鈕自然高 44.7 邏輯
+    # px、這一顆只有 30——共用同一張就必有一顆不是膠囊，而且照大的取還會讓小的
+    # 那顆上下圓角被畫到框外（形狀當場壞掉，見 `tools/make_skin.py` 第 5 點）。
+    (SUBTLE_STYLE, "TButton", {"Button.button": "Sq.subtlesm"}),
 )
 
 # 自己開 layout 的兩個 Frame（不從別的樣式抄，因為要的就只有一張底板）。
