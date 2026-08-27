@@ -83,28 +83,15 @@ def test_every_skin_plate_declares_what_it_sits_on():
     assert not missing, "這些元件沒說自己坐在什麼顏色上：\n  " + "\n  ".join(missing)
 
 
-def _as_lists(obj):
-    """把 tuple 一律換成 list，好跟 JSON 讀回來的東西直接比。"""
-    if isinstance(obj, dict):
-        return {k: _as_lists(v) for k, v in obj.items()}
-    if isinstance(obj, (list, tuple)):
-        return [_as_lists(v) for v in obj]
-    return obj
-
-
 def test_the_shipped_skin_matches_what_the_generator_draws_today():
     """`assets/skin/` 必須是**現在這份** `tools/make_skin.py` 的產物。
 
     GUI 有資產就讀資產、沒有才 import 產生器當場畫（`SquircleSkin._drawn`），
     所以兩者一旦漂開，同一支程式在「完整複製」與「只有原始碼」的兩台機器上就會
     長得不一樣——而且都不會報錯。改了那支腳本要重跑再提交。"""
-    import sys
-    sys.path.insert(0, str(G.PROJECT_DIR / "tools"))
-    try:
-        import make_skin
-    finally:
-        sys.path.pop(0)
     from PIL import Image
+
+    make_skin = G.import_make_skin()
 
     meta = _skin_meta()
     stale = []
@@ -135,8 +122,8 @@ def test_the_shipped_skin_matches_what_the_generator_draws_today():
             # 時誰排前面——完全沒有人驗。手改 `sprites.json` 那一段，像素、rects、
             # border、width、height、padding、on 全都還相符，測試照樣綠，而有資產與
             # 只有原始碼的兩台機器會顯示不同的 hover/pressed/disabled，正是這支測試
-            # 存在要擋的分歧。⚠️ 產生器用 tuple、JSON 只有 list，先正規化再比。
-            if _as_lists(elems) != _as_lists(var["elements"]):
+            # 存在要擋的分歧。⚠️ 產生器出來的就已經全是 list（`states`／`border` 都寫
+            # 成 list 字面值），與 JSON 讀回來的直接可比，不必先正規化。
                 stale.append(f"{theme}@{scale:g}：元件定義變了")
     assert not stale, ("assets/skin/ 不是現在這份 make_skin.py 的產物，"
                        "請重跑 `uv run python tools/make_skin.py`：\n  "
@@ -171,16 +158,6 @@ _PILL_WIDGETS = (
 )
 
 
-def _make_skin():
-    import sys
-    sys.path.insert(0, str(G.PROJECT_DIR / "tools"))
-    try:
-        import make_skin
-    finally:
-        sys.path.pop(0)
-    return make_skin
-
-
 def _measure_pills(scale: float, pin_height: bool = True) -> dict:
     """回傳 {樣式: (量到的高度, 底板圖高)}。開不了 Tk 或裝不上皮膚就 skip。
 
@@ -191,7 +168,7 @@ def _measure_pills(scale: float, pin_height: bool = True) -> dict:
     import tkinter as tk
     from tkinter import ttk
 
-    make_skin = _make_skin()
+    make_skin = G.import_make_skin()
     try:
         root = tk.Tk()
     except tk.TclError as exc:                    # 沒有顯示裝置
@@ -236,7 +213,7 @@ def _measure_pills(scale: float, pin_height: bool = True) -> dict:
 def test_every_pill_widget_is_exactly_as_tall_as_its_plate():
     """§5.11 驗收 5：元件高度 ＝ 底板圖高，八種控制項 × 五個縮放檔逐格比。"""
     bad = []
-    for scale in _make_skin().SCALES:
+    for scale in G.import_make_skin().SCALES:
         for style, (got, plate) in _measure_pills(scale).items():
             if got != plate:
                 how = "下緣被裁掉" if got > plate else "底板垂直重複貼"
@@ -256,7 +233,7 @@ def test_every_pill_widget_keeps_a_margin_under_its_plate():
     五檔餘裕 0/1/1/2/2，而 Segoe UI 在 150% 下要 47、底板只有 45。
     """
     tight = []
-    for scale in _make_skin().SCALES:
+    for scale in G.import_make_skin().SCALES:
         for style, (need, plate) in _measure_pills(
                 scale, pin_height=False).items():
             if need >= plate:

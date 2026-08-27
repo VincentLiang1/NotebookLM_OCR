@@ -553,6 +553,23 @@ SKIN_SCALE_TOL = 0.01
 # 的重點就是不必有 Pillow，為了一個整數把相依拉進來等於把這條路廢掉。
 SKIN_SCHEMA = 2
 
+
+def import_make_skin():
+    """import `tools/make_skin.py`（產生器與 GUI 不同層，要先把 `tools/` 放進路徑）。
+
+    ⚠️ **只有「當場畫」那條路會用到**：讀資產不需要產生器、也不需要 Pillow。
+    ⚠️ `finally` 裡的 `sys.path.pop(0)` 不可省，也不可改成 `remove()`——插在最前面
+    就從最前面拿掉，才不會在重複呼叫時愈積愈長、或誤刪別人放的同名路徑。
+    ⚠️ 測試也走這一支（`tests/test_gui_helpers.py`），這樣「資產＝產生器」那支
+    測試驗到的才是**真正會出貨的**匯入路徑，而不是它自己另一份抄本。
+    """
+    sys.path.insert(0, str(PROJECT_DIR / "tools"))
+    try:
+        import make_skin
+    finally:
+        sys.path.pop(0)
+    return make_skin
+
 # 把 sv_ttk layout 裡的背景元件換成我們的。第二欄是**要從哪個樣式抄 layout**
 # ——主要動作鈕的兩張皮都是從 `Accent.TButton` 複製出來的（`Run.…` 與 `Stop.…`
 # 各要一份自己的 layout 才分得開，字級與內距則靠樣式名的後綴繼承）；兩種低調鈕
@@ -695,23 +712,31 @@ class SquircleSkin:
                 return None
             var = meta["variants"][f"{self.mode}@{best:g}"]
             # ⚠️ **整張 sheet 刻意不走 `_photo()`、不進 `_keep`**：切完之後就沒有
-            # 人用它了，留著等於讓解碼後的整張點陣常駐一輩子（@2x 那張 282x1663，
-            # RGBA 約 1.9MB；十組裡只會載一組，但那一份是白留的）。個別 sprite 是
-            # `copy` 出來的**獨立** PhotoImage，不參照它，所以 sheet 可以當場放掉。
+            # 人用它了，留著等於讓解碼後的整張點陣常駐一輩子（@2x 那張 282×2416，
+            # 解碼後 2.73MB；十組裡只會載一組，但那一份是白留的）。個別 sprite 是
+            # `copy` 出來的**獨立** PhotoImage、不參照它，所以 sheet 只是個普通區域
+            # 變數，函式結束就回收——**不必寫 `del`**（那會讀起來像洩漏防護，害下一個
+            # 在中間插 `return` 的人以為自己在處理一個 2.73MB 的不變量）。
             sheet = tk.PhotoImage(
                 master=self.root,
                 data=base64.b64encode((SKIN_DIR / var["file"]).read_bytes()))
+            # ⚠️ **同一塊 rect 只裁一次**：`pack()` 去重之後每個 variant 有三個
+            # key 指到同一塊區域（`accent-dis`／`stop-dis`、兩張低調皮的 `rest`／
+            # `dis`），逐 key 裁等於多做三次 blit，又把三張一模一樣的 PhotoImage
+            # 永久留在 `_keep` 裡（@2x 約 252KB）。對 `elems`／`chev` 完全透明——
+            # 那兩邊都只是查 `cut`。
             cut: dict[str, tk.PhotoImage] = {}
+            same: dict[tuple, tk.PhotoImage] = {}
             for key, (x, y, w, h) in var["sprites"].items():
+                if (x, y, w, h) in same:
+                    cut[key] = same[(x, y, w, h)]
+                    continue
                 sub = self._photo(width=w, height=h)
                 # ⚠️ `-compositingrule set` 不可省：預設是 overlay，會把來源
                 # **疊**上去而不是覆蓋，半透明的角落會被疊成不透明
                 self.root.tk.call(sub, "copy", sheet, "-from", x, y,
                                   x + w, y + h, "-compositingrule", "set")
-                cut[key] = sub
-            # 交還 Tcl 那份點陣（見上）。⚠️ `del` 就夠：`PhotoImage.__del__` 會呼叫
-            # `image delete`，而 CPython 的 refcount 讓它當場生效。
-            del sheet
+                cut[key] = same[(x, y, w, h)] = sub
             elems = {name: dict(e, states=[(s, cut[k]) for s, k in e["states"]])
                      for name, e in var["elements"].items()}
             self.chev = {"right": cut["chev-right"], "down": cut["chev-down"]}
@@ -728,11 +753,7 @@ class SquircleSkin:
         「只有幾種尺寸」的限制。
         """
         try:
-            sys.path.insert(0, str(PROJECT_DIR / "tools"))
-            try:
-                import make_skin
-            finally:
-                sys.path.pop(0)
+            make_skin = import_make_skin()
             imgs, elems = make_skin.build_variant(self.mode, self.scale)
             cut = {}
             for key, im in imgs.items():
@@ -748,6 +769,47 @@ class SquircleSkin:
             return None
         self.source = "drawn"
         return elems, fg
+
+
+# ⚠️ **膠囊那幾顆的內距只有這一份。** 左右一律照這裡；上下分兩欄——`pin` 是膠囊
+# 底板裝得起來時用的（高度由底板釘死，內距只要讓內容矮於圖高就好），`plain` 是膠囊化
+# 之前的值，皮膚裝不起來時要還原回去（見 `_set_pill_padding`）。
+#
+# ⚠️ **為什麼是一張表兩欄、不是兩張表**：兩張表等於把六個**水平**值抄第二遍，而
+# 水平值與膠囊無關（`CTA_STYLE` 的 `px(8)` 修的是 sv_ttk 寫死像素、不跟 DPI 走的老
+# 問題），改一邊漏一邊完全不會被抓到——皮膚裝不起來那條路 `_measure_pills` 直接
+# skip，沒有任何測試看得到。2026-08-27 晚一度真的抄成兩份，這張表就是收掉它。
+#
+# ⚠️ 每一格的理由寫在 `apply_ui_style` 裡對應的那段註解，不要只看數字。
+PILL_PADDING = (
+    # (樣式, 左右, 上下[有底板], 上下[沒底板])
+    (RUN_STYLE, 20, 4, 7),
+    (ADV_STYLE, SP_SM, 7, SP_MD - 2),
+    ("Small.TButton", 10, 1, 3),
+    (SUBTLE_STYLE, 10, 1, 3),
+    # 這兩個膠囊化之前都沒明寫內距、吃 sv_ttk 的 `8 2 8 3`
+    (CTA_STYLE, 8, 1, 3),
+    ("TButton", 8, 1, 3),
+)
+
+
+def _set_pill_padding(st: ttk.Style, px, *, pinned: bool) -> None:
+    """套用 `PILL_PADDING`。`pinned` ＝ 膠囊底板裝得起來嗎。
+
+    ⚠️ **垂直內距是底板的配套，不是獨立的設計選擇。** 砍到 4／7／1 的前提是
+    「按鈕沒有因此變矮，高度改由底板釘死」——而底板只有 `SquircleSkin.install()`
+    成功時才存在。sv_ttk 載不起來會在更前面就 return（那條路沒動過內距，安全），但
+    **sv_ttk 載得起來、皮膚卻裝不起來**是另一條：資產與 Pillow 都沒有、`sprites.json`
+    壞掉、換了 ttk 版本讓 `element_create`／`layout` 丟例外。`SquircleSkin` 的
+    docstring 把「只有原始碼」與「兩者皆無」列為支援狀態，所以這是會出貨的路。
+
+    ⚠️ 不還原的話，內距是砍過的、卻沒有底板補回高度：實測 100% 下五個樣式全部
+    塌成 27px（改版前是 39／45／31／30／31），150% 下收合鈕少 28px，而且主要動作鈕、
+    區段標題鈕、次要小鈕的高度階層被抹平成同一個數。那違反 `apply_ui_style` 自己的
+    承諾——「裝不起來就回 None，畫面留在原本的長相」。
+    """
+    for style, h, v_pin, v_plain in PILL_PADDING:
+        st.configure(style, padding=(px(h), px(v_pin if pinned else v_plain)))
 
 
 def apply_ui_style(root: tk.Misc,
@@ -826,7 +888,8 @@ def apply_ui_style(root: tk.Misc,
     # 較大者——垂直內距一旦讓內容撐過底板高度，Tk 就改成**裁掉底板下緣**，膠囊的
     # 下半個圓當場被削平（不報錯，只有截圖看得出來）。動這幾個數字或字級之前，先讀
     # `docs/dev/windows-環境與入口.md` §5.11 並重跑那裡的驗算。
-    st.configure(RUN_STYLE, font=(fam, 11, "bold"), padding=(px(20), px(4)))
+    # ⚠️ 內距的數字在 `PILL_PADDING`（上下兩欄，見那裡）。
+    st.configure(RUN_STYLE, font=(fam, 11, "bold"))
     # 轉檔選項／詳細訊息的收合鈕：整條寬 + anchor="w"，讀起來像區段標題而不是
     # 一顆浮在半空中的按鈕。⚠️ 它是**卡片自己的標題列**，走低調皮（見 ADV_STYLE）。
     # ⚠️ 內距要撐得起「這是一條區段標題」：(10,6) 時它比上下的卡片都薄，看起來
@@ -838,12 +901,9 @@ def apply_ui_style(root: tk.Misc,
     # ⚠️ 內距不會動到底板的位置，所以那條「六個直接子元件左緣都是 24」仍然成立
     # ——量的是元件邊緣，這裡加的是元件**裡面**的留白。
     # ⚠️ 垂直從 SP_MD-2（10）降到 7 是膠囊底板的配套（見上），高度仍由底板釘死。
-    st.configure(ADV_STYLE, padding=(px(SP_SM), px(7)), anchor="w")
-    # 次要動作（變更…、開啟簡報、開啟資料夾）：比主要動作小一號
-    st.configure("Small.TButton", padding=(px(10), px(1)))
+    st.configure(ADV_STYLE, anchor="w")
     # 「開啟紀錄」：與收合鈕同一列、同樣坐在卡片上，所以走同一張低調皮，
     # 只是內距比照 Small
-    st.configure(SUBTLE_STYLE, padding=(px(10), px(1)))
     # 「瀏覽…／變更…」：靜止是白底藍框，所以字也要是藍的；滑過去整顆翻藍，
     # **文字要在同一刻翻白**（見 CTA_STYLE）。
     # ⚠️ 內距 2026-08-27 起**明寫**：不寫就是吃 sv_ttk 的 `8 2 8 3`，而那個垂直值
@@ -851,14 +911,13 @@ def apply_ui_style(root: tk.Misc,
     # 的下緣裁掉（見上）。⚠️ 水平取 `px(8)` ＝ **sv_ttk 那個 8，但跟著 DPI 走**
     # ——照抄成固定 8 的話 200% 下只有一半該有的寬度（那是 sv_ttk 自己的漏，它整組
     # padding 都是寫死像素）。寫成 `px(10)` 試過，這顆會寬 14px，沒有理由動它。
-    st.configure(CTA_STYLE, foreground=pal["cta_fg"], padding=(px(8), px(1)))
+    st.configure(CTA_STYLE, foreground=pal["cta_fg"])
     # ⚠️ **基底 `TButton` 也要明寫**（2026-08-27 晚，被新測試抓出來的）：`Sq.button`
     # 這張膠囊底板是掛在 `TButton` 的 layout 上，而基底自己吃的是 sv_ttk 的
     # `8 2 8 3`——垂直 2+3 讓內容剛好等於底板高度，**餘裕 0**。現在畫面上每顆鈕都
     # 指定了樣式（`Small.`／`Cta.`／`Adv.`／`Subtle.`／`Run.`），所以還沒踩到；但
     # 只要有人加一顆不帶 `style=` 的 `ttk.Button`，或加一個沒覆寫內距的新樣式，
     # 那顆鈕的下半個圓就會被裁掉。把基底補齊，這一類就不可能再發生。
-    st.configure("TButton", padding=(px(8), px(1)))
     # ⚠️ `map` 不會與 `TButton` 的合併、是整個取代，所以 `disabled` 也要自己列
     # ——漏掉的話轉檔中被鎖起來的那兩顆會是一般的黑字，看起來還能按。
     # ⚠️ `pressed` 要排在 `active` 前面：按住不放時兩個狀態同時成立，而 ttk 取的
@@ -903,42 +962,14 @@ def apply_ui_style(root: tk.Misc,
         use_dark_titlebar(root)
     # ⚠️ 一定要在 sv_ttk 切完佈景**之後**：image element 是建在「當下這個
     # 佈景」裡的，`ttk::style theme use` 一換就整批不見了。
+    _set_pill_padding(st, px, pinned=True)
     skin = SquircleSkin(root, scale, mode)
     if skin.install():
         return fam, pal, skin
-    # ⚠️ **沒有底板就沒有東西釘住高度，垂直內距要還原**（見 `_relax_pill_padding`）。
-    _relax_pill_padding(st, px)
+    # ⚠️ **沒有底板就沒有東西釘住高度，垂直內距要還原**（見 `_set_pill_padding`）。
+    _set_pill_padding(st, px, pinned=False)
     return fam, pal, None
 
-
-def _relax_pill_padding(st: ttk.Style, px) -> None:
-    """皮膚裝不起來時，把垂直內距還原成膠囊化之前的值。
-
-    ⚠️ **膠囊的垂直內距是底板的配套，不是獨立的設計選擇。** `apply_ui_style` 把它們
-    砍到 4／7／1 的前提是「按鈕沒有因此變矮，高度改由底板釘死」——而底板只有
-    `SquircleSkin.install()` 成功時才存在。sv_ttk 載不起來會在更前面就 return（那條
-    路沒動過內距，安全），但**sv_ttk 載得起來、皮膚卻裝不起來**是另一條：資產與
-    Pillow 都沒有、`sprites.json` 壞掉、換了 ttk 版本讓 `element_create`／`layout`
-    丟例外。`SquircleSkin` 的 docstring 把「只有原始碼」與「兩者皆無」列為支援狀態，
-    所以這是會出貨的路，不是假想。
-
-    ⚠️ 不還原的話，內距是砍過的、卻沒有底板補回高度：實測 100% 下五個樣式全部塌成
-    27px（改版前是 39／45／31／30／31），150% 下收合鈕少 28px，而且主要動作鈕、區段
-    標題鈕、次要小鈕的高度階層被抹平成同一個數。那違反這支檔案自己的承諾——「裝不
-    起來就回 None，畫面留在原本的長相」。
-
-    ⚠️ **只還原垂直值，水平維持 `apply_ui_style` 那幾行的數字。** 水平那幾個（尤其
-    `CTA_STYLE` 的 `px(8)`）修的是 sv_ttk 寫死像素、不跟 DPI 走的老問題，與膠囊
-    無關，還原回去等於把另一個 bug 放回來。
-    """
-    for style, pad in ((RUN_STYLE, (px(20), px(7))),
-                       (ADV_STYLE, (px(SP_SM), px(SP_MD - 2))),
-                       ("Small.TButton", (px(10), px(3))),
-                       (SUBTLE_STYLE, (px(10), px(3))),
-                       # 這兩個膠囊化之前都沒明寫內距、吃 sv_ttk 的 `8 2 8 3`
-                       (CTA_STYLE, (px(8), px(3))),
-                       ("TButton", (px(8), px(3)))):
-        st.configure(style, padding=pad)
 
 # 轉檔結束代碼裡的這一個代表「檔案有了，但至少一頁降級」（cli.py 的
 # PARTIAL_RC）。⚠️ 手抄過來的常數，tests/test_docs.py 釘著兩邊一致 ——

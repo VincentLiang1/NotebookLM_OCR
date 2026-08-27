@@ -324,21 +324,18 @@ def build_variant(theme: str, scale: float) -> tuple[dict, dict]:
         三種情況實測過（2026-08-27，見檔頭第 5 點）：圖比元件矮 → 垂直**重複貼**，
         底部長出第二段；圖比元件高 → **裁切**，下緣被削平；相等 → 完美膠囊。
 
-        ⚠️ 所以元件的 `height` 要給圖高、把元件**釘死**在這個高度（進度條一直是
-        這樣做的），而那一類按鈕自己的內容（字 + 樣式的垂直 padding）**必須矮於
-        圖高**，否則元件被內容撐過頭、變成上面那個「裁切」的情況。GUI 那幾行
-        `st.configure(..., padding=(水平, 垂直))` 因此要留餘裕，見 SQ_H_* 那段。
+        ⚠️ 所以元件的 `height` 要給圖高（進度條一直是這樣做的）。⚠️ **`height` 是
+        「地板」不是「釘死」**：實際高度 ＝ max(內容需求, `height`)，兩個方向都要守——
+        內容撐過圖高就變成上面那個「裁切」（所以那一類按鈕的字 + 樣式垂直 padding
+        必須矮於圖高，GUI 那幾行 `st.configure(..., padding=…)` 要留餘裕，見
+        `SQ_H_*` 那段）；版面把它拉高過圖高就變成上面那個「重複貼」（`sticky` 帶著
+        `n`／`s`，所以放進 `weight>0` 的 grid 列或 `pack(fill="y")` 都會拉高它——
+        目前每一處都挑對了，但那是**逐處挑對的結果、不是機制保證**，加新控制項時
+        要自己確認，清單在 GUI 的版面那一段）。
 
         ⚠️ `border` 取 `ceil(H/2)` 不是 `H/2`：H 是奇數時半圓會多佔半欄，border
         少一欄的話中段第一欄不是純色，水平重複貼就會透出一條細紋。
 
-        ⚠️ **`sticky` 帶著 `n` 與 `s`，所以版面那一側也要守。** 元件的 `height`
-        只是**最小**尺寸，不是釘死；一旦有人把這幾個控制項放進 `weight>0` 的 grid
-        列（`sticky` 含 `ns`）或 `pack(fill="y")`，Tk 就會把整張底板**垂直重複貼**，
-        底下長出第二段膠囊。目前每一處都是安全的（`run_btn` 用 `sticky="w"`、輸入框
-        與那幾顆鈕用 `"ew"`、`log_toggle` 是 `pack(fill="x")`，唯一 `weight=1` 的那
-        一列放的是走 `block()` 的日誌槽）——但那是**逐處挑對的結果，不是機制保證**，
-        加新控制項時要自己確認。
         """
         h = px(h_logical, scale)
         br = (h + 1) // 2
@@ -529,21 +526,18 @@ def pack(imgs: dict[str, Image.Image]) -> tuple[Image.Image, dict]:
     區域沒有任何差別）。⚠️ **不要改成「把重複的 key 從 `states` 拿掉」**：狀態表要
     完整列出來，ttk 才知道每個狀態該用哪張圖。
     """
-    order = sorted(imgs)
     sheet_w = max(im.width for im in imgs.values())
-    rects, rows, seen, y = {}, [], {}, 0
-    for k in order:
+    rects, top, y = {}, {}, 0
+    for k in sorted(imgs):
         im = imgs[k]
         sig = (im.width, im.height, im.tobytes())
-        if sig in seen:
-            rects[k] = list(seen[sig])
-            continue
-        rects[k] = seen[sig] = [0, y, im.width, im.height]
-        rows.append((im, y))
-        y += im.height
+        if sig not in top:
+            top[sig] = y
+            y += im.height
+        rects[k] = [0, top[sig], im.width, im.height]
     sheet = Image.new("RGBA", (sheet_w, y), (0, 0, 0, 0))
-    for im, top in rows:
-        sheet.paste(im, (0, top))
+    for k, (_x, t, _w, _h) in rects.items():
+        sheet.paste(imgs[k], (0, t))
     return sheet, rects
 
 
