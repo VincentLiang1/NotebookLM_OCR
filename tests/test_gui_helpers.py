@@ -133,9 +133,9 @@ def test_the_shipped_skin_matches_what_the_generator_draws_today():
 # ---------------------------------------------------------------------------
 # 膠囊：底板圖高就是元件高度
 # ---------------------------------------------------------------------------
-# 底下三支釘的是 2026-08-27 膠囊化引進的那條規則：垂直方向不切九宮格，所以**圖高
-# 必須等於元件高度**——矮了整張底板垂直重複貼，高了下緣被裁掉、膠囊的下半個圓當場
-# 被削平。⚠️ 兩種都**不當掉、不報錯、不丟例外**，`reqheight` 也看不出來（它已經是
+# 底下兩支釘的是 2026-08-27 膠囊化引進的那條規則：垂直方向不切九宮格，所以**圖高
+# 必須等於元件高度**（不等的兩種壞法見 `tools/make_skin.py` 的 `pill()`，那裡是
+# 正本）。⚠️ 兩種都**不當掉、不報錯、不丟例外**，`reqheight` 也看不出來（它已經是
 # max(內容需求, height)），在這之前唯一的守門員是人工重跑 `docs/dev/windows-環境與
 # 入口.md` §5.11 那兩項。
 #
@@ -146,20 +146,38 @@ def test_the_shipped_skin_matches_what_the_generator_draws_today():
 # ⚠️ **量法照 §5.11**：`tk scaling` 是 dpi/72、`App.ui_scale` 是 dpi/96，兩個分母不
 # 一樣，混用會量到另一個縮放檔的數字（第一次量就踩到過）。
 
-_PILL_WIDGETS = (
-    # (樣式, tools/make_skin.py 裡的高度常數)
-    (G.RUN_STYLE, "SQ_H_RUN"),
-    (G.STOP_STYLE, "SQ_H_RUN"),
-    (G.ADV_STYLE, "SQ_H_ADV"),
-    (G.SUBTLE_STYLE, "SQ_H_SUB"),
-    (G.CTA_STYLE, "SQ_H"),
-    ("Small.TButton", "SQ_H"),
-    ("TButton", "SQ_H"),
-)
+def _pill_styles() -> dict:
+    """{樣式: 底板元件名}——**從 `SKIN_SWAPS` 推導，不另外手抄一份**。
+
+    那張表本來就記著「誰的背景換成哪張底板」，抄第二份的下場是加了新控制項只改一
+    邊：測試看不到的那顆就是會被裁掉的那顆。⚠️ 只留**膠囊**（垂直 `border` 為 0
+    的），卡片／日誌槽／核取方塊走四角九宮格、不受這條規則管。
+
+    ⚠️ 兩個例外，都要手寫：`Small.TButton` 沿用 `TButton` 的 layout、不在表裡（畫面
+    上「變更…／開啟簡報／開啟資料夾」三顆走的就是它）；進度條雖然也是膠囊，但它的
+    高度是 GUI 直接拿 `Sq.trough` 的 `height` 去設 `thickness` 的，量法不同、也漂不掉。
+    """
+    var = _skin_meta()["variants"][f"{G.preferred_theme_mode()}@1"]
+    out = {}
+    for style, _src, table in G.SKIN_SWAPS:
+        if style == "Horizontal.TProgressbar":      # 見 docstring
+            continue
+        for elem in table.values():
+            e = var["elements"].get(elem)
+            b = e and e["border"]
+            if isinstance(b, list) and not b[1] and not b[3]:
+                out[style] = elem
+    out["Small.TButton"] = out["TButton"]           # 見 docstring
+    return out
 
 
 def _measure_pills(scale: float, pin_height: bool = True) -> dict:
     """回傳 {樣式: (量到的高度, 底板圖高)}。開不了 Tk 或裝不上皮膚就 skip。
+
+    ⚠️ 底板圖高是從**載入的元件定義**讀的（`elem["height"]`），不是拿
+    `make_skin.SQ_H_*` 重算一次——重算等於把產生器的算式在測試裡抄第二份。
+    「元件定義的 `height` 真的等於圖片高度」由
+    `test_pill_plates_are_sliced_horizontally_only` 另外釘著。
 
     ⚠️ `pin_height=False` 會把每個元件的 `height` 覆寫成 1，量到的於是是**純內容
     需求**（§5.11 驗收 6 的量法）。少了這一步就看不到安全邊界：`reqheight` 平常是
@@ -168,7 +186,8 @@ def _measure_pills(scale: float, pin_height: bool = True) -> dict:
     import tkinter as tk
     from tkinter import ttk
 
-    make_skin = G.import_make_skin()
+    styles = _pill_styles()
+    var = _skin_meta()["variants"][f"{G.preferred_theme_mode()}@{scale:g}"]
     try:
         root = tk.Tk()
     except tk.TclError as exc:                    # 沒有顯示裝置
@@ -193,55 +212,49 @@ def _measure_pills(scale: float, pin_height: bool = True) -> dict:
             pytest.skip("這台機器裝不上 squircle 皮膚（多半是沒有 sv_ttk）")
         frame = ttk.Frame(root)
         out = {}
-        for style, const in _PILL_WIDGETS:
-            btn = ttk.Button(frame, text="開始轉檔 Ag", style=style)
+        for style, elem in styles.items():
+            make = ttk.Entry if style == "TEntry" else ttk.Button
+            kw = {} if make is ttk.Entry else {"text": "開始轉檔 Ag"}
+            w = make(frame, style=style, **kw)
             root.update_idletasks()
-            out[style] = (btn.winfo_reqheight(),
-                          make_skin.px(getattr(make_skin, const), scale))
-            btn.destroy()
-        # 輸入框走 `Sq.field`，與一般按鈕同一張 `pill(SQ_H)` 底板
-        entry = ttk.Entry(frame)
-        root.update_idletasks()
-        out["TEntry"] = (entry.winfo_reqheight(),
-                         make_skin.px(make_skin.SQ_H, scale))
+            out[style] = (w.winfo_reqheight(), var["elements"][elem]["height"])
+            w.destroy()
         return out
     finally:
         G.SquircleSkin._from_assets = orig
         root.destroy()
 
 
-def test_every_pill_widget_is_exactly_as_tall_as_its_plate():
-    """§5.11 驗收 5：元件高度 ＝ 底板圖高，八種控制項 × 五個縮放檔逐格比。"""
-    bad = []
-    for scale in G.import_make_skin().SCALES:
-        for style, (got, plate) in _measure_pills(scale).items():
-            if got != plate:
-                how = "下緣被裁掉" if got > plate else "底板垂直重複貼"
-                bad.append(f"{style} @{scale:g}x：元件 {got} vs 底板 {plate}"
-                           f"（{how}）")
-    assert not bad, (
-        "膠囊的圖高必須等於元件高度（tools/make_skin.py 的 `pill()`）：\n  "
-        + "\n  ".join(bad))
+def test_every_pill_widget_fits_its_plate_exactly():
+    """§5.11 驗收 5 ＋ 6，一支到底：高度要**剛好等於**底板圖高，而且純內容需求要
+    **矮於**它（貼齊、餘裕 0 就算不過）。
 
-
-def test_every_pill_widget_keeps_a_margin_under_its_plate():
-    """§5.11 驗收 6：純內容需求要**矮於**底板圖高，貼齊（餘裕 0）就算不過。
+    ⚠️ 兩件事要一起驗，少一件都看不到問題：只驗高度的話，`reqheight` 是
+    max(內容, height)，內容就算只差 1px 就要爆也照樣相等；只驗餘裕的話，看不到
+    版面把元件**拉高**過底板的那半邊（`sticky` 帶著 `n`／`s`）。
 
     ⚠️ 餘裕 0 不是「剛好」而是「已經沒有退路」：`ui_font_family()` 在沒裝
     Microsoft JhengHei (UI) 的機器上會退到 Segoe UI，字型度量一換就直接超出。
     2026-08-27 `Sq.field` 就是這樣——`SQ_PAD_FIELD` 留著一個理由已經失效的 +1px，
     五檔餘裕 0/1/1/2/2，而 Segoe UI 在 150% 下要 47、底板只有 45。
     """
-    tight = []
+    bad, tight = [], []
     for scale in G.import_make_skin().SCALES:
+        for style, (got, plate) in _measure_pills(scale).items():
+            if got != plate:
+                how = "下緣被裁掉" if got > plate else "底板垂直重複貼"
+                bad.append(f"{style} @{scale:g}x：元件 {got} vs 底板 {plate}（{how}）")
         for style, (need, plate) in _measure_pills(
                 scale, pin_height=False).items():
             if need >= plate:
                 tight.append(f"{style} @{scale:g}x：內容 {need} vs 底板 {plate}"
                              f"（餘裕 {plate - need}）")
+    assert not bad, (
+        "膠囊的圖高必須等於元件高度（tools/make_skin.py 的 `pill()`）：\n  "
+        + "\n  ".join(bad))
     assert not tight, (
         "這些控制項的內容撐到底板高度了，換個字型或字級就會把下半個圓削平——"
-        "調樣式的垂直 padding 或 SQ_H_*：\n  " + "\n  ".join(tight))
+        "調 `PILL_PADDING` 的垂直欄或 `SQ_H_*`：\n  " + "\n  ".join(tight))
 
 
 def test_pill_plates_are_sliced_horizontally_only():

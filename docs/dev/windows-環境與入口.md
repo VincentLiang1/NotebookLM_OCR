@@ -758,11 +758,17 @@ b.winfo_reqheight()
 
 ### 驗收
 
-除了 §5.10 那四項（照跑）之外，這一版有兩項專屬的。⚠️ **2026-08-27 晚起這兩項是 pytest，不再是人工步驟**——原本這裡寫「它們是這條規則僅有的守門員（`tests/` 那一套是純文字的，開不了 Tk）」，**那句話是錯的**：`tk.Tk()` 在 pytest 裡建得起來，`withdraw()` 之後畫面上不會有視窗閃出來，五個縮放檔全跑 2 秒上下（開不了 Tk 的機器 skip 而不是紅）。三支都在 `tests/test_gui_helpers.py`：
+除了 §5.10 那四項（照跑）之外，這一版有兩項專屬的。⚠️ **2026-08-27 晚起這兩項是 pytest，不再是人工步驟**——原本這裡寫「它們是這條規則僅有的守門員（`tests/` 那一套是純文字的，開不了 Tk）」，**那句話是錯的**：`tk.Tk()` 在 pytest 裡建得起來，`withdraw()` 之後畫面上不會有視窗閃出來，五個縮放檔全跑 2 秒上下（開不了 Tk 的機器 skip 而不是紅）。兩支都在 `tests/test_gui_helpers.py`（原本是三支，2026-08-27 晚把「高度相等」與「餘裕」併成一支——只驗其中一件都看不到問題，分開放只是讓人以為可以只跑一支）：
 
-5. **元件高度 ＝ 底板圖高**，底板 × 五個縮放檔逐格比。全部相等才算過——不等就是上面那張表的「重複貼」或「裁切」，而兩種都不報錯。→ `test_every_pill_widget_is_exactly_as_tall_as_its_plate`
-6. **安全邊界**：把同一張皮的 element `height` 改成 1、量出**純內容需求**，跟圖高相減。⚠️ 只跑第 5 項看不到這個數字——`reqheight` 已經是 `max(內容, height)`，內容就算只差 1px 就要爆，第 5 項照樣是綠的。→ `test_every_pill_widget_keeps_a_margin_under_its_plate`（判準是**餘裕不得為 0**）
-7. **底板幾何**（新增）：垂直 `border` 要是 0、`height` 要等於圖高、水平 `border` 不得小於 `ceil(圖高/2)`（少一欄中段第一欄就不是純色）、左＋右要小於圖寬（不然 ttk 卡死）。這一支不開 Tk，所以永遠跑得到。→ `test_pill_plates_are_sliced_horizontally_only`
+5. **元件高度 ＝ 底板圖高**，且**純內容需求要矮於它**（餘裕 0 就算不過）——底板 × 五個縮放檔逐格比。→ `test_every_pill_widget_fits_its_plate_exactly`
+
+   ⚠️ **兩件事寫在同一支裡，因為少驗一件就看不到問題**：只比高度的話，`reqheight` 是 `max(內容, height)`，內容就算只差 1px 就要爆也照樣相等；只比餘裕的話，看不到版面把元件**拉高**過底板的那半邊（`sticky` 帶著 `n`／`s`）。量餘裕的方法是把 element 的 `height` 覆寫成 1、量出純內容需求再跟圖高相減。
+
+   ⚠️ **要量的樣式是從 `SKIN_SWAPS` 推導的**（`_pill_styles()`），不另外手抄一份——那張表本來就記著誰換成哪張底板，抄第二份的下場是加了新控制項只改一邊，而測試看不到的那顆就是會被裁掉的那顆。只留垂直 `border` 為 0 的（膠囊）；兩個例外要手寫：`Small.TButton` 沿用 `TButton` 的 layout、不在表裡，進度條的高度是 GUI 拿 `Sq.trough` 的 `height` 去設 `thickness` 的、量法不同。
+
+6. **底板幾何**：垂直 `border` 要是 0、`height` 要等於圖高、水平 `border` 不得小於 `ceil(圖高/2)`（少一欄中段第一欄就不是純色）、左＋右要小於圖寬（不然 ttk 卡死）。這一支不開 Tk，所以永遠跑得到。→ `test_pill_plates_are_sliced_horizontally_only`
+
+   ⚠️ **第 5 項的「底板圖高」是從載入的元件定義讀的**（`elem["height"]`），不是拿 `SQ_H_*` 重算——重算等於把產生器的算式在測試裡抄第二份。「元件定義的 `height` 真的等於圖片高度」由第 6 項釘著，兩支串起來才是「元件高度 ＝ 圖片高度」。故障注入驗過：把垂直內距灌大 → 第 5 項紅；把 `sprites.json` 的 `height` 改掉 → 第 6 項紅。
 
 **動任何一個 `SQ_H_*`、任何一個按鈕樣式的垂直 `padding` 或字級之前，`uv run pytest` 就會告訴你破了沒有。**
 
