@@ -548,6 +548,11 @@ SKIN_DIR = PROJECT_DIR / "assets" / "skin"
 # 資產的縮放檔與這台機器的實際縮放要**幾乎相等**才用得上（見 `_from_assets`）。
 SKIN_SCALE_TOL = 0.01
 
+# `sprites.json` 的 schema 版本，要與 `tools/make_skin.py` 的 `SCHEMA_VERSION` 同號
+# （`tests/test_gui_helpers.py` 兩邊對釘）。⚠️ **不從 make_skin import**：資產這條路
+# 的重點就是不必有 Pillow，為了一個整數把相依拉進來等於把這條路廢掉。
+SKIN_SCHEMA = 2
+
 # 把 sv_ttk layout 裡的背景元件換成我們的。第二欄是**要從哪個樣式抄 layout**
 # ——主要動作鈕的兩張皮都是從 `Accent.TButton` 複製出來的（`Run.…` 與 `Stop.…`
 # 各要一份自己的 layout 才分得開，字級與內距則靠樣式名的後綴繼承）；兩種低調鈕
@@ -670,6 +675,12 @@ class SquircleSkin:
         """讀 `assets/skin/`。⚠️ 任何一步不對就回 None 交給當場畫，不要丟例外。"""
         try:
             meta = json.loads((SKIN_DIR / "sprites.json").read_text("utf-8"))
+            # ⚠️ **schema 對不上就當作沒有資產**：舊 `sprites.json` 的每個 key 都還
+            # 在，不擋的話會**成功**載入、`source` 還報 `assets`，把不相容的元件定義
+            # 裝上去（膠囊化把 `border` 從 int 改成四元組就是這種變更）。使用者換電腦
+            # 是複製專案資料夾，只覆蓋 `.py` 而留著舊資產完全做得到。
+            if meta.get("version") != SKIN_SCHEMA:
+                return None
             # 資產是固定像素、顯示縮放不是，挑最接近的那一檔。
             # ⚠️ **只有「幾乎精確」才收**（2026-08-27 晚補）：膠囊化之後底板的高度就是
             # 元件的高度，而樣式內距與點數字型走的是**真實 DPI**——貼齊到隔壁那一檔

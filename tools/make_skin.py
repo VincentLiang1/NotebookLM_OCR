@@ -105,6 +105,18 @@ from pdf2ppt.palette import PALETTES as SKINS   # noqa: E402
 # 顯示縮放。⚠️ 這五個值要對上 Windows 顯示設定裡的那五檔。
 SCALES = (1.0, 1.25, 1.5, 1.75, 2.0)
 
+# `sprites.json` 的 schema 版本。⚠️ **element 的欄位形狀一改就要跳號**，GUI 那邊的
+# `SKIN_SCHEMA` 要同號（`tests/test_gui_helpers.py` 兩邊對釘）。
+#
+# ⚠️ **理由是「舊資產配新程式」是可達的**：使用者換電腦的方式是複製專案資料夾，只
+# 覆蓋 `.py` 而留著舊的 `assets/skin/` 完全做得到。舊檔的每一個 key 都還在，
+# `_from_assets` 於是會**成功**回傳、`source` 還報 `assets`，把不相容的元件定義裝上
+# 去——沒有例外、沒有 log，而那支資產一致性測試只比「資產＝現在的產生器」，看不到
+# 別人機器上的舊資產。
+#
+# 2 = 2026-08-27 膠囊化：`border` 從 int 變成 `[左, 上, 右, 下]` 四元組。
+SCHEMA_VERSION = 2
+
 SQ_N = 2.0            # 角落的曲線指數：**2.0 就是正圓弧**（見檔頭）
 SQ_SS = 4             # 遮罩超取樣倍率（畫 4× 再縮回來，這就是抗鋸齒）
 SQ_STEPS = 24         # 每個角取樣幾個點（再多肉眼看不出來，只是變慢）
@@ -511,7 +523,7 @@ def pack(imgs: dict[str, Image.Image]) -> tuple[Image.Image, dict]:
 
 def main() -> int:
     OUT.mkdir(parents=True, exist_ok=True)
-    meta = {"version": 1, "scales": list(SCALES), "variants": {}}
+    meta = {"version": SCHEMA_VERSION, "scales": list(SCALES), "variants": {}}
     for theme in ("light", "dark"):
         for scale in SCALES:
             imgs, elems = build_variant(theme, scale)

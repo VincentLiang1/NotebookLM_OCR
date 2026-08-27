@@ -83,6 +83,15 @@ def test_every_skin_plate_declares_what_it_sits_on():
     assert not missing, "這些元件沒說自己坐在什麼顏色上：\n  " + "\n  ".join(missing)
 
 
+def _as_lists(obj):
+    """把 tuple 一律換成 list，好跟 JSON 讀回來的東西直接比。"""
+    if isinstance(obj, dict):
+        return {k: _as_lists(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_as_lists(v) for v in obj]
+    return obj
+
+
 def test_the_shipped_skin_matches_what_the_generator_draws_today():
     """`assets/skin/` 必須是**現在這份** `tools/make_skin.py` 的產物。
 
@@ -99,6 +108,17 @@ def test_the_shipped_skin_matches_what_the_generator_draws_today():
 
     meta = _skin_meta()
     stale = []
+    # ⚠️ **`scales` 與 `version` 也要比。** 前者是 `_from_assets` 拿來挑縮放檔的
+    # 那份清單（與 `SCALES` 漂開的話，GUI 找的檔跟產生器出的檔就不是同一組）；後者是
+    # 「舊資產配新程式」的唯一擋板，兩邊同號才擋得住。
+    if meta["scales"] != list(make_skin.SCALES):
+        stale.append(f"scales 清單變了：{meta['scales']} vs {list(make_skin.SCALES)}")
+    if meta["version"] != make_skin.SCHEMA_VERSION:
+        stale.append(f"version {meta['version']} != make_skin.SCHEMA_VERSION "
+                     f"{make_skin.SCHEMA_VERSION}，請重跑產生器")
+    if G.SKIN_SCHEMA != make_skin.SCHEMA_VERSION:
+        stale.append(f"GUI 的 SKIN_SCHEMA {G.SKIN_SCHEMA} != "
+                     f"make_skin.SCHEMA_VERSION {make_skin.SCHEMA_VERSION}")
     for theme in ("light", "dark"):
         for scale in make_skin.SCALES:
             var = meta["variants"][f"{theme}@{scale:g}"]
@@ -110,10 +130,13 @@ def test_the_shipped_skin_matches_what_the_generator_draws_today():
             shipped = Image.open(G.SKIN_DIR / var["file"]).convert("RGBA")
             if shipped.tobytes() != sheet.tobytes():
                 stale.append(f"{theme}@{scale:g}：{var['file']} 的像素變了")
-            if {n: {k: v for k, v in e.items() if k != "states"}
-                    for n, e in elems.items()} != \
-               {n: {k: v for k, v in e.items() if k != "states"}
-                    for n, e in var["elements"].items()}:
+            # ⚠️ **`states` 一起比**（2026-08-27 補）：這裡原本把 `states` 從兩邊
+            # 都剔掉，於是 state→sprite 的對應——包含 `pressed` 與 `active` 同時成立
+            # 時誰排前面——完全沒有人驗。手改 `sprites.json` 那一段，像素、rects、
+            # border、width、height、padding、on 全都還相符，測試照樣綠，而有資產與
+            # 只有原始碼的兩台機器會顯示不同的 hover/pressed/disabled，正是這支測試
+            # 存在要擋的分歧。⚠️ 產生器用 tuple、JSON 只有 list，先正規化再比。
+            if _as_lists(elems) != _as_lists(var["elements"]):
                 stale.append(f"{theme}@{scale:g}：元件定義變了")
     assert not stale, ("assets/skin/ 不是現在這份 make_skin.py 的產物，"
                        "請重跑 `uv run python tools/make_skin.py`：\n  "
