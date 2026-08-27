@@ -38,11 +38,13 @@ argparse 預設值：少一份手抄就少一處會漂移的地方（要調就�
 enable_dpi_awareness 的 docstring 裡，取捨（以及「為什麼不是真的 WinUI 3」）見
 docs/dev/windows-環境與入口.md 5.1。
 
-版面：由上而下是**四張卡片**（檔案／進度與動作／轉檔選項／詳細訊息），後兩張
-預設收起來、由自己頭上那顆整條寬的收合鈕開關。主畫面只留輸入／輸出檔，那五個
-選項全部收在「轉檔選項」區（_toggle_advanced）。主線的終點「開始轉檔」排在檔案區
-正下方、收合按鈕**之上**（使用者 2026-08-25 指示）。⚠️ 收合鈕就是那張卡片自己的
-標題列，展開的內容長在**同一張卡片裡**（使用者 2026-08-26 指示）。
+版面：由上而下是**三張卡片**（轉檔／轉檔選項／詳細訊息），後兩張預設收起來、
+由自己頭上那顆整條寬的收合鈕開關。主畫面只留輸入／輸出檔，那五個選項全部收在
+「轉檔選項」區（_toggle_advanced）。主線的終點「開始轉檔」排在檔案那幾列正下方、
+收合按鈕**之上**（使用者 2026-08-25 指示）。⚠️ 收合鈕就是那張卡片自己的標題列，
+展開的內容長在**同一張卡片裡**（使用者 2026-08-26 指示）。⚠️ 「檔案」與「進度與
+動作」本來是兩張卡片，2026-08-27 併成一張：兩者之間 68px 的空白橫帶切開的是同一
+條主線的兩半（使用者圈了那條帶說「去掉」）。
 
 ⚠️ 卡片是 2026-08-26 加的（使用者「參考 MP4-2-SRT UI 的圓角、卡片、顏色」）：
 底色分三階 page → card → field（唯一真值在 pdf2ppt/palette.py），圓角底板由
@@ -938,8 +940,14 @@ def apply_ui_style(root: tk.Misc,
     # 卡片之間露出來的視窗底。⚠️ 不設就是 sv_ttk 的 #fafafa，而卡片是純白——
     # 兩者只差 5 階，卡片整個融進背景，三階層次的最上面那一階等於沒有
     st.configure("Page.TFrame", background=pal["page"])
-    # ⚠️ **這是沒有皮膚時的後備**（皮膚裝不起來就退回實色的方角矩形）。有皮膚時
-    # 這個值看不到——底板是不透明的，圓角外側已經畫進圖裡了（見 SKIN_FRAMES）。
+    # ⚠️ **這是沒有皮膚時的後備**（退回實色的方角矩形）。有皮膚時這個值看不到
+    # ——底板是不透明的，圓角外側已經畫進圖裡了（見 SKIN_FRAMES）。
+    # ⚠️ **後備只對 `Sunken.TFrame` 真的生效**（2026-08-27 量的）：sv_ttk 自己就有
+    # 一支 `Card.TFrame`，它的 layout 是 `Card.field` 這個**圖片元件**，所以那一支
+    # 的 background 查得到卻永遠畫不出來。皮膚裝不起來時卡片吃的是 sv_ttk 那張圖
+    # （實測 #fafafa），而坐在卡片上的 `CardBody.TFrame`／`Card.TLabel` 吃的是
+    # pal["card"]（#ffffff）——差 5 階，在退路上看得出一條淡淡的色帶。這條退路本
+    # 來就只在「皮膚整個裝不起來」時才走得到，先記著，不要照舊以為它是實色的。
     for style, _elem, own in SKIN_FRAMES:
         st.configure(style, background=pal[own])
     # 卡片**裡面**的文字。⚠️ 同上：`ttk.Label` 是實色底的，坐在白卡上不指定底色
@@ -1483,29 +1491,38 @@ class App(tk.Tk):
         )
         sub.pack(anchor="w", pady=(0, p(CARD_GAP)))
 
-        # ---- 卡片一：檔案 ----
+        # ---- 卡片一：轉檔（檔案 → 動作，同一張卡片）----
         # ⚠️ 三種容器樣式**不要同時出現**：這裡本來是 `LabelFrame`（蝕刻邊框＋
         # 「檔案」標題）、選項區是卡片、收合鈕是扁平長條，同一畫面上三種視覺重量
         # 輪流出現。統一成卡片之後標題也不必了——卡片裡第一行就寫著「輸入 PDF」，
         # 再掛一個「檔案」只是多一行字。
-        files = self.files_frame = ttk.Frame(root, style="Card.TFrame",
-                                             padding=p(CARD_PAD))
-        files.pack(fill="x", **pad)
+        # ⚠️ **「檔案」與「進度與動作」是同一張卡片**（使用者 2026-08-27 圈了兩者
+        # 之間那條空白帶說「去掉」，並問「分成 4 張卡片有點多，上面這兩張可以合併
+        # 嗎」）：兩張卡片之間的縫是 24（下內距）＋20（CARD_GAP）＋24（上內距）＝
+        # **68px 什麼都沒有的橫帶**，而它切開的是同一條主線的兩半——「選好檔」與
+        # 「按下去」。併成一張之後那道縫變成卡片內分群用的 SP_XL(24)，省下 44px，
+        # 版面上的卡片也從四張變三張。⚠️ 併的是**卡片**不是 grid：兩邊的欄位定義
+        # 互相衝突（檔案區第 1 欄是那兩顆小鈕、動作區第 1 欄是要吃滿寬的進度條），
+        # 同一個 grid 裡進度條會被縮成一顆按鈕的寬度。動作區維持自己的 grid，用
+        # 一個 `CardBody.TFrame` 掛在卡片的最後一列。
+        card = self.main_card = ttk.Frame(root, style="Card.TFrame",
+                                          padding=p(CARD_PAD))
+        card.pack(fill="x", **pad)
 
         # ⚠️ 標籤在**上**、輸入框整條寬。舊版是「輸入 PDF：」與輸入框左右對擠在
         # 同一列，於是第 0 欄的寬度由那五個字決定、輸入框被推掉一截，而它正是這
         # 個畫面上唯一必填的東西。
-        ttk.Label(files, text="輸入 PDF", style="CardTitle.Card.TLabel").grid(
+        ttk.Label(card, text="輸入 PDF", style="CardTitle.Card.TLabel").grid(
             row=0, column=0, columnspan=2, sticky="w")
         # 轉檔中要鎖起來的控制項都收進這一份清單（見 _set_inputs_enabled）。
         # ⚠️ 用**明列**、不要走訪 children：那樣會連「輸入 PDF」小標與提示文字
         # 一起變灰，而那兩行正是轉檔中最該讀得清楚的東西
         self._inputs: list[ttk.Widget] = []
-        self.in_entry = ttk.Entry(files, textvariable=self.in_path)
+        self.in_entry = ttk.Entry(card, textvariable=self.in_path)
         self.in_entry.grid(row=1, column=0, sticky="ew", pady=(p(SP_MD), 0))
         # ⚠️ 這一欄的兩顆鈕（瀏覽…／變更…）都要 `sticky="ew"`：同一欄裡一顆
         # `w`、一顆 `w` 時欄寬由較寬的決定，另一顆的右緣就會短一截、看起來沒對齊
-        browse = ttk.Button(files, text="瀏覽…", style=CTA_STYLE,
+        browse = ttk.Button(card, text="瀏覽…", style=CTA_STYLE,
                             command=self._pick_input)
         browse.grid(row=1, column=1, sticky="ew", padx=(p(SP_SM), 0),
                     pady=(p(SP_MD), 0))
@@ -1514,7 +1531,7 @@ class App(tk.Tk):
         # 提示與錯誤共用這一行，而且**一直都在**（只換文字不換有無），填錯路徑
         # 時版面才不會上下跳。⚠️ 路徑不對要在這裡當場說：舊版是照樣讓人按下
         # 「開始轉檔」，按了才跳一個對話框——用擋的比用告知的好
-        self.hint = ttk.Label(files, style="CardHint.Card.TLabel", anchor="w",
+        self.hint = ttk.Label(card, style="CardHint.Card.TLabel", anchor="w",
                               wraplength=p(700), justify="left")
         self.hint.grid(row=2, column=0, columnspan=2, sticky="w",
                        pady=(p(SP_SM), 0))
@@ -1528,22 +1545,22 @@ class App(tk.Tk):
         # 輸入那一列決定，路徑就會被推到離冒號很遠的地方。
         # ⚠️ 與上面隔 SP_XL（不是 SP_MD）：輸入與輸出是卡片裡的**兩件事**，靠這
         # 一道比較寬的縫分群，就不必再畫一條分隔線進來加重量。
-        ttk.Label(files, textvariable=self.out_show,
+        ttk.Label(card, textvariable=self.out_show,
                   style="CardHint.Card.TLabel", anchor="w",
                   wraplength=p(700)).grid(
             row=3, column=0, sticky="ew", pady=(p(SP_XL), 0))
-        change = ttk.Button(files, text="變更…", style="Small.TButton",
+        change = ttk.Button(card, text="變更…", style="Small.TButton",
                             command=self._pick_output)
         change.grid(row=3, column=1, sticky="ew", padx=(p(SP_SM), 0),
                     pady=(p(SP_XL), 0))
         self._inputs.append(change)
-        files.columnconfigure(0, weight=1)
+        card.columnconfigure(0, weight=1)
 
-        # 主畫面到這裡就結束：選項一個都不露出來（日常轉檔一項都不必動）。
-        # 色塊那一項曾經留在這裡做 A/B，量完之後收進了選項區。
+        # 選項一個都不露出來（日常轉檔一項都不必動）。色塊那一項曾經留在這裡
+        # 做 A/B，量完之後收進了選項區。
 
-        # ---- 卡片二：進度與動作 ----
-        # 位置緊接在檔案卡底下、排在轉檔選項的收合按鈕**之前**（使用者
+        # ---- 同一張卡片的下半：進度與動作 ----
+        # 位置緊接在檔案那幾列底下、排在轉檔選項的收合按鈕**之前**（使用者
         # 2026-08-25 指示）：主線是「選檔 → 按下去」，把它排在收合按鈕後面等於
         # 讓主線的終點被一個日常不必碰的東西隔開，展開選項區時還會被推到很下面。
         #
@@ -1551,14 +1568,17 @@ class App(tk.Tk):
         # 「就緒」、版面中段一條 indeterminate 進度條、最下面一大塊日誌，三個東西
         # 講同一件事卻散在 900px 內，而中間那條進度條連「跑到第幾頁」都不說。
         #
-        # ⚠️ 這一區 2026-08-26 從「浮在版面上的裸列」改成**卡片**：卡片化之後
-        # 「浮著」的意思變了——畫面上其他每一塊都是白卡，只有它坐在灰底上，讀起來
-        # 不是「被強調」而是「沒做完」。主要動作靠那顆藍鈕自己就夠亮了。
-        # ⚠️ 動作與結果坐在同一張卡片上也是有意的：按下去與跑完之後要看的東西
-        # 在同一個地方，結果列不必再自己找一條縫擠進版面。
-        actions = self.actions_frame = ttk.Frame(root, style="Card.TFrame",
-                                                 padding=p(CARD_PAD))
-        actions.pack(fill="x", **pad)
+        # ⚠️ 這一區 2026-08-26 從「浮在版面上的裸列」改成**卡片**（浮著的意思在
+        # 卡片化之後變了：畫面上每一塊都是白卡，只有它坐在灰底上，讀起來不是「被
+        # 強調」而是「沒做完」），2026-08-27 再併進檔案那張卡（見卡片一的說明）。
+        # 主要動作靠那顆藍鈕自己就夠亮了，不必再多一圈邊框。
+        # ⚠️ 動作與結果坐在一起也是有意的：按下去與跑完之後要看的東西在同一個
+        # 地方，結果列不必再自己找一條縫擠進版面。
+        # ⚠️ 與上面隔 SP_XL，跟「輸入 ↔ 輸出」那道縫同寬：卡片裡分群一律走這一
+        # 個數字（見 SP_* 的說明），不要為了「動作比較重要」另外湊一個新的間距。
+        actions = ttk.Frame(card, style="CardBody.TFrame")
+        actions.grid(row=4, column=0, columnspan=2, sticky="ew",
+                     pady=(p(SP_XL), 0))
         # 主要動作鈕：畫面上唯一吃滿彩色的東西（Apple 藍，停止時換成深紅）。
         # 字級與內距在 apply_ui_style，圓角底板由 SquircleSkin 畫；沒裝成皮膚
         # 就是佈景自己的 Accent 藍底圓角鈕。
@@ -1617,7 +1637,7 @@ class App(tk.Tk):
         res.columnconfigure(0, weight=1)
         res.grid_remove()
 
-        # ---- 卡片三：轉檔選項（就這五個）----
+        # ---- 卡片二：轉檔選項（就這五個）----
         # ⚠️ **收合鈕就是這張卡片的標題列，展開的內容在同一張卡片裡**（使用者
         # 2026-08-26 指示，附了 meeting-scribe 那張網頁截圖）。舊版是「卡片外一顆
         # 整條寬的鈕 ＋ 底下另外長出一張卡片」，兩者之間還有一道 SP_SM 的縫——讀
@@ -1695,7 +1715,7 @@ class App(tk.Tk):
                     pady=(p(SP_LG) if i == 0 else p(SP_SM), 0))
             self._inputs.append(cb)
 
-        # ---- 卡片四：詳細訊息（預設收起來）----
+        # ---- 卡片三：詳細訊息（預設收起來）----
         # ⚠️ 舊版這一區是**開著**的，而且是唯一 expand=True 的東西：閒置時整個
         # 視窗有 51% 是一個只有兩行字的白盒子（2026-08-25 量的）。收起來之後，
         # 「開始轉檔」會自己把它打開（見 _start）——要看的時候它就在。
@@ -1760,7 +1780,7 @@ class App(tk.Tk):
 
         # 拖放：接得上就把提示換成拖放版（_refresh_input_state 讀這個旗標）
         self.dnd_ok = enable_file_drop(
-            (root, files, self.in_entry), self._on_files_dropped)
+            (root, card, self.in_entry), self._on_files_dropped)
         # 貼上路徑。⚠️ 綁在視窗上，所以輸入欄自己的貼上也會叫到這裡——焦點
         # 在任何輸入類控制項上時要原封不動放行，否則使用者在頁碼欄貼一段文字
         # 會變成「整條路徑被換掉」
