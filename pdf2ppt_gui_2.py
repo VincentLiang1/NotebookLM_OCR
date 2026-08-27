@@ -82,11 +82,13 @@ from __future__ import annotations
 import base64
 import ctypes
 import datetime
+import hashlib
 import io
 import json
 import os
 import queue
 import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -555,6 +557,42 @@ SKIN_SCALE_TOL = 0.01
 # 的重點就是不必有 Pillow，為了一個整數把相依拉進來等於把這條路廢掉。
 SKIN_SCHEMA = 2
 
+# 「當場畫」的結果要快取到哪（使用者 2026-08-27 指示）。⚠️ **不可以寫回專案資料夾**：
+# 那裡可能是唯讀（Program Files、公司政策掛載的網路磁碟），而且使用者換電腦的方式是
+# 複製整個資料夾——把機器專屬的快取一起複製過去只會帶著別台機器的 DPI 走。
+SKIN_CACHE_ENV = "NOTEBOOKLM_PDF2PPT_SKIN_CACHE"
+SKIN_CACHE_NAME = "NotebookLM_Pdf2Ppt"
+
+
+def skin_cache_root() -> Path:
+    """快取的根目錄：`%LOCALAPPDATA%` 底下的 `NotebookLM_Pdf2Ppt/skin`。
+
+    ⚠️ 走 `LOCALAPPDATA` 不是 `APPDATA`：這是**衍生自本機顯示設定**的產物，
+    漫遊設定檔跟著使用者跑到另一台機器上時，那台的 DPI 不一樣、快取一定不適用
+    （指紋擋得住，但那就變成每台機器互相把對方的快取洗掉）。
+    """
+    override = os.environ.get(SKIN_CACHE_ENV)
+    if override:
+        return Path(override)
+    base = os.environ.get("LOCALAPPDATA") or os.environ.get("TEMP") or "."
+    return Path(base) / SKIN_CACHE_NAME / "skin"
+
+
+def skin_cache_key() -> str:
+    """快取的指紋：**畫出來的像素只要可能不一樣，這個字串就要不一樣。**
+
+    影響像素的有三樣：schema 版號、`tools/make_skin.py`（形狀、內距、sprite 佈局）
+    與 `pdf2ppt/palette.py`（顏色）。⚠️ **直接雜湊那兩支的原始碼**，不要自己列一份
+    「有哪些常數會影響輸出」的清單——那份清單一定會漏（`SQ_N`、`SQ_H_*`、`SQ_PAD`、
+    `pill()` 的畫法、`pack()` 的排列…），而漏掉的那一項就是「改了程式、畫面沒變」
+    這種找不到成因的災情。多雜湊一點的代價只是**改過那兩支之後第一次啟動重畫一次**。
+    """
+    h = hashlib.sha256()
+    h.update(str(SKIN_SCHEMA).encode())
+    for rel in ("tools/make_skin.py", "pdf2ppt/palette.py"):
+        h.update((PROJECT_DIR / rel).read_bytes())
+    return h.hexdigest()[:16]
+
 
 def import_make_skin():
     """import `tools/make_skin.py`（產生器與 GUI 不同層，要先把 `tools/` 放進路徑）。
@@ -637,7 +675,12 @@ class SquircleSkin:
 
     # ---- 安裝 ----
     def install(self) -> bool:
-        spec = self._from_assets() or self._drawn()
+        # 三條路，由快到慢：出貨的資產 → 這台機器上畫過並存起來的 → 當場畫。
+        # ⚠️ 順序不可調換：出貨的那份是**逐像素驗過**的（`tests/test_gui_helpers.py`），
+        # 快取只是同一支產生器在這台機器上跑出來的結果。
+        spec = (self._from_assets(SKIN_DIR)
+                or self._from_cache()
+                or self._drawn())
         if spec is None:
             return False
         elems, fg = spec
@@ -689,11 +732,17 @@ class SquircleSkin:
         self._keep.append(ph)
         return ph
 
-    # ---- 來源一：打包好的資產 ----
-    def _from_assets(self):
-        """讀 `assets/skin/`。⚠️ 任何一步不對就回 None 交給當場畫，不要丟例外。"""
+    # ---- 來源一：打包好的資產（快取走同一支）----
+    def _from_assets(self, root: Path):
+        """讀一個**資產目錄**（`assets/skin/` 或使用者家目錄下的快取）。
+
+        ⚠️ 任何一步不對就回 None 交給下一條路，不要丟例外。
+        ⚠️ **快取刻意做成同一種格式、共用這一支讀取器**：兩份格式就是兩份會漂的
+        程式，而漂掉的症狀（元件定義對不上）是靜默的。快取那邊的 `sprites.json`
+        只裝一個 variant、`scales` 只有一格，其餘欄位一模一樣。
+        """
         try:
-            meta = json.loads((SKIN_DIR / "sprites.json").read_text("utf-8"))
+            meta = json.loads((root / "sprites.json").read_text("utf-8"))
             # ⚠️ **schema 對不上就當作沒有資產**：舊 `sprites.json` 的每個 key 都還
             # 在，不擋的話會**成功**載入、`source` 還報 `assets`，把不相容的元件定義
             # 裝上去（膠囊化把 `border` 從 int 改成四元組就是這種變更）。使用者換電腦
@@ -721,7 +770,7 @@ class SquircleSkin:
             # 在中間插 `return` 的人以為自己在處理一個 2.73MB 的不變量）。
             sheet = tk.PhotoImage(
                 master=self.root,
-                data=base64.b64encode((SKIN_DIR / var["file"]).read_bytes()))
+                data=base64.b64encode((root / var["file"]).read_bytes()))
             # ⚠️ **同一塊 rect 只裁一次**：`pack()` 去重之後每個 variant 有三個
             # key 指到同一塊區域（`accent-dis`／`stop-dis`、兩張低調皮的 `rest`／
             # `dis`），逐 key 裁等於多做三次 blit，又把三張一模一樣的 PhotoImage
@@ -744,8 +793,89 @@ class SquircleSkin:
             self.chev = {"right": cut["chev-right"], "down": cut["chev-down"]}
         except Exception:
             return None
-        self.source = "assets"
+        self.source = "assets" if root == SKIN_DIR else "cache"
         return elems, var["fg"]
+
+    # ---- 來源一點五：這台機器上畫過的快取 ----
+    def _cache_entry(self) -> Path:
+        """這一組（指紋 × 亮暗 × 縮放）的快取資料夾。
+
+        ⚠️ **一組一個資料夾、各自帶一份 `sprites.json`**，不是共用一份總表：
+        共用的話每加一種縮放都要 read-modify-write 那份總表，而兩個視窗同時開起來
+        （或轉檔中又開一個）就會互相蓋掉——那正是這一輪在講的那種災情。
+        ⚠️ 縮放用 `.3f` 而不是 `%g`：`winfo_fpixels` 回的是浮點數（見
+        `SKIN_SCALE_TOL`），檔名要能穩定重現同一個字串。
+        """
+        return (skin_cache_root() / skin_cache_key()
+                / f"{self.mode}@{self.scale:.3f}")
+
+    def _from_cache(self):
+        """讀快取。⚠️ 讀不到、壞了、指紋不對都只是回 None，一路交給當場畫。"""
+        try:
+            entry = self._cache_entry()
+        except Exception:
+            return None            # 連指紋都算不出來（tools/ 不在）：當作沒有快取
+        return self._from_assets(entry) if entry.is_dir() else None
+
+    def _save_cache(self, make_skin, imgs, elems) -> None:
+        """把剛畫好的那一組存成一個**與出貨資產同格式**的快取資料夾。
+
+        ⚠️ **整支包在自己的 try 裡、失敗完全不作聲**：快取是純加速，家目錄唯讀、
+        磁碟滿、防毒擋寫入都不該讓畫面掉皮膚——這一支的呼叫端已經拿到圖了。
+
+        ⚠️ **`sprites.json` 最後寫、而且要原子換上**：讀取器是以它為入口的，先寫
+        它就會出現「總表指到一張還沒寫完的 PNG」那個窗口。⚠️ 同理 PNG 也走
+        `os.replace`，不要就地開檔寫——半截的 PNG 會被下一次啟動讀進來（`_from_assets`
+        雖然接得住，但那是把一次可以避免的失敗留給例外處理）。
+        """
+        try:
+            entry = self._cache_entry()
+            entry.mkdir(parents=True, exist_ok=True)
+            sheet, rects = make_skin.pack(imgs)
+            name = f"skin-{self.mode}@{self.scale:.3f}x.png"
+            # ⚠️ 暫存檔名要帶 pid：兩個視窗同時開起來、又剛好是同一個縮放時，
+            # 共用一個 `.part` 會讓 A 把 B 寫到一半的內容 `replace` 成正本（讀取器
+            # 接得住——壞掉的 JSON 回 None 交給當場畫——但那是本來就避得掉的一次
+            # 浪費）。同一個理由寫在執行紀錄的檔名上（見 `open_run_log`）。
+            tmp = entry / f"{name}.{os.getpid()}.part"
+            # ⚠️ `format="PNG"` 不可省：暫存檔的副檔名是 `.part`，Pillow 認不出來
+            # 就丟 `ValueError`——而這一支的例外是**整支吞掉**的，症狀會是「快取永遠
+            # 是空的、每次啟動照樣重畫」，沒有任何訊息（2026-08-27 第一版就是這樣）。
+            sheet.save(tmp, format="PNG", optimize=True)
+            os.replace(tmp, entry / name)
+            meta = {
+                "version": SKIN_SCHEMA,
+                # ⚠️ 只有一格：讀取器照 `SKIN_SCALE_TOL` 比對，對不上就回 None，
+                # 所以快取不必也不該假裝自己蓋得住別的縮放
+                "scales": [self.scale],
+                "variants": {f"{self.mode}@{self.scale:g}": {
+                    "file": name,
+                    "fg": {"on_accent": make_skin.SKINS[self.mode]["on_accent"],
+                           "run_off": make_skin.SKINS[self.mode]["run_off_fg"]},
+                    "sprites": rects,
+                    "elements": elems,
+                }},
+            }
+            tmp = entry / f"sprites.json.{os.getpid()}.part"
+            tmp.write_text(json.dumps(meta, ensure_ascii=False, sort_keys=True),
+                           encoding="utf-8")
+            os.replace(tmp, entry / "sprites.json")
+            self._prune_cache()
+        except Exception:
+            pass
+
+    def _prune_cache(self) -> None:
+        """把**別的指紋**那幾個資料夾整個刪掉。
+
+        ⚠️ 這是快取有沒有上限的唯一一道門：指紋跟著 `make_skin.py`／`palette.py`
+        走，改一次就換一個目錄名，不清的話每次改皮膚都在使用者的家目錄裡多留一份
+        再也不會被讀到的舊圖。同一個指紋底下的那幾組（亮/暗 × 這台機器的縮放）是
+        有界的，留著。
+        """
+        keep = skin_cache_key()
+        for d in skin_cache_root().iterdir():
+            if d.is_dir() and d.name != keep:
+                shutil.rmtree(d, ignore_errors=True)
 
     # ---- 來源二：當場畫 ----
     def _drawn(self):
@@ -753,10 +883,15 @@ class SquircleSkin:
 
         ⚠️ 這裡用的是**實際的**縮放倍率，不必貼齊資產那五檔——當場畫本來就沒有
         「只有幾種尺寸」的限制。
+
+        ⚠️ 畫完**順手存進快取**（使用者 2026-08-27 指示「以後遇到，產生一次，第一次
+        慢一點沒關係」）：實測 300% 下這一趟要 105ms，而讀資產只要 20ms。存的時機在
+        轉成 `PhotoImage` **之前**——那時手上還是 PIL 影像，正好是 `pack()` 吃的東西。
         """
         try:
             make_skin = import_make_skin()
             imgs, elems = make_skin.build_variant(self.mode, self.scale)
+            self._save_cache(make_skin, imgs, elems)
             cut = {}
             for key, im in imgs.items():
                 buf = io.BytesIO()

@@ -197,8 +197,11 @@ def _measure_pills(scale: float, pin_height: bool = True) -> dict:
         root.withdraw()
         root.tk.call("tk", "scaling", scale * 96.0 / 72.0)
         if not pin_height:
-            def unpinned(self):
-                spec = orig(self)
+            # ⚠️ 簽章要跟著 `_from_assets(self, root)` 走（2026-08-27 加了磁碟快取
+            # 之後那一支收一個目錄參數）——少一個參數的話這裡會 TypeError，而
+            # `install()` 把它接住當成「沒有資產」，測試就變成在量沒有皮膚的畫面
+            def unpinned(self, root):
+                spec = orig(self, root)
                 if spec is None:
                     return None
                 elems, fg = spec
