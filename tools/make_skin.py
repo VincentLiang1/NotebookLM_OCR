@@ -137,9 +137,12 @@ SQ_STEPS = 24         # 每個角取樣幾個點（再多肉眼看不出來，�
 # ⚠️ **配套：那一類樣式的垂直 padding 必須讓內容矮於這裡的高度。** 元件高度取
 # 「內容需求」與 `height` 的較大者，內容一旦撐過頭就變成「圖比元件矮」那個壞法。
 # GUI 那幾行 `st.configure(..., padding=(水平, 垂直))` 因此跟著這裡一起調過，
-# 逐檔驗算的餘裕是 **2~12 實體像素**，最小的是 100% 下的輸入框（量法與表格見
+# 逐檔驗算的餘裕是 **10~27 實體像素**，最小的是 100% 下的輸入框（量法與表格見
 # `docs/dev/windows-環境與入口.md` §5.11）。⚠️ 這個數字一度寫成「5~11」而且**兩端
 # 都不對**：漏量了輸入框與基底 `TButton`（當時兩格都是 0，見 `SQ_PAD_FIELD`）。
+# ⚠️ 餘裕從 2~12 變成 10~27，是 2026-08-27 晚把**元件自己的 `padding` 也改成只給
+# 左右**換來的（見 `hpad()`）——`border` 的上下早就是 0，`padding` 卻還是純量，
+# 而那一份垂直內距在高度被釘死的膠囊上換不到任何東西。改完畫面**逐像素相同**。
 # ⚠️ **現在不必再靠人工重跑**：`tests/test_gui_helpers.py` 的三支膠囊測試把「元件
 # 高度＝圖高」「餘裕不得為 0」「底板幾何」釘住了，`uv run pytest` 就會說話。
 #
@@ -341,6 +344,23 @@ def build_variant(theme: str, scale: float) -> tuple[dict, dict]:
         br = (h + 1) // 2
         return 2 * br + mid, h, h / 2.0, br
 
+    def hpad(n: int) -> list[int]:
+        """膠囊的內距：**只給左右，上下給 0**。
+
+        ⚠️ **這是 `pill()` 那條「垂直方向什麼都不要切」的最後一塊。** `border` 的
+        上下早就是 0 了，`padding` 卻一直是個純量（四邊都套）——而膠囊的高度被
+        `height` 釘住、標籤在裡面置中，所以**垂直那一份內距換不到任何東西**：它不
+        會移動文字（上下對稱，扣掉之後還是置中），只會把「內容需求」灌高 2n、把
+        餘裕吃掉，而餘裕是這條規則唯一的安全邊界。
+
+        ⚠️ 水平那一份**必須留著**：寬度是內容決定的，那正是 `SQ_PAD` 存在的理由
+        （補回 sv_ttk 圖片自帶的內距，見那一段）。
+
+        ⚠️ 卡片／日誌槽／核取方塊**不套這支**——它們的高度是內容撐出來的，垂直
+        內距在那裡是真的有作用。
+        """
+        return [px(n, scale), 0, px(n, scale), 0]
+
     def block(r: int) -> tuple[int, int]:
         """兩個方向都留中段。給**會被撐得又寬又高**的東西用（卡片、日誌槽）。
 
@@ -364,7 +384,7 @@ def build_variant(theme: str, scale: float) -> tuple[dict, dict]:
         states=[["", "button-rest"], ["disabled", "button-dis"],
                 ["pressed", "button-pressed"], ["active", "button-hover"]],
         border=[br_, 0, br_, 0], width=2 * br_ + 1, height=h,
-        padding=px(SQ_PAD, scale), sticky="nswe", on=p["card"])
+        padding=hpad(SQ_PAD), sticky="nswe", on=p["card"])
 
     # ---- 線框鈕：「瀏覽…」----
     # ⚠️ **整個畫面只有這一顆**（使用者 2026-08-27）：它是「選檔」這條主線的起點，
@@ -386,7 +406,7 @@ def build_variant(theme: str, scale: float) -> tuple[dict, dict]:
         states=[["", "cta-rest"], ["disabled", "cta-dis"],
                 ["pressed", "cta-pressed"], ["active", "cta-hover"]],
         border=[br_, 0, br_, 0], width=2 * br_ + 1, height=h,
-        padding=px(SQ_PAD, scale), sticky="nswe", on=p["card"])
+        padding=hpad(SQ_PAD), sticky="nswe", on=p["card"])
 
     # ---- 低調按鈕：兩張可收合卡片的標題列，與「開啟紀錄」----
     # ⚠️ 靜止態就是**卡片底色本身**：那三顆讀起來要像區段標題而不是三條灰色橫槓
@@ -412,7 +432,7 @@ def build_variant(theme: str, scale: float) -> tuple[dict, dict]:
                     ["pressed", f"{prefix}-pressed"],
                     ["active", f"{prefix}-hover"]],
             border=[sbr, 0, sbr, 0], width=2 * sbr + 1, height=sh,
-            padding=px(SQ_PAD, scale), sticky="nswe", on=p["card"])
+            padding=hpad(SQ_PAD), sticky="nswe", on=p["card"])
 
     # ---- 版面的卡片 ----
     # ⚠️ **內距給 0**：卡片的內距是版面的一把尺（GUI 的 CARD_PAD，要過 App.px()
@@ -446,7 +466,7 @@ def build_variant(theme: str, scale: float) -> tuple[dict, dict]:
         states=[["", "field-rest"], ["disabled", "field-dis"],
                 ["focus", "field-focus"]],
         border=[br_, 0, br_, 0], width=2 * br_ + 1, height=h,
-        padding=px(SQ_PAD_FIELD, scale), sticky="nswe", on=p["card"])
+        padding=hpad(SQ_PAD_FIELD), sticky="nswe", on=p["card"])
 
     # ---- 核取方塊：沒勾是凹下去的空框，勾了才上色（Apple 自己的用法）----
     box, ckr, gap = px(SQ_CHK_BOX, scale), px(SQ_R_CHK, scale), px(SQ_CHK_GAP, scale)
@@ -511,7 +531,7 @@ def build_variant(theme: str, scale: float) -> tuple[dict, dict]:
             states=[["", f"{kind}-rest"], ["disabled", f"{kind}-dis"],
                     ["pressed", f"{kind}-pressed"], ["active", f"{kind}-hover"]],
             border=[rbr, 0, rbr, 0], width=2 * rbr + 1, height=rh,
-            padding=px(SQ_PAD, scale), sticky="nswe", on=p["card"])
+            padding=hpad(SQ_PAD), sticky="nswe", on=p["card"])
 
     return imgs, elems
 
