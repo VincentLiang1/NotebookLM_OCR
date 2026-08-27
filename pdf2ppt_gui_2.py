@@ -1407,24 +1407,58 @@ class App(tk.Tk):
             pass
 
     # ---- 尺寸 ----
+    def _status_font(self) -> tkfont.Font:
+        """狀態字的字型物件（量寬度用，建一次就留著）。
+
+        ⚠️ 字型要從樣式查（`CardStatus.Card.TLabel` 的 `font`），**不要在這裡重寫
+        一次 `(family, 10, "bold")`**——那份定義在 `apply_ui_style`，抄過來就會漂。
+        查不到就退回 `TkDefaultFont`：量得不準頂多是對齊差幾像素，不該讓介面開不
+        起來。"""
+        fnt = getattr(self, "_status_fnt", None)
+        if fnt is None:
+            spec = ttk.Style(self).lookup("CardStatus.Card.TLabel", "font")
+            fnt = self._status_fnt = tkfont.Font(self,
+                                                 font=spec or "TkDefaultFont")
+        return fnt
+
     def _status_width(self) -> int:
         """狀態字那一格要保留多少像素：拿 `STATUS_SAMPLES` 實際去量。
 
         ⚠️ **要用量的**。以字元數寫死（`width=20`）在中英混排的狀態字上一定不
         準——Tk 的 `width` 單位是該字型 `0` 的寬度，而「載入 OCR 引擎…」裡的
         表意字約兩倍寬、`…` 又不到一倍，於是只能往寬的猜；猜出來的餘裕就是進度
-        條右邊那塊永遠用不到的空白。
-
-        字型從樣式查（`CardStatus.Card.TLabel` 的 `font`），⚠️ 不要在這裡重寫一次
-        `(family, 10, "bold")`——那份定義在 `apply_ui_style`，抄過來就會漂。
-        查不到就退回 `TkDefaultFont`：量得不準頂多是餘裕不理想，不該讓介面開不
-        起來。"""
+        條右邊那塊永遠用不到的空白。"""
         try:
-            spec = ttk.Style(self).lookup("CardStatus.Card.TLabel", "font")
-            fnt = tkfont.Font(self, font=spec or "TkDefaultFont")
-            return max(fnt.measure(t) for t in STATUS_SAMPLES)
+            return max(self._status_font().measure(t) for t in STATUS_SAMPLES)
         except tk.TclError:
             return self.px(150)
+
+    def _status_pad(self, text: str) -> int:
+        """狀態字右邊要留多少，才會與上面那顆鈕**同一條中線**。
+
+        ⚠️ **對齊的是鈕的中線，不是卡片的右緣**（使用者 2026-08-27 先後圈了「就緒」
+        與「等待選檔」兩次）。「瀏覽…／變更…」那一欄貼著卡片內距、右緣與狀態欄的
+        右緣同一條線，但**鈕的字被鈕自己的內距推進來**，所以狀態字一貼右緣看起來就
+        比上面那兩顆偏右。量出來（100% 縮放）：卡片內容右緣 801、鈕的外框 737..801、
+        中線 **769**；貼右緣時「就緒」的字心在 788（偏右 19）、「等待選檔」在 775。
+
+        算式：鈕欄寬的一半 − 這一行字的一半。⚠️ **要逐字串重算，不能給一個固定的
+        內距**——固定內距等於對齊「右緣」，字愈長中心就愈往左跑（上一版給了 `SP_LG`，
+        兩個字的「就緒」對得很準、四個字的「等待選檔」就差了 10px，使用者當場又圈了
+        一次）。
+
+        ⚠️ **`max(0, …)` 那一夾是規則的一部分，不是防呆**：最長的狀態字「載入 OCR
+        引擎…」有 98px，以 769 為心會伸到 818、**超出卡片右緣 17px**——中線放不下的
+        字串只能靠右貼齊，而它們本來就是轉檔中才出現、旁邊有進度條佔著版面。所以
+        這條規則的完整說法是「**放得下就與鈕同中線，放不下就靠右貼齊**」。
+
+        ⚠️ 鈕欄的寬度要用**量的**（`winfo_reqwidth`，不必等視窗 map）：那一欄的寬度
+        是「瀏覽…」與「變更…」裡**較寬的那一顆**決定的，寫死一個 64 下次換字就漂。"""
+        try:
+            half = max(b.winfo_reqwidth() for b in self._rail_btns) // 2
+            return max(0, half - self._status_font().measure(text) // 2)
+        except (tk.TclError, AttributeError):
+            return 0
 
     def px(self, n: float) -> int:
         """把「以 96dpi 為單位寫的像素」換成這台機器上的實體像素。
@@ -1554,6 +1588,9 @@ class App(tk.Tk):
         change.grid(row=3, column=1, sticky="ew", padx=(p(SP_SM), 0),
                     pady=(p(SP_XL), 0))
         self._inputs.append(change)
+        # ⚠️ 這兩顆是**右側那一欄**的全部成員，欄寬由較寬的那一顆決定——狀態字要
+        # 對齊它們的中線，所以留著給 `_status_pad()` 量（見那支的說明）
+        self._rail_btns = (browse, change)
         card.columnconfigure(0, weight=1)
 
         # 選項一個都不露出來（日常轉檔一項都不必動）。色塊那一項曾經留在這裡
@@ -1601,32 +1638,20 @@ class App(tk.Tk):
         self.progress.grid_remove()
         # ⚠️ 樣式要是 `.Card.TLabel` 那一支：顏色是 _set_status 動態換的，但
         # **底色**得跟著卡片，否則它是一塊灰矩形浮在白卡上
-        self.status = ttk.Label(actions, text="就緒",
-                                style="CardStatus.Card.TLabel",
-                                anchor="e", foreground=self.pal["ok"])
-        # ⚠️ **右邊留一格 `SP_LG`：對齊的是上面那顆鈕的「字」，不是鈕的外框**
-        # （使用者 2026-08-27 圈了「就緒」說「訊息偏右，看是否可以置中、對齊上面
-        # 的按鈕」）。⚠️ 這一條與卡片左緣那條「對齊元件邊緣不是文字」**不衝突，
-        # 它們管的是不同的東西**：左邊排的是一整欄同寬的元件（輸入框、鈕、底板），
-        # 右邊這一格只有一行字，而它右鄰的參照物是「變更…」那顆鈕**裡面**的字。
-        # 量出來（100% 縮放）：卡片內容右緣 801，鈕的外框 737..801、鈕裡的字
-        # 751..787——所以貼齊外框時「就緒」的字心在 788，而鈕的字心在 769，**偏右
-        # 19px**，正是他看到的。理想內距是 14（＝(64−36)/2，鈕自己的內距 10 ＋ 膠囊
-        # 底板的 4），⚠️ **但那個 14 是「變更…」三個字算出來的、不是常數**（欄寬由
-        # 那一欄較寬的鈕決定），所以走尺規上最近的一格 `SP_LG`(16)：字心落在 772、
-        # 離鈕心 3px，肉眼對齊而版面裡不必多一個手寫數字。
-        # ⚠️ **不能真的「置中對齊鈕」**：最長的狀態字「載入 OCR 引擎…」有 98px，
-        # 以 769 為心會伸到 818、超出卡片右緣 17px。右緣對齊是唯一每個字串都成立
-        # 的規則（`STATUS_SAMPLES` 每一個都量過）。
-        self.status.grid(row=0, column=2, sticky="e", padx=(0, p(SP_LG)))
+        self.status = ttk.Label(actions, style="CardStatus.Card.TLabel",
+                                anchor="e")
+        # ⚠️ **狀態字與上面那顆鈕同一條中線**（內距逐字串算，見 `_status_pad`）。
+        # 貼齊卡片右緣是不夠的：鈕的**外框**貼著卡片內距沒錯，但鈕的**字**被鈕自己
+        # 的內距推進來，所以狀態字一貼右緣讀起來就比上面兩顆偏右。
+        self.status.grid(row=0, column=2, sticky="e")
+        self._set_status("就緒", self.pal["ok"])
         actions.columnconfigure(1, weight=1)
         # 右欄只保留狀態字**真正量得到**的最大寬度，剩下的全歸進度條。
         # ⚠️ 這一格仍然要釘住（`minsize`）：不釘的話欄寬會跟著字串長短變，
         # 進度條的右端就會在「就緒」與「載入 OCR 引擎…」之間左右抽動。
-        # ⚠️ `minsize` 要把上面那一格 `SP_LG` **算進去**：`padx` 是欄位裡面的留白，
-        # 不加的話最長的狀態字會把欄撐開，進度條的右端又開始抽動。
-        actions.columnconfigure(2,
-                                minsize=self._status_width() + p(SP_XS) + p(SP_LG))
+        # ⚠️ **不必為了內距再加寬**：內距是 `max(0, 半個鈕寬 − 半行字)` 夾出來的，
+        # 最寬的那個狀態字內距正好是 0，所以「字 ＋ 內距」的上限仍然是 `_status_width()`。
+        actions.columnconfigure(2, minsize=self._status_width() + p(SP_XS))
 
         # ---- 結果列（動作卡片的第二列，跑完才出現）----
         # ⚠️ 取代舊版的「完成」對話框（`askyesno("要開啟所在資料夾嗎？")`）。
@@ -2169,7 +2194,10 @@ class App(tk.Tk):
         self._append("\n[停止] 已要求停止；目前這一頁跑完就會收工，不會產生檔案。\n")
 
     def _set_status(self, text: str, color: str) -> None:
+        """換狀態字。⚠️ **內距要跟著換**：對齊的是上面那顆鈕的中線，而那要看這一行
+        字有多寬（`_status_pad`）——只 `config(text=…)` 的話，字一長中心就往左跑。"""
         self.status.config(text=text, foreground=color)
+        self.status.grid_configure(padx=(0, self._status_pad(text)))
 
     def _start(self) -> None:
         # 專案位置不必在這裡再驗一次：main() 在開窗之前就擋掉了不合格的資料夾
