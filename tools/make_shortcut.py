@@ -62,8 +62,8 @@ from uuid import UUID
 # fallback 的值與正本一模一樣，所以 regex 哪天抓不到（換行、改成 f-string、常數搬
 # 家、非 ASCII 的 `→` 被編碼咬到）**捷徑照樣建得出來、只是帶著一份不會再更新的舊
 # 值**，沒有任何徵狀。值搬進 `brand.py` 之後那個理由整個消失：它一行 import 都沒有，
-# 這支腳本本來就已經 import 同一個套件裡的 `paths` 了。姊妹專案 MP4-2-SRT 那邊仍是
-# regex（沿革見 `docs/dev/windows-環境與入口.md` §5.3）。
+# 這支腳本本來就已經 import 同一個套件裡的 `paths` 了。姊妹專案 MP4-2-SRT 同一天跟進，
+# 兩邊現在同形（沿革見 `docs/dev/windows-環境與入口.md` §5.3）。
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from pdf2ppt import brand                                    # noqa: E402
 from pdf2ppt.paths import (desktop_dir, repo_root,           # noqa: E402
