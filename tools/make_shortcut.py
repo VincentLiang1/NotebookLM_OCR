@@ -45,7 +45,21 @@ from ctypes import POINTER, byref, c_int, c_void_p, c_wchar_p
 from pathlib import Path
 from uuid import UUID
 
-ROOT = Path(__file__).resolve().parents[1]
+# 路徑的單一出處：專案根目錄、桌面、「開始」功能表都從這一支拿——`repo_root()` 往
+# 上幾層、OneDrive 把桌面整個重導走的那個坑、問不到已知資料夾時該退到哪裡，理由全
+# 寫在那邊的 docstring 裡（本檔原本自己抄了一份，2026-08-27 收攏）。
+# ⚠️ **走 `sys.path` 而不是要求套件已經安裝**：這支跑在**安裝當下**，而且本專案根本
+# 不做套件安裝（`pyproject.toml` 的 `package = false`）。做法與 `tools/make_skin.py`
+# 同。⚠️ 插的是**根目錄**、不是 `src`——這個 repo 沒有 `src/` 那一層。
+# ⚠️ 下面那個 `parents[1]` 與 `repo_root()` 看起來重複，其實回答的是兩個問題：前者
+# 是「去哪裡找那個套件」（找錯了會當場 ImportError，很吵），後者是「專案根目錄在
+# 哪」（算錯了是安靜地把捷徑指到別處）。**不要為了少一行而把 ROOT 寫回前者**，那會
+# 讓兩邊哪天分岔時沒有任何徵狀。
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from pdf2ppt.paths import (desktop_dir, repo_root,           # noqa: E402
+                           start_menu_programs_dir)
+
+ROOT = repo_root()
 
 LAUNCHER = "啟動.vbs"          # 不開黑視窗的那條，README 教的也是它
 ICON = Path("assets") / "icon.ico"
@@ -54,10 +68,6 @@ DESCRIPTION = ("把 NotebookLM 的簡報 PDF 轉成可編輯的 PowerPoint"
                "（全程在這台電腦上跑，不會上傳）")
 FALLBACK_NAME = "NotebookLM PDF → PPT 轉檔工具"
 FALLBACK_APP_ID = "VincentLiang.NotebookLM.Pdf2Ppt"
-
-# Windows 的「已知資料夾」GUID（shlobj_core.h 的 FOLDERID_*）
-_DESKTOP_GUID = "{B4BFCC3A-DB2C-424C-B029-7FE99A87C641}"
-_PROGRAMS_GUID = "{A77F5D77-2E2B-44C3-A6A2-ABA601054A51}"   # 開始功能表\程式集
 
 _S_OK = 0
 _CLSCTX_INPROC_SERVER = 1
@@ -169,48 +179,6 @@ def app_id() -> str:
     except Exception:
         pass
     return FALLBACK_APP_ID
-
-
-def known_folder(guid: str) -> Path | None:
-    r"""問 Windows 要「已知資料夾」的實際位置，問不到回 None。
-
-    ⚠️ 不用 `ctypes.wintypes` 湊 GUID 結構：那個模組在非 Windows 上 import
-    就會炸。改用 ctypes 的基本型別自己排，欄位寬度是一樣的。"""
-    try:
-        g = _guid(guid)
-        out = c_wchar_p()
-        if ctypes.windll.shell32.SHGetKnownFolderPath(
-                byref(g), 0, None, byref(out)) != 0:
-            return None
-        try:
-            return Path(out.value)
-        finally:
-            ctypes.windll.ole32.CoTaskMemFree(out)
-    except Exception:
-        return None
-
-
-def desktop_dir() -> Path:
-    r"""桌面的實際位置。
-
-    ⚠️ 不寫死 `~/Desktop`：OneDrive 的「資料夾備份」會把桌面整個重導到
-    `%USERPROFILE%\OneDrive\Desktop`，而寫死的那條路徑往往還在、只是沒人看
-    ——捷徑建立成功，使用者卻永遠看不到。所以先問 Windows，問不到才退回猜。"""
-    return known_folder(_DESKTOP_GUID) or next(
-        (p for p in (Path.home() / "OneDrive" / "Desktop", Path.home() / "Desktop")
-         if p.is_dir()), Path.home())
-
-
-def start_menu_programs_dir() -> Path | None:
-    r"""這個使用者的「開始功能表\程式集」；問不到才退回 `%APPDATA%` 那條。
-
-    回 None 代表連退路都不成立——呼叫端要當成「這台機器沒有開始功能表」處理，
-    不是當成錯誤：它只是桌面捷徑的備援，少了不影響工具能不能用。"""
-    if found := known_folder(_PROGRAMS_GUID):
-        return found
-    if base := os.environ.get("APPDATA"):
-        return Path(base) / "Microsoft" / "Windows" / "Start Menu" / "Programs"
-    return None
 
 
 def script_host() -> Path | None:

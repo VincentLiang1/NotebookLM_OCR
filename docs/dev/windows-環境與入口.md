@@ -197,6 +197,8 @@ GUI 端在 `pdf2ppt_gui_2.py` 的 `App._apply_window_icon()`。⚠️ 兩個點�
 
 ⚠️ **桌面路徑不可以用 `~/Desktop` 猜**：OneDrive 的「資料夾備份」會把桌面整個重導到 `%USERPROFILE%\OneDrive\Desktop`，而寫死的那條往往還在、只是沒人看——捷徑建立成功，使用者卻永遠看不到。先用 `SHGetKnownFolderPath` 問 Windows，問不到才退回猜。
 
+⚠️ **那三支（`known_folder`／`desktop_dir`／`start_menu_programs_dir`）2026-08-27 收進 `pdf2ppt/paths.py`**，這支腳本改成 `sys.path.insert` 之後 import（走 `sys.path` 而不是要求套件已安裝，因為它跑在**安裝當下**；做法與 `tools/make_skin.py` 同）。收攏之前這裡與藍本**幾乎逐字相同**——而「幾乎相同」正是最壞的情況：漂開的那天沒有任何徵狀，只有某一邊的捷徑會建到 OneDrive 沒接管的那個舊桌面上。⚠️ `ROOT` 也改成 `repo_root()`；那個 `parents[1]` 只留在 `sys.path` 那一行當**引導**（找錯了會當場 ImportError，很吵），不要為了少一行把兩者併掉。三支只有一份由 `tests/test_paths.py` 釘著，A/B 界線見 `docs/dev/architecture.md` §4。
+
 ⚠️ **不叫 PowerShell 的 `WScript.Shell`**：`.lnk` 在 Windows 上只有 COM 一條路，而 PowerShell 正是公司電腦最常被群組原則收走的東西（執行原則、Constrained Language Mode 都擋得掉）。改用 ctypes 直接叫 `IShellLinkW`，不經過任何外部行程、也不必為一顆捷徑多拉一個相依。⚠️ vtable 是照**順序**呼叫的（`_SET_PATH`=20、`_SET_ARGUMENTS`=11…），數錯一格是當場 crash 不是回錯誤碼，所以介面宣告整段抄在原始碼的註解裡對照。
 
 ⚠️ **中文不從 .bat 傳進來**：批次檔是 cp950，字串經 cmd 那一層會被重新編碼。捷徑名稱與所有訊息都寫在那支 UTF-8 的 Python 裡，「安裝.bat」只負責呼叫一行**純 ASCII** 的指令。捷徑名字本身是**從 `pdf2ppt_gui_2.py` 的 `APP_TITLE` 讀正規表示式抓出來的**（不是 import，那會拉進 tkinter；也不是寫死，那會漂移成桌面圖示叫舊名字）。
@@ -845,6 +847,13 @@ b.winfo_reqheight()
 **與出貨資產同一種格式，共用同一支讀取器**（`_from_assets(root)`）。⚠️ 兩份格式就是兩份會漂的程式，而漂掉的症狀（元件定義對不上）是靜默的。快取那邊的 `sprites.json` 只裝一個 variant、`scales` 只有一格，其餘欄位一模一樣。
 
 位置是 `%LOCALAPPDATA%` 底下的 `NotebookLM_Pdf2Ppt/skin/<指紋>/<亮暗>@<縮放>/`（`NOTEBOOKLM_PDF2PPT_SKIN_CACHE` 可覆寫，測試靠它）。⚠️ **不可以寫回專案資料夾**：那裡可能是唯讀，而且使用者換電腦的方式是複製整個資料夾——把機器專屬的快取一起帶走只是帶著別台機器的 DPI。⚠️ 走 `LOCALAPPDATA` 不是 `APPDATA`（漫遊設定檔跟著人跑到另一台機器上時，那台的 DPI 不一樣）。
+
+⚠️ **落地位置本身 2026-08-27 收進 `pdf2ppt/paths.py`**（`APP_DIR_NAME` ＋ `appdata_root()`），GUI 的 `skin_cache_root()` 只剩「掛在它底下的 `skin` 那一格」與那個覆寫用的環境變數。收攏帶進來兩個設計，兩個都是**錯了沒有訊息**的：
+
+- **基底路徑每次呼叫重讀環境變數，不可以在 import 時定死**——定死的話 `monkeypatch.setenv` 導不動，任何會落檔的測試都會寫進**跑測試那個人自己的家目錄**。
+- **取不到 `LOCALAPPDATA` 就退回 `~/.cache`，不丟例外**——皮膚快取整條路是純加速，一個 `KeyError` 會從「皮膚裝不起來」炸成「視窗開不起來」。⚠️ 收攏之前的最後一段退路是 `"."`，也就是**當前工作目錄**；從捷徑進來時那正好就是專案資料夾，等於直接違反上面那條。
+
+⚠️ **`APP_DIR_NAME`（`NotebookLM_Pdf2Ppt`）與 `APP_TITLE`（視窗標題）、`APP_ID`（工作列身分）是三個概念，字面值哪天撞在一起也不可以併成一份**：前者改了要使用者重畫一次快取，後兩者改了不影響磁碟。併掉的話，哪天改標題就會順手把快取搬家——資產還在磁碟上、程式卻說沒有，**兩個位置都存在**，連「檔案不見了」都不會發生。（姊妹專案 MP4-2-SRT 三者同值，那是巧合；在那邊寫「這個字串只能有一份」的測試會當場紅。）上面這些由 `tests/test_paths.py` 釘著（八支），故障注入八種驗過全紅：基底路徑在 import 時定死、取不到就拋例外、退路改回 `.`、層數數成兩層、拉一個非標準函式庫的相依進來、資料夾名併成視窗標題、GUI 又自己拼一次基底路徑、`tools/make_shortcut.py` 又抄一份 `desktop_dir`。
 
 ### 五個踩得到的地方
 

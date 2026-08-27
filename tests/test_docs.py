@@ -330,6 +330,39 @@ def test_the_self_reported_exit_code_matches_the_launcher():
         f"pdf2ppt_gui_2.py 是 {rc}")
 
 
+def test_the_launcher_guard_lists_files_that_really_exist():
+    r"""「啟動.vbs」在跑 uv 之前先檢查關鍵檔案在不在（2026-08-27，作法移植自姊妹
+    專案 MP4-2-SRT）：漏掉檔案時 uv 與 Python 吐的是英文訊息，說不出「你少複製了
+    東西」，而那正是「整包複製搬家」這個部署方式唯一的失敗模式。
+
+    ⚠️ **這一支守的是誤報**：守門列的路徑必須真的存在於一份完整的專案裡，否則
+    每一次**正常**的啟動都會跳「少了必要的檔案」、程式再也開不起來——而它是使用者
+    唯一的入口。把某支檔案改個名就足以造成，且改的人不會想到要去看 `.vbs`。
+
+    ⚠️ 另一個方向也釘住兩件事：守門檢查的必須就是 `.vbs` **真的會去跑的那個檔**
+    （走 `target` 那個變數，不是另外手打一次檔名），而且**不可以伸手進 `pdf2ppt`
+    套件裡**——套件在不在由 GUI 的 `is_project_dir()`／`fail_no_project()` 判，它
+    講得更具體（會把資料夾路徑一起印出來）。兩份清單遲早只會改一邊。"""
+    vbs = (ROOT / "啟動.vbs").read_text(encoding="cp950")
+    target = re.search(r'^target\s*=\s*here & "\\([^"]+)"', vbs, re.M)
+    assert target, "啟動.vbs 的 target 那一行變了（改名要一起改這支測試）"
+
+    checked = set(re.findall(r'fso\.BuildPath\(here, "([^"]+)"\)', vbs))
+    assert "fso.FileExists(target)" in vbs, (
+        "守門沒有檢查 .vbs 真正會去跑的那個檔（或改成手打檔名了）")
+    checked.add(target.group(1))
+    # 抓法本身要先活著：正規表示式漂掉時 checked 會變成空集合，而空集合讓下面
+    # 兩條全部通過——那比沒有測試更糟，因為它看起來在守東西
+    assert len(checked) >= 2, f"只抓到 {sorted(checked)}，守門的寫法變了？"
+
+    missing = sorted(n for n in checked if not (ROOT / n).exists())
+    assert not missing, (
+        f"啟動.vbs 的守門列了專案裡沒有的檔案 {missing}——正常安裝也會被擋下來")
+    inside = sorted(n for n in checked if n.replace("\\", "/").startswith("pdf2ppt/"))
+    assert not inside, (
+        f"守門伸進 pdf2ppt 套件裡了 {inside}：那是 fail_no_project() 的工作")
+
+
 def test_rejected_paths_index_points_at_real_sections():
     """「量過而否決的路」那一章只寫「見『某某標題』」。
 

@@ -99,12 +99,15 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, font as tkfont, messagebox, ttk
 
-# ⚠️ 這是本檔**唯一**從專案套件裡拿的東西，而且是刻意的：`pdf2ppt/palette.py`
-# 一行 import 都沒有、`pdf2ppt/__init__.py` 也只有一句 docstring，所以這一行
-# **不會**把 numpy／pymupdf／python-pptx 那一整串拉進啟動路徑（那些只有按下轉檔
-# 的那一刻、`_run_conversion` 裡 import cli 時才付出）。顏色抽成一份的理由見那支
-# 的 docstring —— 產生器（tools/make_skin.py）與這裡共用同一份色票。
+# ⚠️ 這兩行是本檔**僅有**的兩處「從專案套件裡拿東西」，而且是刻意的：
+# `pdf2ppt/palette.py` 一行 import 都沒有、`pdf2ppt/paths.py` 只 import 標準函式庫、
+# `pdf2ppt/__init__.py` 也只有一句 docstring，所以這兩行**不會**把 numpy／pymupdf／
+# python-pptx 那一整串拉進啟動路徑（那些只有按下轉檔的那一刻、`_run_conversion` 裡
+# import cli 時才付出）。顏色抽成一份的理由見那支的 docstring —— 產生器
+# （tools/make_skin.py）與這裡共用同一份色票；路徑抽成一份的理由同理，差別是那一份
+# 屬於**三個姊妹專案共用、下游不該改**的底層工具（見 `pdf2ppt/paths.py` 的 docstring）。
 from pdf2ppt.palette import PALETTES
+from pdf2ppt.paths import appdata_root
 
 
 APP_TITLE = "NotebookLM PDF → PPT 轉檔工具"
@@ -557,25 +560,26 @@ SKIN_SCALE_TOL = 0.01
 # 的重點就是不必有 Pillow，為了一個整數把相依拉進來等於把這條路廢掉。
 SKIN_SCHEMA = 2
 
-# 「當場畫」的結果要快取到哪（使用者 2026-08-27 指示）。⚠️ **不可以寫回專案資料夾**：
-# 那裡可能是唯讀（Program Files、公司政策掛載的網路磁碟），而且使用者換電腦的方式是
-# 複製整個資料夾——把機器專屬的快取一起複製過去只會帶著別台機器的 DPI 走。
+# 「當場畫」的結果要快取到哪（使用者 2026-08-27 指示）。⚠️ **不可以寫回專案資料夾**
+# ——那條規則、`LOCALAPPDATA` 的取法與取不到時的退路 2026-08-27 全部收進
+# `pdf2ppt/paths.py` 的 `appdata_root()`，**不要在這裡複述一份**（複述一次就是多一份
+# 會漂的副本）。這裡只留覆寫用的環境變數：皮膚快取的測試靠它把落地導進 tmp。
 SKIN_CACHE_ENV = "NOTEBOOKLM_PDF2PPT_SKIN_CACHE"
-SKIN_CACHE_NAME = "NotebookLM_Pdf2Ppt"
 
 
 def skin_cache_root() -> Path:
-    """快取的根目錄：`%LOCALAPPDATA%` 底下的 `NotebookLM_Pdf2Ppt/skin`。
+    """快取的根目錄：`appdata_root()` 底下的 `skin`。
 
-    ⚠️ 走 `LOCALAPPDATA` 不是 `APPDATA`：這是**衍生自本機顯示設定**的產物，
-    漫遊設定檔跟著使用者跑到另一台機器上時，那台的 DPI 不一樣、快取一定不適用
-    （指紋擋得住，但那就變成每台機器互相把對方的快取洗掉）。
+    ⚠️ **落地位置本身不在這裡**（資料夾名、`LOCALAPPDATA` 的取法、取不到時退回
+    哪裡）：那三件事在 `pdf2ppt/paths.py`，它是三個姊妹專案共用的底層工具，本檔
+    只補上「我們把皮膚放在它底下的哪一格」。⚠️ 2026-08-27 收攏之前這裡自己拼
+    `%LOCALAPPDATA%`，而取不到時的最後一段退路是 `"."` ——**當前工作目錄**，從捷徑
+    進來時那正好就是專案資料夾，等於違反「不可以寫回專案資料夾」那一條。
     """
     override = os.environ.get(SKIN_CACHE_ENV)
     if override:
         return Path(override)
-    base = os.environ.get("LOCALAPPDATA") or os.environ.get("TEMP") or "."
-    return Path(base) / SKIN_CACHE_NAME / "skin"
+    return appdata_root() / "skin"
 
 
 def skin_cache_key() -> str:

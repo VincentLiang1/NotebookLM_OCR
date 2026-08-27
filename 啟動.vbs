@@ -22,7 +22,7 @@ Const MAX_MSG = 900
 Const RC_SELF_REPORTED = 78
 Const APP_TITLE = "NotebookLM PDF → PPT"
 
-Dim sh, fso, here, q, target, capPath, cmd, rc, out, msg
+Dim sh, fso, here, q, target, capPath, cmd, rc, out, msg, projFile, missing
 
 Set sh  = CreateObject("WScript.Shell")
 Set fso = CreateObject("Scripting.FileSystemObject")
@@ -34,6 +34,35 @@ target  = here & "\pdf2ppt_gui_2.py"
 capPath = fso.BuildPath(fso.GetSpecialFolder(2).Path, fso.GetTempName())
 
 sh.CurrentDirectory = here
+
+' 【複製不完整的守門】專案資料夾是整包複製搬家的，而漏掉檔案時 uv 與 Python 吐的
+' 是英文訊息：那份訊息照樣會被下面攔下來跳出來，但它說不出「你少複製了東西」，
+' 而那正是這個部署方式唯一的失敗模式。2026-08-27 實測過兩種，第二種更糟：
+'     少了 pdf2ppt_gui_2.py -> can't open file ... No such file or directory（結束碼 2）
+'     少了 pyproject.toml   -> uv 往上找不到專案，就拿一個沒有任何相依的臨時環境
+'                              把 GUI 跑起來，啟動時完全沒有錯誤訊息，要等使用者
+'                              按下轉檔才在日誌裡看到 import 失敗
+' 【注意】這裡只檢查「GUI 自己檢查不到的那兩個」：套件本身（pdf2ppt\cli.py）由 GUI
+' 的 is_project_dir()／fail_no_project() 負責，它講得更具體，也會把資料夾路徑一起
+' 印出來——不要在這裡再做一份，兩份清單遲早只改一邊。
+' 【注意】清單由 tests/test_docs.py 釘著：這裡列的路徑必須真的存在於專案裡，否則
+' 守門會在正常的安裝上誤報，而症狀是每次啟動都跳「少了必要的檔案」、程式再也開不
+' 起來。訊息裡的檔名一律用 GetFileName 從被檢查的那條路徑取，不要另外手打一份。
+missing  = ""
+projFile = fso.BuildPath(here, "pyproject.toml")
+If Not fso.FileExists(projFile) Then
+    missing = missing & vbCrLf & "　　" & fso.GetFileName(projFile)
+End If
+If Not fso.FileExists(target) Then
+    missing = missing & vbCrLf & "　　" & fso.GetFileName(target)
+End If
+If Len(missing) > 0 Then
+    MsgBox "這個資料夾裡少了必要的檔案：" & vbCrLf & missing & vbCrLf & vbCrLf & _
+           here & vbCrLf & vbCrLf & _
+           "請把整個專案資料夾完整複製過來，再執行一次「安裝.bat」。", _
+           vbCritical, APP_TITLE
+    WScript.Quit 1
+End If
 
 ' 子行程一律用 UTF-8 輸出，攔到的訊息才解得回來（主控台預設是 cp950，中文
 ' traceback 直接讀會是亂碼）。改的是本行程的環境區塊，Run 出去的子行程繼承它。
