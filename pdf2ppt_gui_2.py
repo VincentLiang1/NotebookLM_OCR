@@ -694,7 +694,12 @@ class SquircleSkin:
             if abs(best - self.scale) > SKIN_SCALE_TOL:
                 return None
             var = meta["variants"][f"{self.mode}@{best:g}"]
-            sheet = self._photo(
+            # ⚠️ **整張 sheet 刻意不走 `_photo()`、不進 `_keep`**：切完之後就沒有
+            # 人用它了，留著等於讓解碼後的整張點陣常駐一輩子（@2x 那張 282x1663，
+            # RGBA 約 1.9MB；十組裡只會載一組，但那一份是白留的）。個別 sprite 是
+            # `copy` 出來的**獨立** PhotoImage，不參照它，所以 sheet 可以當場放掉。
+            sheet = tk.PhotoImage(
+                master=self.root,
                 data=base64.b64encode((SKIN_DIR / var["file"]).read_bytes()))
             cut: dict[str, tk.PhotoImage] = {}
             for key, (x, y, w, h) in var["sprites"].items():
@@ -704,6 +709,9 @@ class SquircleSkin:
                 self.root.tk.call(sub, "copy", sheet, "-from", x, y,
                                   x + w, y + h, "-compositingrule", "set")
                 cut[key] = sub
+            # 交還 Tcl 那份點陣（見上）。⚠️ `del` 就夠：`PhotoImage.__del__` 會呼叫
+            # `image delete`，而 CPython 的 refcount 讓它當場生效。
+            del sheet
             elems = {name: dict(e, states=[(s, cut[k]) for s, k in e["states"]])
                      for name, e in var["elements"].items()}
             self.chev = {"right": cut["chev-right"], "down": cut["chev-down"]}

@@ -331,6 +331,14 @@ def build_variant(theme: str, scale: float) -> tuple[dict, dict]:
 
         ⚠️ `border` 取 `ceil(H/2)` 不是 `H/2`：H 是奇數時半圓會多佔半欄，border
         少一欄的話中段第一欄不是純色，水平重複貼就會透出一條細紋。
+
+        ⚠️ **`sticky` 帶著 `n` 與 `s`，所以版面那一側也要守。** 元件的 `height`
+        只是**最小**尺寸，不是釘死；一旦有人把這幾個控制項放進 `weight>0` 的 grid
+        列（`sticky` 含 `ns`）或 `pack(fill="y")`，Tk 就會把整張底板**垂直重複貼**，
+        底下長出第二段膠囊。目前每一處都是安全的（`run_btn` 用 `sticky="w"`、輸入框
+        與那幾顆鈕用 `"ew"`、`log_toggle` 是 `pack(fill="x")`，唯一 `weight=1` 的那
+        一列放的是走 `block()` 的日誌槽）——但那是**逐處挑對的結果，不是機制保證**，
+        加新控制項時要自己確認。
         """
         h = px(h_logical, scale)
         br = (h + 1) // 2
@@ -512,17 +520,30 @@ def build_variant(theme: str, scale: float) -> tuple[dict, dict]:
 
 
 def pack(imgs: dict[str, Image.Image]) -> tuple[Image.Image, dict]:
-    """把底板疊成一張 sprite sheet（單欄，最省事也最好對）。"""
+    """把底板疊成一張 sprite sheet（單欄，最省事也最好對）。
+
+    ⚠️ **逐位元組相同的底板只鋪一次**（2026-08-27 補）：好幾組狀態本來就是同一張
+    圖——低調皮的 `rest` 與 `dis` 都是卡片色（那一顆停用時本來就不該變色）、
+    `accent-dis` 與 `stop-dis` 都是 `run_off`。它們各出貨一份純粹是浪費，而讓兩個 key
+    指到同一個 rect 對消費端完全透明（`_from_assets` 是照 rect 去裁的，裁兩次同一塊
+    區域沒有任何差別）。⚠️ **不要改成「把重複的 key 從 `states` 拿掉」**：狀態表要
+    完整列出來，ttk 才知道每個狀態該用哪張圖。
+    """
     order = sorted(imgs)
     sheet_w = max(im.width for im in imgs.values())
-    sheet_h = sum(imgs[k].height for k in order)
-    sheet = Image.new("RGBA", (sheet_w, sheet_h), (0, 0, 0, 0))
-    rects, y = {}, 0
+    rects, rows, seen, y = {}, [], {}, 0
     for k in order:
         im = imgs[k]
-        sheet.paste(im, (0, y))
-        rects[k] = [0, y, im.width, im.height]
+        sig = (im.width, im.height, im.tobytes())
+        if sig in seen:
+            rects[k] = list(seen[sig])
+            continue
+        rects[k] = seen[sig] = [0, y, im.width, im.height]
+        rows.append((im, y))
         y += im.height
+    sheet = Image.new("RGBA", (sheet_w, y), (0, 0, 0, 0))
+    for im, top in rows:
+        sheet.paste(im, (0, top))
     return sheet, rects
 
 
