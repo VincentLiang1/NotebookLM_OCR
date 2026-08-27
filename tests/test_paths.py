@@ -12,9 +12,13 @@ meeting-scribe 的同名模組，那邊踩過 OneDrive 重導與非 Windows 匯�
    **在開發者自己的家目錄裡長出資料夾**（而且是在別人的機器上）。
 2. **取不到就退回、不丟例外** —— 掛在底下的整條路是純加速，一個 `KeyError` 會從
    「皮膚裝不起來」一路炸到視窗開不起來。
-3. **只有一份** —— 環境變數的讀取、三支已知資料夾函式、資料夾名的字面值。
-4. **落地位置 ≠ 顯示身分** —— 資料夾名、視窗標題、工作列身分是三個概念，字面值
-   哪天撞在一起也不可以併成一份（理由見 `pdf2ppt/paths.py` 的 `APP_DIR_NAME`）。
+3. **只有一份** —— 環境變數的讀取、三支已知資料夾函式、五個身分值的字面值。
+4. **身分只住在 `pdf2ppt/brand.py`** —— 2026-08-27 再收攏一次：名字、用途那句話、
+   工作列身分、落地資料夾名散在 GUI 與 `paths.py` 裡，複製這個專案去做下一支
+   Windows AP 的人得自己去翻。收進 `brand.py` 之後那句承諾（「底下只有這一支必須
+   改」）本身需要有人守，否則第二份會安靜地長回來。⚠️ 落地位置、視窗標題、工作列
+   身分**是三個概念，字面值哪天撞在一起也不可以併成一份**（理由見 `brand.py` 的
+   `APP_DIR_NAME`）。
 """
 import ast
 import re
@@ -22,7 +26,7 @@ import sys
 from pathlib import Path
 
 import pdf2ppt_gui_2 as G
-from pdf2ppt import paths
+from pdf2ppt import brand, paths
 
 ROOT = Path(__file__).resolve().parents[1]
 _SKIP = {".venv", "__pycache__", ".git", ".pytest_cache", "logs"}
@@ -96,20 +100,37 @@ def test_the_repo_root_is_the_folder_the_entry_points_live_in():
     assert (root / "pdf2ppt" / "paths.py").is_file()
 
 
-def test_the_paths_module_only_imports_the_standard_library():
-    """⚠️ 它坐在 **GUI 的啟動路徑**上（理由與 `pdf2ppt/palette.py` 那一條相同）。
+def test_the_shared_layer_grows_no_domain_dependency():
+    """⚠️ 只准標準函式庫，**加上 `brand` 這一個刻意的注入點**。
 
-    這一支多拉一個相依進來，等於把 numpy／pymupdf／python-pptx 那一整串塞進
-    「雙擊到視窗出現」之間；而 `tools/` 那兩支產生器是在 `uv sync` 之前就要跑得
-    起來的，多一個相依它們就先掛。"""
+    兩件事合在一起守：
+
+    1. 它坐在 **GUI 的啟動路徑**上（理由與 `pdf2ppt/palette.py` 那一條相同）——多
+       拉一個相依進來，等於把 numpy／pymupdf／python-pptx 那一整串塞進「雙擊到視窗
+       出現」之間；而 `tools/` 那兩支產生器是在 `uv sync` 之前就要跑得起來的，多一
+       個相依它們就先掛。
+    2. 它是**要整支搬進共用包**的通用層，所以守的重點不是「零 import」而是**除了
+       那一個以外沒有第二條**。多一條的下場不是當場壞掉，是**搬家那天才發現搬不
+       動**：共用包一旦回頭 import 下游的領域模組就成環，而那時要拆的已經不只一行。
+
+    ⚠️ `brand` 那一行是**唯一**要在搬家時改的地方（改成由呼叫端注入，見它上方的
+    註解）。2026-08-27 之前這條寫的是「只准標準函式庫」，那時 `APP_DIR_NAME` 的字面
+    值還住在 `paths.py` 裡——身分與通用工具混在同一個檔案裡，共用包就搬不走。"""
     tree = ast.parse((ROOT / "pdf2ppt" / "paths.py").read_text(encoding="utf-8"))
     mods: set[str] = set()
+    from_package: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             mods |= {a.name.split(".")[0] for a in node.names}
         elif isinstance(node, ast.ImportFrom):
-            mods.add("(相對匯入)" if node.level else (node.module or "").split(".")[0])
-    extra = mods - set(sys.stdlib_module_names)
+            assert not node.level, "不要用相對 import：搬家時它是第一個斷的"
+            top = (node.module or "").split(".")[0]
+            mods.add(top)
+            if top == "pdf2ppt":
+                from_package |= {a.name for a in node.names}
+    assert from_package == {"brand"}, (
+        f"共用層長出第二條領域相依：{sorted(from_package)}——搬家那天要拆的就不只一行")
+    extra = mods - set(sys.stdlib_module_names) - {"pdf2ppt"}
     assert not extra, f"paths.py 匯入了標準函式庫以外的東西：{sorted(extra)}"
 
 
@@ -144,8 +165,42 @@ def test_the_known_folder_lookups_are_defined_in_exactly_one_place():
 
 
 # --------------------------------------------------------------------------- #
-#  四、落地位置 ≠ 顯示身分
+#  四、身分只有一份，而且只在 `pdf2ppt/brand.py`
 # --------------------------------------------------------------------------- #
+def test_the_brand_module_imports_nothing():
+    """⚠️ **`brand` 自己一行 import 都不可以有**：它被 `paths`、GUI 與 `tools/` 三
+    個方向讀，其中兩個（GUI 的啟動路徑、`paths` 這個要搬進共用包的通用層）各自
+    都不能承受多一條相依——一個是「雙擊到視窗出現」之間多付一次，另一個是搬家
+    那天成環。"""
+    tree = ast.parse((ROOT / "pdf2ppt" / "brand.py").read_text(encoding="utf-8"))
+    bad = [ast.unparse(n) for n in ast.walk(tree)
+           if isinstance(n, (ast.Import, ast.ImportFrom))]
+    assert not bad, f"brand.py 開始 import 東西了：{bad}——它是 leaf，三個方向都讀它"
+
+
+def test_the_identity_lives_in_one_file_the_next_project_edits():
+    """**複製這個專案去做下一支 Windows AP 時，`pdf2ppt/` 底下只有 `brand.py` 必須
+    改**（2026-08-27 收攏，作法與姊妹專案 MP4-2-SRT 同源）。
+
+    ⚠️ 這一支守的是那句承諾本身。五個身分值一旦有人在別的模組裡「順手」寫死第二
+    份，承諾就變成**假的**，而下一個專案會帶著上一個專案的身分出貨：工作列上兩支
+    程式併成一顆按鈕、捷徑叫著舊名字、快取落在別人的資料夾底下。⚠️ 而這幾種都
+    **不會有錯誤訊息**——兩個位置都存在，兩顆按鈕也都按得動。
+
+    ⚠️ 抓的是**字面值**（`"…"`）不是變數名：轉呼叫（`APP_TITLE = brand.APP_TITLE`）
+    不算第二份，寫死一句一模一樣的中文才算。"""
+    names = ("APP_ID", "APP_TITLE", "APP_SUB", "APP_DESC", "APP_DIR_NAME")
+    for name in names:
+        value = getattr(brand, name)
+        owners = _owners(re.compile(re.escape(f'"{value}"')))
+        assert owners == ["pdf2ppt/brand.py"], (
+            f"{name} 的字面值不只一份：{owners}——brand.py 不再是唯一要改的地方")
+    # 抓法本身要先活著：值變成拼接或多行字串時，上面那圈會變成「零個檔案全部
+    # 通過」的空綠燈，而它看起來還在守東西
+    assert len({getattr(brand, n) for n in names}) == len(names), (
+        "有兩個身分值變成同一個字串了（見下一支測試）")
+
+
 def test_the_landing_folder_name_is_not_the_title_or_the_taskbar_identity():
     """三個字串、三種概念，**字面值哪天撞在一起也不可以併成一份**。
 
@@ -155,7 +210,30 @@ def test_the_landing_folder_name_is_not_the_title_or_the_taskbar_identity():
     連「檔案不見了」都不會發生。
     ⚠️ 姊妹專案 MP4-2-SRT 三者同值，那是巧合不是設計（在那邊寫「這個字串只能有
     一份」的測試會當場紅，就是因為這件事）。"""
-    assert paths.APP_DIR_NAME != G.APP_TITLE, "落地資料夾名被併進視窗標題了"
-    assert paths.APP_DIR_NAME != G.APP_ID, "落地資料夾名被併進工作列身分了"
-    owners = _owners(re.compile(re.escape(f'"{paths.APP_DIR_NAME}"')))
-    assert owners == ["pdf2ppt/paths.py"], f"資料夾名的字面值不只一份：{owners}"
+    assert brand.APP_DIR_NAME != brand.APP_TITLE, "落地資料夾名被併進視窗標題了"
+    assert brand.APP_DIR_NAME != brand.APP_ID, "落地資料夾名被併進工作列身分了"
+
+
+def test_the_consumers_all_read_the_brand_module():
+    """三個方向都要真的讀到那一份，不是各自抄一次。
+
+    ⚠️ `tools/make_shortcut.py` 這一半特別要釘：它 2026-08-27 之前是用**讀檔正規
+    表示式**去 GUI 裡撈 `APP_TITLE`／`APP_ID` 的（那時 import GUI 會拉進 tkinter），
+    抓不到就退回自己那份 `FALLBACK_*`——而 fallback 的值與正本一模一樣，所以 regex
+    失效那天**捷徑照樣建得出來**，只是從此帶著一份不會再更新的舊值。姊妹專案
+    MP4-2-SRT 做同一次收攏時真的踩到了（三條測試同時紅才發現）。改成 import 之後
+    抓不到會當場 `ImportError`，不會安靜地換備援值。"""
+    assert G.APP_TITLE == brand.APP_TITLE
+    assert G.APP_ID == brand.APP_ID
+    assert G.APP_SUB == brand.APP_SUB
+    assert paths.APP_DIR_NAME == brand.APP_DIR_NAME
+    # ⚠️ 釘的是**那三個落點各自的算式**，不是「檔案裡有出現 brand.APP_TITLE」：
+    # 名字用了兩次（.lnk 的檔名、最後印給使用者看的那句），只比對名字的話，把檔名
+    # 換成寫死的字串照樣是綠的——而使用者桌面上那顆的名字正是檔名決定的
+    shortcut = (ROOT / "tools" / "make_shortcut.py").read_text(encoding="utf-8")
+    for expr, what in (('f"{brand.APP_TITLE}.lnk"', "捷徑的檔名"),
+                       ("_propvariant_str(brand.APP_ID)", "寫進 .lnk 的工作列身分"),
+                       ("brand.APP_DESC", "滑鼠停在圖示上那句")):
+        assert expr in shortcut, f"tools/make_shortcut.py 的「{what}」沒有走 {expr}"
+    assert "FALLBACK" not in shortcut, (
+        "捷徑那支又長出備援值了：那條退路失效時完全沒有徵狀")

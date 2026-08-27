@@ -13,31 +13,29 @@ r"""路徑的單一出處：我們自己的落地位置，加上要問 Windows �
 ⚠️ **本檔移植自姊妹專案 meeting-scribe 的同名模組**（2026-08-27，使用者指定拿它
 當底層工具的藍本）：那邊 450 筆提交、實際踩過 OneDrive 重導與非 Windows 匯入兩個
 坑，結構與註解照搬。⚠️ 它屬於共用層 A/B 界線裡「**下游不該改**」的那一類——三個姊
-妹專案應該長得**一模一樣**，本專案刻意不同的只有 `APP_DIR_NAME` 的**值**與
-`repo_root()` 的**層數**（那兩個才是「這個專案需要跟別人不一樣」的 A 類）。界線與
-落地形式見 `docs/dev/architecture.md` §4。
+妹專案應該長得**一模一樣**，本專案刻意不同的只有 `APP_DIR_NAME` 的**值**（2026-08-27
+搬進 `pdf2ppt/brand.py`，這裡只剩一行注入）與 `repo_root()` 的**層數**（那兩個才是
+「這個專案需要跟別人不一樣」的 A 類）。界線與落地形式見 `docs/dev/architecture.md` §4。
 
-⚠️ **只准 import 標準函式庫**（理由與 `pdf2ppt/palette.py` 那一條相同）：GUI 的啟動
-路徑會載到這一支，而 `pdf2ppt/__init__.py` 只有一行 docstring——這裡多拉一個相依
-進來，就等於把 numpy／pymupdf／python-pptx 那一整串塞進「雙擊到視窗出現」之間。
+⚠️ **只准 import 標準函式庫，外加 `pdf2ppt/brand.py` 這一個注入點**（理由與
+`pdf2ppt/palette.py` 那一條相同）：GUI 的啟動路徑會載到這一支，而
+`pdf2ppt/__init__.py` 只有一行 docstring、`brand.py` 一行 import 都沒有——這裡多拉
+一個相依進來，就等於把 numpy／pymupdf／python-pptx 那一整串塞進「雙擊到視窗出現」
+之間。
 """
 import ctypes
 import os
 from pathlib import Path
 from uuid import UUID
 
-# 這支工具在 `%LOCALAPPDATA%` 底下的資料夾名。⚠️ **改它等於叫使用者的快取全部失效**
-# （舊的還在原處，但再也沒有人去看它），所以它實際上是個對外承諾——`README.md` 把這
-# 個名字寫給使用者看過。
-#
-# ⚠️ **不可以跟 `pdf2ppt_gui_2.py` 的 `APP_TITLE`（視窗標題）或 `APP_ID`（工作列身分）
-# 併成一份**，就算哪天它們的字面值變成一樣也不行。三個是三種概念：這一個是**落地
-# 位置**（改了要使用者重畫一次快取）、`APP_TITLE` 是**純顯示**（改成別的中文完全不
-# 影響磁碟）、`APP_ID` 是**工作列拿來認應用程式的身分**（改了釘選的那顆會跟執行中的
-# 視窗分家）。併成一份的話，哪天把標題改掉就會順手把快取搬家——資產還在磁碟上、程式
-# 卻說沒有，**兩個位置都存在**，連「檔案不見了」都不會發生。姊妹專案 MP4-2-SRT 三者
-# 同值是巧合，不是設計。
-APP_DIR_NAME = "NotebookLM_Pdf2Ppt"
+from pdf2ppt import brand
+
+# 這支工具在 `%LOCALAPPDATA%` 底下的資料夾名。⚠️ **值住在 `pdf2ppt/brand.py`**——本
+# 模組是**通用**的路徑工具（將來要整支搬進共用包），而資料夾名是**這支程式的身分**：
+# 兩者混在同一個檔案裡，共用包就搬不走。三者為什麼不可以併成一份，也寫在那邊。
+# ⚠️ **真的要搬那天，這一行改成由呼叫端注入**（參數或一次性初始化），不要讓共用包
+# 反過來 import 下游的 `brand`——那是環，而且會把「誰依賴誰」整個顛倒過來。
+APP_DIR_NAME = brand.APP_DIR_NAME
 
 # Windows 的「已知資料夾」GUID（shlobj_core.h 的 FOLDERID_*）
 _DESKTOP_GUID = "{B4BFCC3A-DB2C-424C-B029-7FE99A87C641}"

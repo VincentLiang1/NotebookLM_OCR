@@ -99,18 +99,19 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, font as tkfont, messagebox, ttk
 
-# ⚠️ 這兩行是本檔**僅有**的兩處「從專案套件裡拿東西」，而且是刻意的：
-# `pdf2ppt/palette.py` 一行 import 都沒有、`pdf2ppt/paths.py` 只 import 標準函式庫、
-# `pdf2ppt/__init__.py` 也只有一句 docstring，所以這兩行**不會**把 numpy／pymupdf／
-# python-pptx 那一整串拉進啟動路徑（那些只有按下轉檔的那一刻、`_run_conversion` 裡
-# import cli 時才付出）。顏色抽成一份的理由見那支的 docstring —— 產生器
-# （tools/make_skin.py）與這裡共用同一份色票；路徑抽成一份的理由同理，差別是那一份
-# 屬於**三個姊妹專案共用、下游不該改**的底層工具（見 `pdf2ppt/paths.py` 的 docstring）。
+# ⚠️ 這三行是本檔**僅有**的三處「從專案套件裡拿東西」，而且是刻意的：
+# `pdf2ppt/palette.py` 與 `pdf2ppt/brand.py` 一行 import 都沒有、`pdf2ppt/paths.py`
+# 只 import 標準函式庫加上 `brand`、`pdf2ppt/__init__.py` 也只有一句 docstring，所以
+# 這三行**不會**把 numpy／pymupdf／python-pptx 那一整串拉進啟動路徑（那些只有按下
+# 轉檔的那一刻、`_run_conversion` 裡 import cli 時才付出）。顏色抽成一份的理由見那支
+# 的 docstring —— 產生器（tools/make_skin.py）與這裡共用同一份色票；路徑抽成一份的
+# 理由同理，差別是那一份屬於**三個姊妹專案共用、下游不該改**的底層工具（見
+# `pdf2ppt/paths.py` 的 docstring）。⚠️ **名字與用途那句話走 `pdf2ppt/brand.py`**：
+# 那支是「這支程式的身分」，複製這個專案去做下一支 Windows AP 時只有它必須改——所以
+# 這裡**不要**再寫死第二份字面值（`tests/test_paths.py` 掃著）。
+from pdf2ppt.brand import APP_ID, APP_SUB, APP_TITLE
 from pdf2ppt.palette import PALETTES
 from pdf2ppt.paths import appdata_root
-
-
-APP_TITLE = "NotebookLM PDF → PPT 轉檔工具"
 
 # 專案根目錄 ＝ **本檔所在的資料夾**，沒有第二個候選（使用者 2026-08-25 指示
 # 拿掉介面上的位置選擇）。⚠️ 一定要用 `__file__` 而不是 cwd：從「啟動.vbs」／
@@ -120,11 +121,6 @@ PROJECT_DIR = Path(__file__).resolve().parent
 
 # 視窗圖示。檔案本身由 tools/make_icon.py 產生（幾何與色票的唯一真值在那支）。
 APP_ICON = PROJECT_DIR / "assets" / "icon.ico"
-
-# 工作列用來認「這是哪個應用程式」的身分。⚠️ `tools/make_shortcut.py` 會把
-# 這個字串讀走寫進 .lnk，兩邊必須同值——不同的話，釘選到工作列的那顆與
-# 執行中的視窗會變成兩個各自獨立的按鈕。
-APP_ID = "VincentLiang.NotebookLM.Pdf2Ppt"
 
 # 間距尺規（邏輯 px，一律再過 App.px() 換算成實體像素）。⚠️ **版面裡不要再出現
 # 別的間距數字**：2026-08-25 晚上使用者說「還是有點擠」，量出來的成因不是字太小
@@ -1676,9 +1672,10 @@ class App(tk.Tk):
         # 超出螢幕的那個量級（2026-08-25 量到超出 41px）。
         # ⚠️ 要給 wraplength：不給的話這一整句會從左邊界一路頂到右邊界，最小寬度
         # 下更會把視窗撐開——一行字左右都貼邊，本身就是「擠」的來源之一。
+        # ⚠️ 這句話的正本在 `pdf2ppt/brand.py`（`APP_SUB`）：桌面捷徑的提示文字是
+        # 它的另一半（`APP_DESC`），兩句刻意不同、理由寫在那邊。
         sub = ttk.Label(
-            root,
-            text="把 NotebookLM 產出繁中 PDF 簡報，本機轉換成可編輯的 PowerPoint。",
+            root, text=APP_SUB,
             style="Sub.Muted.TLabel", wraplength=p(780), justify="left",
         )
         sub.pack(anchor="w", pady=(0, p(CARD_GAP)))

@@ -170,7 +170,7 @@ DirectML 版是「**取代**」CPU 版的完整 build（它同時提供 `CPUExec
 1. **行程端**：`pdf2ppt_gui_2.py` 的 `set_app_user_model_id()` 呼叫 `SetCurrentProcessExplicitAppUserModelID(APP_ID)`。⚠️ **必須在建立第一個視窗之前**（和 `enable_dpi_awareness()` 一樣）——視窗一建出來就已經被工作列歸隊了。
 2. **捷徑端**：`.lnk` 也要寫上同一個 `PKEY_AppUserModel_ID`（`tools/make_shortcut.py` 的 `IPropertyStore` 那一段）。少了這一半，使用者把捷徑**釘到工作列**之後，釘的那顆（身分從 `wscript.exe` 推出來）與執行中的視窗（身分是我們宣告的）會變成**兩個各自獨立的按鈕**。
 
-⚠️ **那個字串只有一份**：寫在 GUI 的 `APP_ID`，`make_shortcut.py` 用正規表示式讀走（作法同 `app_name()`）。兩邊不一致就是上面那個「兩顆按鈕」的症狀，而且不會有任何錯誤訊息。
+⚠️ **那個字串只有一份**：2026-08-27 起住在 `pdf2ppt/brand.py` 的 `APP_ID`，GUI 與 `tools/make_shortcut.py` 都 import 它（收攏之前它寫在 GUI 裡、由捷徑那支用正規表示式讀走，見 §5.3 最後一段）。兩邊不一致就是上面那個「兩顆按鈕」的症狀，而且不會有任何錯誤訊息。
 
 ⚠️ **不要找 `InitPropVariantFromString`**：那是 `propvarutil.h` 的 **inline** 函式，`propsys.dll` 沒有匯出這個符號（2026-08-25 實測 `not found`）。`_PROPVARIANT` 是自己排的，⚠️ **尾巴那個 `pad` 欄位不可省**——真正的 PROPVARIANT 是 24 bytes（x64），而 `PropVariantClear` 會把整個結構清成零，宣告短了就是寫出界。字串要用 `CoTaskMemAlloc` 配置（`PropVariantClear` 負責收），⚠️ 而 `CoTaskMemAlloc.restype` 一定要設成 `c_void_p`，否則 x64 上回傳值會被截成 32 位元。
 
@@ -201,9 +201,17 @@ GUI 端在 `pdf2ppt_gui_2.py` 的 `App._apply_window_icon()`。⚠️ 兩個點�
 
 ⚠️ **不叫 PowerShell 的 `WScript.Shell`**：`.lnk` 在 Windows 上只有 COM 一條路，而 PowerShell 正是公司電腦最常被群組原則收走的東西（執行原則、Constrained Language Mode 都擋得掉）。改用 ctypes 直接叫 `IShellLinkW`，不經過任何外部行程、也不必為一顆捷徑多拉一個相依。⚠️ vtable 是照**順序**呼叫的（`_SET_PATH`=20、`_SET_ARGUMENTS`=11…），數錯一格是當場 crash 不是回錯誤碼，所以介面宣告整段抄在原始碼的註解裡對照。
 
-⚠️ **中文不從 .bat 傳進來**：批次檔是 cp950，字串經 cmd 那一層會被重新編碼。捷徑名稱與所有訊息都寫在那支 UTF-8 的 Python 裡，「安裝.bat」只負責呼叫一行**純 ASCII** 的指令。捷徑名字本身是**從 `pdf2ppt_gui_2.py` 的 `APP_TITLE` 讀正規表示式抓出來的**（不是 import，那會拉進 tkinter；也不是寫死，那會漂移成桌面圖示叫舊名字）。
-
+⚠️ **中文不從 .bat 傳進來**：批次檔是 cp950，字串經 cmd 那一層會被重新編碼。捷徑名稱與所有訊息都寫在那支 UTF-8 的 Python 裡，「安裝.bat」只負責呼叫一行**純 ASCII** 的指令。
 ⚠️ **建不出來絕不能擋住安裝**：走到那一步環境已經好了。桌面被群組原則重導到唯讀網路磁碟、OneDrive 沒登入、資安軟體擋寫入都會失敗，那時該講的是「雙擊資料夾裡的啟動.vbs 一樣能用」。離開碼只拿來讓「安裝.bat」挑最後那句話怎麼寫，**0 與 3 都算安裝成功**。
+
+
+### 名字、提示文字、工作列身分：從「讀檔正規表示式」換成 import（2026-08-27）
+
+捷徑要用的三個值（`APP_TITLE`＝顯示的名字、`APP_DESC`＝滑鼠停上去那句、`APP_ID`＝工作列身分）**2026-08-27 起住在 `pdf2ppt/brand.py`**，這支腳本直接 import。在那之前它們寫在 `pdf2ppt_gui_2.py` 裡，而 import GUI 會把整個 tkinter 拉進安裝流程——所以當時的作法是 `app_name()`／`app_id()` 兩支**讀檔正規表示式**，抓不到就退回自己那份 `FALLBACK_*`。
+
+⚠️ **那個退路正是它的問題，而且失效完全沒有徵狀**：fallback 的值與正本一模一樣，所以 regex 哪天抓不到（常數搬家、宣告拆成兩行、改成 f-string、非 ASCII 的 `→` 被編碼咬到），捷徑**照樣建得出來**，只是從此帶著一份不會再更新的舊值——改名字之後桌面圖示還叫舊名字，或者釘到工作列的那顆與執行中的視窗分成兩顆。姊妹專案 MP4-2-SRT 在做同一次收攏時**真的踩到了**：常數搬進 `brand.py`、原處留成轉呼叫，三條測試同時紅才發現 regex 早已改抓 fallback（2026-08-27 那邊回報）。
+
+值搬進 `brand.py` 之後那個理由整個消失：它**一行 import 都沒有**（`tests/test_paths.py` 用 AST 掃著），而這支腳本本來就已經 import 同一個套件裡的 `paths` 了——多這一個不多付任何東西，而且是精確的：抓不到會當場 `ImportError`，不會安靜地改用備援值。⚠️ 連帶刪掉 `app_name()`／`app_id()`／`FALLBACK_NAME`／`FALLBACK_APP_ID`／`DESCRIPTION` 五個殘骸。⚠️ **姊妹專案那邊維持 regex**（那支讀檔函式改成多帶一個路徑參數，指向它自己的身分模組），這是本專案與它刻意不同的一處——哪天這支真的搬進共用包，兩邊都得改成**由呼叫端注入**，因為共用包裡的程式碼既 import 不到下游的套件名、也 hardcode 不了下游的檔案路徑。
 
 ## 5.4 版面與進度回饋的整批重整（2026-08-25 傍晚）
 

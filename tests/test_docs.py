@@ -32,6 +32,8 @@ import importlib
 import re
 from pathlib import Path
 
+from pdf2ppt import brand
+
 ROOT = Path(__file__).resolve().parents[1]
 SPEC_DIR = ROOT / "docs" / "spec"
 
@@ -361,6 +363,33 @@ def test_the_launcher_guard_lists_files_that_really_exist():
     inside = sorted(n for n in checked if n.replace("\\", "/").startswith("pdf2ppt/"))
     assert not inside, (
         f"守門伸進 pdf2ppt 套件裡了 {inside}：那是 fail_no_project() 的工作")
+
+
+def test_the_launcher_message_box_uses_the_app_name():
+    """「啟動.vbs」的訊息框標題是 `pdf2ppt/brand.py` 那個名字的**短版手抄**。
+
+    ⚠️ 這一份沒辦法收攏：VBScript 讀不到 Python，而那支又必須在**環境還沒建起來**
+    的時候就能講話（它的存在理由就是「藏掉主控台之後錯誤往哪裡去」）。所以改用
+    「必須是正本的前綴」來釘——短版是刻意的（訊息框標題不需要「轉檔工具」那三個
+    字），但它得是**同一個名字**。
+
+    ⚠️ 漂移是沉默的：改了程式的名字而沒改 `.vbs`，使用者唯一會看到的失敗訊息會
+    掛著一個他從沒聽過的舊名字，而那是他判斷「這個框是誰跳的」的唯一線索。"""
+    vbs = (ROOT / "啟動.vbs").read_text(encoding="cp950")
+    m = re.search(r'^Const APP_TITLE = "([^"]+)"', vbs, re.M)
+    assert m, "啟動.vbs 的 APP_TITLE 那一行變了（改名要一起改這支測試）"
+    assert brand.APP_TITLE.startswith(m.group(1)), (
+        f"啟動.vbs 的訊息框標題是「{m.group(1)}」，"
+        f"brand.py 的 APP_TITLE 是「{brand.APP_TITLE}」")
+
+
+def test_the_readme_calls_the_shortcut_by_its_real_name():
+    """README 告訴使用者桌面上會出現哪一顆圖示，那個名字是**手抄**的。
+
+    抄錯或改名沒跟上時，使用者會在桌面上找一顆不存在的圖示——而他手上沒有第二
+    條線索。`tools/make_shortcut.py` 用的就是 `brand.APP_TITLE`，兩邊釘在一起。"""
+    assert brand.APP_TITLE in README_MD, (
+        f"README 沒有提到捷徑的真名「{brand.APP_TITLE}」")
 
 
 def test_rejected_paths_index_points_at_real_sections():

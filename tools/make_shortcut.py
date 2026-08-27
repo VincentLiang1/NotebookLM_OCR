@@ -39,7 +39,6 @@ from __future__ import annotations
 
 import ctypes
 import os
-import re
 import sys
 from ctypes import POINTER, byref, c_int, c_void_p, c_wchar_p
 from pathlib import Path
@@ -55,7 +54,18 @@ from uuid import UUID
 # 是「去哪裡找那個套件」（找錯了會當場 ImportError，很吵），後者是「專案根目錄在
 # 哪」（算錯了是安靜地把捷徑指到別處）。**不要為了少一行而把 ROOT 寫回前者**，那會
 # 讓兩邊哪天分岔時沒有任何徵狀。
+#
+# 捷徑的**名字、提示文字與工作列身分**同樣只有一份，在 `pdf2ppt/brand.py`。
+# ⚠️ **這裡是 import，不是讀檔正規表示式**（2026-08-27 收攏時一起換掉的）：那三個值
+# 原本住在 `pdf2ppt_gui_2.py`，import 它會把整個 tkinter 拉進安裝流程，所以當時只能
+# 用 regex 讀字面值、抓不到就退回自己那份 fallback。⚠️ **而那個退路正是它的問題**：
+# fallback 的值與正本一模一樣，所以 regex 哪天抓不到（換行、改成 f-string、常數搬
+# 家、非 ASCII 的 `→` 被編碼咬到）**捷徑照樣建得出來、只是帶著一份不會再更新的舊
+# 值**，沒有任何徵狀。值搬進 `brand.py` 之後那個理由整個消失：它一行 import 都沒有，
+# 這支腳本本來就已經 import 同一個套件裡的 `paths` 了。姊妹專案 MP4-2-SRT 那邊仍是
+# regex（沿革見 `docs/dev/windows-環境與入口.md` §5.3）。
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from pdf2ppt import brand                                    # noqa: E402
 from pdf2ppt.paths import (desktop_dir, repo_root,           # noqa: E402
                            start_menu_programs_dir)
 
@@ -63,11 +73,6 @@ ROOT = repo_root()
 
 LAUNCHER = "啟動.vbs"          # 不開黑視窗的那條，README 教的也是它
 ICON = Path("assets") / "icon.ico"
-# 滑鼠停在圖示上會看到這句。寫「不會上傳」是因為那是使用者最常問的第一個問題
-DESCRIPTION = ("把 NotebookLM 的簡報 PDF 轉成可編輯的 PowerPoint"
-               "（全程在這台電腦上跑，不會上傳）")
-FALLBACK_NAME = "NotebookLM PDF → PPT 轉檔工具"
-FALLBACK_APP_ID = "VincentLiang.NotebookLM.Pdf2Ppt"
 
 _S_OK = 0
 _CLSCTX_INPROC_SERVER = 1
@@ -152,35 +157,6 @@ def _guid(text: str) -> _GUID:
                  (ctypes.c_ubyte * 8)(*u.bytes[8:]))
 
 
-def app_name() -> str:
-    """捷徑顯示的名字＝視窗標題。
-
-    ⚠️ 用**讀檔正規表示式**而不是 import：`pdf2ppt_gui_2` 一載入就會拉進
-    tkinter。也不寫死字面值——名字在兩處各寫一份、改一邊忘了另一邊時，使用者
-    桌面上的圖示會叫舊名字，而那是最難發現的那種漂移。"""
-    try:
-        text = (ROOT / "pdf2ppt_gui_2.py").read_text(encoding="utf-8")
-        if m := re.search(r'^APP_TITLE\s*=\s*"([^"]+)"', text, re.M):
-            return m.group(1)
-    except Exception:
-        pass
-    return FALLBACK_NAME
-
-
-def app_id() -> str:
-    """工作列的身分字串，讀自 GUI 的 `APP_ID`（理由同 app_name）。
-
-    ⚠️ 這個值必須與 GUI 執行時宣告的**完全一樣**：不一樣的話，釘選到工作列
-    的那顆與執行中的視窗會被 Windows 當成兩個不同的應用程式，變成兩個按鈕。"""
-    try:
-        text = (ROOT / "pdf2ppt_gui_2.py").read_text(encoding="utf-8")
-        if m := re.search(r'^APP_ID\s*=\s*"([^"]+)"', text, re.M):
-            return m.group(1)
-    except Exception:
-        pass
-    return FALLBACK_APP_ID
-
-
 def script_host() -> Path | None:
     """`wscript.exe` 的位置（見模組 docstring 的第一條 ⚠️）。找不到回 None。"""
     host = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "wscript.exe"
@@ -236,7 +212,7 @@ def write_shortcut(dest: Path, target: Path, arguments: str, workdir: Path,
                      byref(store_iid), byref(store)) == _S_OK:
                 try:
                     key = _PROPERTYKEY(_guid(_PKEY_AUMID_FMTID), _PKEY_AUMID_PID)
-                    prop = _propvariant_str(app_id())
+                    prop = _propvariant_str(brand.APP_ID)
                     try:
                         _check(_call(store, _PS_SET_VALUE, (c_void_p, c_void_p),
                                      byref(key), byref(prop)),
@@ -270,14 +246,14 @@ def install_to(folder: Path) -> Path:
     同名一律覆寫：使用者換電腦的方式是複製整個專案資料夾，而「搬過位置就重跑
     安裝.bat」那句話要成立，這裡就得真的把舊捷徑那條指到別處的路徑改回來。"""
     folder.mkdir(parents=True, exist_ok=True)
-    dest = folder / f"{app_name()}.lnk"
+    dest = folder / f"{brand.APP_TITLE}.lnk"
     vbs = ROOT / LAUNCHER
     if host := script_host():
         # 參數要自己加引號：專案路徑含中文、也可能含空格
         target, args = host, f'"{vbs}"'
     else:
         target, args = vbs, ""
-    write_shortcut(dest, target, args, ROOT, ROOT / ICON, DESCRIPTION)
+    write_shortcut(dest, target, args, ROOT, ROOT / ICON, brand.APP_DESC)
     return dest
 
 
@@ -307,7 +283,7 @@ def main() -> int:
         print(f"[提醒] 桌面圖示建立失敗：{exc}")
         return 3
 
-    print(f"已經在桌面放上「{app_name()}」，以後雙擊它就能啟動。")
+    print(f"已經在桌面放上「{brand.APP_TITLE}」，以後雙擊它就能啟動。")
 
     # 開始功能表是備援，不是主角：桌面被公司政策鎖住時它通常還寫得進去，
     # 而且使用者可以按 Windows 鍵直接搜尋名字。失敗就安靜跳過——為了一個
