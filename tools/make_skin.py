@@ -469,16 +469,21 @@ def build_variant(theme: str, scale: float) -> tuple[dict, dict]:
     # ---- 進度條：圓頭的軌道與填充條 ----
     # ⚠️ 高度是**釘死**的（thickness ＝ 圖高），所以九宮格的左右兩塊不會被垂直
     # 拉伸、圓頭不會變形；會被拉開的只有中段那一欄純色。
-    th = px(SQ_PB_TH, scale)
-    pr = th / 2.0
-    pw = int(2 * (pr + 1) + mid)
+    # ⚠️ **2026-08-27 晚改走 `pill()`。** 它本來就是膠囊（圓頭、高度釘死、只切
+    # 左右），卻自己算了一份 `edge = int(pr) + 1`——與 `pill()` 的 `ceil(H/2)` 在
+    # **偶數圖高時差 1**（@1.5／@1.75／@2 的圖高 10／12／14，舊式給 6／7／8，正確的
+    # 是 5／6／7），等於同一條規則在這支檔案裡有兩種寫法，而檔頭第 4 點又寫著
+    # 「按鈕、輸入框、進度條走 `pill()`」——現在才是真的。
+    # ⚠️ 多切的那一欄不會壞掉（中段仍落在純色區、只是白白多切一欄），所以這是
+    # 一致性修正不是修 bug；改完 `tests/..::test_pill_plates_are_sliced_horizontally_only`
+    # 一起管它。
+    pw, th, pr, pbr = pill(SQ_PB_TH)
     imgs["trough"] = plate(pw, th, pr, p["trough"], on=p["card"])
     imgs["pbar"] = plate(pw, th, pr, p["accent"], on=p["trough"])
-    edge = int(pr) + 1
     for name, key, on in (("Sq.trough", "trough", p["card"]),
                           ("Sq.pbar", "pbar", p["trough"])):
-        elems[name] = dict(states=[["", key]], border=[edge, 0, edge, 0],
-                           width=int(2 * (pr + 1) + 1), height=th,
+        elems[name] = dict(states=[["", key]], border=[pbr, 0, pbr, 0],
+                           width=2 * pbr + 1, height=th,
                            padding=0, sticky="nswe", on=on)
 
     # ---- 收合鈕的三角形（見 chevron）----
