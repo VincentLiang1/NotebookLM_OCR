@@ -32,7 +32,7 @@ import importlib
 import re
 import subprocess
 import tomllib
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 import winkit
 
@@ -353,6 +353,21 @@ def test_the_self_reported_exit_code_matches_the_launcher():
         f"pdf2ppt_gui_2.py 是 {rc}")
 
 
+def _shipped_launcher() -> str:
+    r"""出貨的那一份「啟動.vbs」。⚠️ 它是 cp950 的，不可以用 UTF-8 讀。
+
+    ⚠️ **下面每一支讀的都是產物、不是重新 render 的**：手改產物不會有任何抱怨，
+    改了產生器忘了重跑也不會——兩種都只能在這裡現形（外加下面逐位元組那一支）。"""
+    return (ROOT / "啟動.vbs").read_text(encoding="cp950")
+
+
+def _guarded_paths() -> list[str]:
+    """守門清單：「啟動.vbs」開頭那幾個 `fso.BuildPath(here, "…")`。"""
+    hits = re.findall(r'fso\.BuildPath\(here,\s*"([^"]+)"\)', _shipped_launcher())
+    assert hits, "守門不見了：複製不完整時使用者只會看到英文的 uv/Python 錯誤"
+    return hits
+
+
 def test_the_launcher_guard_lists_files_that_really_exist():
     r"""「啟動.vbs」在跑 uv 之前先檢查關鍵檔案在不在（2026-08-27，作法移植自姊妹
     專案 MP4-2-SRT）：漏掉檔案時 uv 與 Python 吐的是英文訊息，說不出「你少複製了
@@ -360,28 +375,27 @@ def test_the_launcher_guard_lists_files_that_really_exist():
 
     ⚠️ **這一支守的是誤報**：守門列的路徑必須真的存在於一份完整的專案裡，否則
     每一次**正常**的啟動都會跳「少了必要的檔案」、程式再也開不起來——而它是使用者
-    唯一的入口。把某支檔案改個名就足以造成，且改的人不會想到要去看 `.vbs`。
+    唯一的入口。把某支檔案改個名就足以造成。
 
     ⚠️ 另一個方向也釘住兩件事：守門檢查的必須就是 `.vbs` **真的會去跑的那個檔**
-    （走 `target` 那個變數，不是另外手打一次檔名），而且**不可以伸手進 `pdf2ppt`
-    套件裡**——套件在不在由 GUI 的 `is_project_dir()`／`fail_no_project()` 判，它
-    講得更具體（會把資料夾路徑一起印出來）。兩份清單遲早只會改一邊。"""
-    vbs = (ROOT / "啟動.vbs").read_text(encoding="cp950")
-    target = re.search(r'^target\s*=\s*here & "\\([^"]+)"', vbs, re.M)
-    assert target, "啟動.vbs 的 target 那一行變了（改名要一起改這支測試）"
+    （產生器裡只有 `RUN_TARGET` 一份，兩處都由它長出來），而且**不可以伸手進
+    `pdf2ppt` 套件裡**——套件在不在由 GUI 的 `is_project_dir()`／`fail_no_project()`
+    判，它講得更具體（會把資料夾路徑一起印出來）。兩份清單遲早只會改一邊。"""
+    from tools import make_launcher
 
-    checked = set(re.findall(r'fso\.BuildPath\(here, "([^"]+)"\)', vbs))
-    assert "fso.FileExists(target)" in vbs, (
-        "守門沒有檢查 .vbs 真正會去跑的那個檔（或改成手打檔名了）")
-    checked.add(target.group(1))
-    # 抓法本身要先活著：正規表示式漂掉時 checked 會變成空集合，而空集合讓下面
-    # 兩條全部通過——那比沒有測試更糟，因為它看起來在守東西
-    assert len(checked) >= 2, f"只抓到 {sorted(checked)}，守門的寫法變了？"
+    guarded = _guarded_paths()
+    assert len(guarded) >= 2, f"只抓到 {guarded}，守門的寫法變了？"
 
-    missing = sorted(n for n in checked if not (ROOT / n).exists())
+    missing = sorted(n for n in guarded if not (ROOT / n.replace("\\", "/")).exists())
     assert not missing, (
         f"啟動.vbs 的守門列了專案裡沒有的檔案 {missing}——正常安裝也會被擋下來")
-    inside = sorted(n for n in checked if n.replace("\\", "/").startswith("pdf2ppt/"))
+
+    assert make_launcher.RUN_TARGET in guarded, (
+        f"守門沒有檢查 .vbs 真正會去跑的那個檔（{make_launcher.RUN_TARGET}）")
+    assert f"uv run pythonw {make_launcher.RUN_TARGET}" in _shipped_launcher(), (
+        "守門檢查的與真的會跑的漂開了：兩處都該從 RUN_TARGET 長出來")
+
+    inside = sorted(n for n in guarded if n.replace("\\", "/").startswith("pdf2ppt/"))
     assert not inside, (
         f"守門伸進 pdf2ppt 套件裡了 {inside}：那是 fail_no_project() 的工作")
 
@@ -390,7 +404,7 @@ def _uv_local_sources():
     """`pyproject.toml` 的 `[tool.uv.sources]` 裡以**相對路徑**相依進來的資料夾。
 
     這是「共用資料夾在哪裡」的**唯一真值**：uv 只吃字面值，所以那一行非寫死在
-    那裡不可——反過來說，別處就一份都不准再抄（下面三支釘著）。"""
+    那裡不可——反過來說，別處就一份都不准再抄（下面幾支釘著）。"""
     with (ROOT / "pyproject.toml").open("rb") as fh:
         sources = tomllib.load(fh)["tool"]["uv"]["sources"]
     return {v["path"] for v in sources.values()
@@ -400,9 +414,9 @@ def _uv_local_sources():
 def test_every_local_uv_source_really_sits_where_pyproject_says():
     r"""`[tool.uv.sources]` 列的每個相對路徑都要真的指得到一個專案。
 
-    ⚠️ **這一支守的是誤報**，理由與上面那支守門完全一樣：「啟動.vbs」的守門
-    改成**讀這一份**（2026-08-28）之後，這裡寫錯就等於清單寫錯——**每一次正常
-    的啟動**都會跳「少了必要的檔案」，而它是使用者唯一的入口。`uv sync` 也會
+    ⚠️ **這一支守的是誤報**，理由與上面那支守門完全一樣：守門清單是**從這裡長出來
+    的**（`make_launcher._path_dep_guards`），所以這裡寫錯就是清單寫錯——**每一次
+    正常的啟動**都會跳「少了必要的檔案」，而它是使用者唯一的入口。`uv sync` 也會
     跟著失敗，但它吐的是英文的路徑錯誤，說不出少了什麼。"""
     rels = _uv_local_sources()
     assert rels, "[tool.uv.sources] 一個相對路徑相依都不剩了？守門會整個空掉"
@@ -410,73 +424,99 @@ def test_every_local_uv_source_really_sits_where_pyproject_says():
     assert not bad, f"pyproject.toml 指到的共用資料夾不在那裡：{bad}"
 
 
-def test_the_entry_files_do_not_write_down_where_the_shared_folder_lives():
-    r"""共用資料夾搬家或改名時**只改 `pyproject.toml` 那一行**（使用者
-    2026-08-28 要求「只改一個地方就改好」）。所以兩個入口檔裡不可以有第二份
-    字面值：「啟動.vbs」用讀的（`LocalSources`），「安裝.bat」那句提示改成不
-    提名字（批次檔沒有可靠的 TOML 讀法——用 `findstr` 抓會抓到
-    `[tool.pytest.ini_options]` 的 `pythonpath = ["."]`，2026-08-28 實測）。
+def test_every_path_dependency_is_guarded_and_watched():
+    r"""每一條相對路徑相依，守門清單與 `EnvFresh` 都要有它。
 
-    ⚠️ **手抄一份的失效是沉默的**：搬完家 `.vbs` 的守門還在檢查舊路徑，於是
-    每一次**正常**啟動都跳「少了必要的檔案」；`.bat` 那句則是搬完家還在教使用者
-    去找一個已經不存在的資料夾。兩邊都不會有人來報，而改的人不會想到要看它們。"""
-    for name in ("啟動.vbs", "安裝.bat"):
-        text = (ROOT / name).read_text(encoding="cp950")
+    ⚠️ 這是上一條的**反向**：那條問「列的都存在嗎」，這條問「該列的都列了嗎」。
+    兩條要一起看的理由是共用包哪天換位置——`pyproject.toml` 與產物是兩份路徑，而
+    漏掉哪一邊都沒有訊息：漏了 `pyproject.toml` 是 uv 的英文路徑錯誤，漏了守門則是
+    它從此攔不到「只複製了這一個資料夾」，而那正是這道守門唯一要攔的東西。
+
+    ⚠️ **`EnvFresh` 那一半同樣要有**：共用包的相依改了而這邊沒重裝時，快速路徑會
+    拿舊環境跑，而那是**沒有徵狀**的（`import` 得到的是 editable 的原始碼，缺的是
+    它新加的第三方套件）。所以兩處都從 `_path_dep_guards()` 長出來，這支守它沒被
+    繞開——包含「有人覺得礙事，順手拿掉再重跑產生器」。"""
+    src = _shipped_launcher()
+    guarded = _guarded_paths()
+    for rel in sorted(_uv_local_sources()):
+        want = str(PureWindowsPath(rel) / "pyproject.toml")
+        assert want in guarded, f"{rel} 是相對路徑相依，守門清單卻沒有它：{guarded}"
+        assert f'here & "\\{want}"' in src, (
+            f"{rel} 沒進 EnvFresh：共用包的相依改了，快速路徑會拿舊環境跑")
+
+
+def test_the_shared_folder_is_only_written_down_in_pyproject():
+    r"""共用資料夾搬家或改名時**只改 `pyproject.toml` 那一行**（使用者 2026-08-28
+    要求「只改一個地方就改好」）。
+
+    ⚠️ 「啟動.vbs」**是產物**，裡面那個算好的字面值不算第二份——它每次重跑產生器
+    都會跟著走（上面兩支從兩個方向釘著）。要守的是**手寫的那些檔**：產生器自己
+    （必須 `tomllib` 讀出來，不可以手打）與「安裝.bat」（沒有可靠的 TOML 讀法，所以
+    那句提示改成不提名字）。
+
+    ⚠️ **手抄一份的失效是沉默的**：搬完家守門還在檢查舊路徑，於是每一次**正常**
+    啟動都跳「少了必要的檔案」；`.bat` 那句則是搬完家還在教使用者去找一個已經不
+    存在的資料夾。兩邊都不會有人來報，而改的人不會想到要看它們。"""
+    for name, bare_too in (("安裝.bat", True), ("tools/make_launcher.py", False)):
+        enc = "utf-8" if name.endswith(".py") else "cp950"
+        text = (ROOT / name).read_text(encoding=enc)
         for rel in sorted(_uv_local_sources()):
-            for shape in (rel, rel.replace("/", "\\"), PurePosixPath(rel).name):
+            # ⚠️ **產生器只挑「路徑形狀」**：`winkit` 這個字本身是**套件名**，
+            # `from winkit import launcher` 是正當的——套件叫什麼與那個資料夾在
+            # 哪裡是兩個概念（同 `APP_DIR_NAME`／`APP_TITLE`／`APP_ID` 那條）。
+            # 「安裝.bat」沒有 import，所以連名字都不該出現在那句提示裡。
+            shapes = [rel, rel.replace("/", "\\")]
+            if bare_too:
+                shapes.append(PurePosixPath(rel).name)
+            for shape in shapes:
                 assert shape not in text, (
                     f"{name} 又寫死了一份「{shape}」——共用資料夾在哪裡是"
-                    " pyproject.toml 的 [tool.uv.sources] 的事，這裡要嘛用讀的、"
-                    "要嘛不提")
+                    " pyproject.toml 的 [tool.uv.sources] 的事")
 
 
 def test_the_readme_calls_the_shared_folder_by_its_current_name():
     """`README.md` 的「資料夾複製不完整時」那一段**指名道姓**講隔壁那個資料夾。
 
-    程式已經不看名字了（改讀 `[tool.uv.sources]`），但**給人看的那一句還是要對**
-    ——搬完家或改完名之後，那句話會繼續教使用者去找一個不存在的資料夾，而使用者
-    正是在「東西不見了」的時候才讀它。名字寫在 `pyproject.toml`，這裡只要求
-    README 講的是**現在那一個**。"""
+    程式已經不看名字了（產生器從 `[tool.uv.sources]` 算），但**給人看的那一句還是
+    要對**——搬完家或改完名之後，那句話會繼續教使用者去找一個不存在的資料夾，而
+    使用者正是在「東西不見了」的時候才讀它。"""
     missing = sorted(PurePosixPath(rel).name for rel in _uv_local_sources()
                      if PurePosixPath(rel).name not in README_MD)
     assert not missing, (
         f"README 沒提到現在的共用資料夾 {missing}——它那一段還在講舊名字？")
 
 
-def test_the_launcher_parses_the_same_sources_a_real_toml_parser_sees(tmp_path):
-    r"""「啟動.vbs」的 `LocalSources` 是一支手寫的迷你剖析器（VBScript 沒有 TOML
-    解析器，而守門必須在 Python 起來之前就知道答案）。這一支拿**真正的** TOML
-    解析器跟它對答案，而且跑的是**出貨的那一份**——把那支函式原封不動抽出來餵給
-    `cscript`，不是在這裡照它的規則再寫一次（再寫一次就等於兩份會各自漂的程式）。
+def test_the_shipped_launcher_is_what_the_generator_writes_today():
+    r"""出貨的「啟動.vbs」要**逐位元組**等於 `tools/make_launcher.py` 現在會寫的那份。
 
-    ⚠️ **它的失效方向是漏報，而漏報是沉默的**：把 `[tool.uv.sources]` 改寫成它
-    看不懂的形狀（多行表、`path` 跟鍵不同行），守門就靜靜地少檢查一項，使用者
-    退回去看 uv 的英文錯誤——不會有任何徵狀。2026-08-28 實測過一個真的坑：不分
-    區段地找 `path =` 會抓到 `[tool.pytest.ini_options]` 的 `pythonpath = ["."]`。"""
-    vbs = (ROOT / "啟動.vbs").read_text(encoding="cp950")
-    assert "kits = LocalSources(fso, projFile)" in vbs, (
-        "守門沒有去讀 pyproject.toml（或改了寫法）")
-    assert "EnvFresh(fso, here, kits)" in vbs, (
-        "EnvFresh 沒有吃守門算好的那一份：兩處各讀一次就是兩份會漂的路徑")
-    fn = re.search(r"^Function LocalSources\(.*?^End Function$", vbs, re.M | re.S)
-    assert fn, "啟動.vbs 的 LocalSources 不見了（改名要一起改這支測試）"
+    ⚠️ 它是**產生出來的**（骨架是共用包 `winkit.launcher` 的樣板、欄位在那支腳本
+    裡），而**手改產物不會有任何抱怨**：下一次有人重跑產生器，手改的那幾行就無聲
+    消失。反過來也一樣——改了樣板或欄位卻忘了重跑，使用者雙擊到的還是舊的啟動器。
+    ⚠️ 同 `pdf2ppt/assets/skin/` 那條的道理（皮膚也是產物）。
+    ⚠️ **樣板住在另一個 repo**：共用包改了骨架、這邊沒重跑，也是這一支會紅。"""
+    from tools import make_launcher
 
-    # ⚠️ 探針寫進 pytest 的 tmp_path、不落在專案裡（驗證產物要清乾淨那條）
-    probe = tmp_path / "probe.vbs"
-    driver = "\r\n".join([
-        "Option Explicit",
-        'Dim fso : Set fso = CreateObject("Scripting.FileSystemObject")',
-        "WScript.Echo LocalSources(fso, WScript.Arguments(0))",
-        "", fn.group(0), ""])
-    probe.write_bytes(driver.encode("cp950"))
-    done = subprocess.run(
-        ["cscript", "//nologo", str(probe), str(ROOT / "pyproject.toml")],
-        capture_output=True, text=True, encoding="cp950", errors="replace")
-    assert done.returncode == 0, f"cscript 跑不起來：{done.stderr}"
-    seen = {s.replace("\\", "/") for s in done.stdout.strip().split("\t") if s}
-    assert seen == _uv_local_sources(), (
-        f"啟動.vbs 抓到 {sorted(seen)}，pyproject.toml 實際上是 "
-        f"{sorted(_uv_local_sources())}——守門會漏檢查沒抓到的那幾個")
+    assert make_launcher.build() == (ROOT / "啟動.vbs").read_bytes(), (
+        "啟動.vbs 與產生器對不上：手改了產物，或改了樣板／欄位卻忘了重跑"
+        " tools/make_launcher.py")
+
+
+def test_the_launcher_scripts_keep_the_encoding_windows_needs():
+    """`.bat`／`.vbs` 一律 **cp950（Big5）、CRLF、無 BOM**，`.bat` 還要在**任何中文
+    之前**先 `chcp 950`。
+
+    ⚠️ 這幾條沒有一條會在存檔時抱怨，而症狀都不像編碼問題：UTF-8 存的 `.bat` 會讓
+    cmd 算錯批次檔自身的讀取位置、**把中文當指令執行**；BOM 會被當成第一行的一部分；
+    LF 結尾的 `.bat` 在某些 Windows 版本上整支不執行。"""
+    for name in ("啟動.vbs", "安裝.bat"):
+        b = (ROOT / name).read_bytes()
+        assert b[:3] != b"\xef\xbb\xbf", f"{name} 有 BOM"
+        assert b.count(b"\n") == b.count(b"\r\n"), f"{name} 混了 LF"
+        text = b.decode("cp950")        # 解不開就不是 cp950，當場丟例外
+        if name.endswith(".bat"):
+            head = [ln.strip().lower() for ln in text.splitlines()[:3]]
+            assert any(ln.startswith("chcp 950") for ln in head), (
+                f"{name} 開頭三行內沒有 chcp 950：中文會變亂碼")
 
 
 def test_the_launcher_keeps_a_way_back_to_uv():
@@ -486,19 +526,23 @@ def test_the_launcher_keeps_a_way_back_to_uv():
     ⚠️ **那兩道退路就是這個做法的全部安全性**：`uv run` 順手做掉的「環境沒同步就
     自動補起來」，換成直接叫 `pythonw` 之後沒有人做了。事前那道（`EnvFresh`：`.venv`
     要比 `pyproject.toml`／`uv.lock`／共用包的 `pyproject.toml` 都新）擋的是「相依改了
-    沒 sync」；事後那道（`FALLBACK_SECS`：很快就非正常結束＝GUI 根本沒開起來，用 uv
-    再跑一次）擋的是「`.venv` 被整包複製到一台沒有同一版 Python 的機器」——後者事前
-    那道看不出來，檔案都在、時間也對。
+    沒 sync」；事後那道（不到 5 秒就非正常結束＝GUI 根本沒開起來，用 uv 再跑一次）
+    擋的是「`.venv` 被整包複製到一台沒有同一版 Python 的機器」——後者事前那道看不
+    出來，檔案都在、時間也對。
 
     ⚠️ **拿掉任何一道都不會有徵狀**：快速路徑在開發機上永遠成功，壞掉的是別人的機器，
-    而症狀是「雙擊之後跳一個英文的 ModuleNotFoundError」或「什麼都沒發生」。"""
-    vbs = (ROOT / "啟動.vbs").read_text(encoding="cp950")
-    assert r"\.venv\Scripts\pythonw.exe" in vbs, "快速路徑不見了（或改了寫法）"
-    assert vbs.count('"uv run pythonw"') >= 2, (
+    而症狀是「雙擊之後跳一個英文的 ModuleNotFoundError」或「什麼都沒發生」。
+    ⚠️ 認的是**呼叫端那一行**，不是裸的 `EnvFresh(`——後者連函式的定義行都算數，
+    於是把呼叫整個換成 `If True Then` 也照樣綠。"""
+    src = _shipped_launcher()
+    assert r".venv\Scripts\pythonw.exe" in src, "快速路徑不見了（或改了寫法）"
+    assert src.count("uv run pythonw") >= 2, (
         "uv 的退路少了一處：事前判定走不通、事後重跑各要用到一次")
-    assert "Function EnvFresh" in vbs, "事前那道（EnvFresh）不見了"
-    assert "FALLBACK_SECS" in vbs and "Elapsed(t0)" in vbs, (
-        "事後那道（跑不到 FALLBACK_SECS 就失敗 -> 用 uv 再跑一次）不見了")
+    assert "Function EnvFresh" in src and "If EnvFresh(fso, here) Then" in src, (
+        "事前那道（EnvFresh）不見了")
+    assert "spent < 5" in src, "事後那道（不到 5 秒就失敗 -> 用 uv 再跑一次）不見了"
+    assert "And rc <> RC_SELF_REPORTED Then" in src, (
+        "事後那道沒排除自報過的失敗：GUI 自己跳過框了還會被 uv 重跑一次，框跳兩次")
 
 
 def test_the_launcher_message_box_uses_the_app_name():

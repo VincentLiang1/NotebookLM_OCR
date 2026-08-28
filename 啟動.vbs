@@ -1,87 +1,68 @@
-' 啟動.vbs —— 開起圖形介面，全程沒有黑視窗。
+' 啟動.vbs —— 開起圖形介面的視窗，全程沒有黑框。
 '
-' 與「啟動（顯示訊息）.bat」的差別只在後者留一個主控台視窗顯示訊息；這一邊
-' 用 pythonw 啟動、並把主控台隱藏起來，所以只看得到 GUI。
+' 這一邊用 pythonw 啟動、並把主控台整個藏起來，所以桌面上只看得到程式自己的視窗。
 '
 ' 代價是原本會印在那個視窗的東西（uv 的錯誤、Python 在 import 期就炸的
 ' traceback）沒有落點。作法：先收進系統暫存資料夾的一個暫存檔，程式沒能正常
 ' 結束時「當場把內容跳訊息框顯示出來」，然後把暫存檔刪掉——專案資料夾裡不留
-' 任何 log（使用者 2026-08-24 指示「遇到錯誤就立刻顯示，不必寫檔」）。
+' 任何東西。
 '
-' 程式自己的執行紀錄是另一回事：由 GUI 寫進專案底下的 logs 資料夾，一次執行
-' 一個檔、保留 30 天。這裡攔的是「GUI 還沒能力做任何事」的那一段。
+' 【注意】這裡攔的是「視窗還沒能力做任何事」的那一段。程式自己的執行紀錄是另
+' 一回事：由外層寫進專案底下的 logs 資料夾，一次執行一個檔、保留 30 天。
+'
+' 開頭那段「少了什麼檔案」的檢查擋的是這個部署方式唯一的失敗模式：整包複製搬家
+' 時漏掉東西，而 uv 與 Python 只吐得出英文的建置／匯入錯誤，說不出「你少複製了
+' 什麼」——最惡劣的是漏掉 pyproject.toml，那時連錯誤訊息都沒有。
+'
+' 【這個檔是產生出來的，不要手改】骨架住在 winkit（launcher.vbs.tmpl），這一份是
+' 它套上本專案的欄位之後的產物。改了骨架或欄位就重跑 tools/make_launcher.py，
+' 產物跟著程式碼一起進版（同 make_skin.py / make_icon.py 的規矩）。
+'
+' 【啟動的快路與退路】環境還是新的時候，直接跑 .venv 裡的 pythonw，跳過 uv 每次
+' 啟動都要做的專案解析與 lock 比對。換掉 uv run 就等於換掉它順手做的「環境沒同步
+' 就自動補起來」，所以退路有兩道、缺一不可：事前看 site-packages 的時間戳（任何一
+' 項輸入比它新就整個走 uv），事後看「非正常結束、而且不到 5 秒就結束」（那是 .venv
+' 被整包複製到另一台機器、而那台沒有同一版 Python 的樣子）。兩道各自的理由寫在
+' 下面它們自己那段。
 Option Explicit
 
 ' MsgBox 大約 1024 個字元就會被截掉，而有用的部分（例外的最後幾行）在尾巴
 Const MAX_MSG = 900
-' 這個結束碼是 GUI 用來說「失敗我自己已經跳過訊息框了，你不必再跳一次」的暗號
-' （pdf2ppt_gui_2.py 的 SELF_REPORTED_RC，tests/test_docs.py 釘著兩邊一致）。
-' 【注意】不可改成 1 或 2：那兩個是 Python 直譯器自己會回的（1＝未攔到的例外、
-' 2＝連 .py 都打不開，也就是只複製了這支 .vbs 的情況），撞上去會讓那些真正該
-' 顯示的失敗被靜靜吞掉。GUI 那邊也只在訊息框真的跳出來時才回這個值。
+Const APP_TITLE = "NotebookLM PDF → PPT 轉檔工具"
+' 這個結束碼是與程式講好的暗號：「我自己已經把訊息跳出來了，你不必再說一次」。
+' 【注意】不可以改成 1 或 2：那兩個是直譯器自己會回的值（1 = 未攔到的例外、
+' 2 = 連 .py 都打不開，也就是只複製了這個 .vbs 的情況），撞上去會讓那些真的需要
+' 顯示的失敗被靜靜吞掉。
 Const RC_SELF_REPORTED = 78
-' sh.Run 自己丟例外時 RunHidden 回這個值（連 cmd.exe 都叫不動，那已經不是這支腳本
-' 救得了的事）。挑負數是因為結束碼不會是負的，不可能跟真的 rc 撞在一起。
-Const RC_LAUNCH_FAILED = -1
-' 快速路徑「跑不到這麼久就非正常結束」就當作 GUI 根本沒開起來，改用 uv 再跑一次
-' （理由見下面那段）。取 5 秒是往安全那一邊靠：使用者真的用過視窗的話，光是選檔
-' 就不只 5 秒，所以不會把「用到一半才出錯」誤判成環境壞掉而白跑一次。
-Const FALLBACK_SECS = 5
-Const APP_TITLE = "NotebookLM PDF → PPT"
 
-Dim sh, fso, here, q, target, capPath, pyw, t0, rc, out, msg, projFile, kits, rel, missing
+Dim sh, fso, here, q, capPath, cmd, rc, out, msg, missing
+Dim usedFast, started, spent
 
 Set sh  = CreateObject("WScript.Shell")
 Set fso = CreateObject("Scripting.FileSystemObject")
 
 here    = fso.GetParentFolderName(WScript.ScriptFullName)
 q       = Chr(34)
-target  = here & "\pdf2ppt_gui_2.py"
 ' 攔訊息用的暫存檔放系統暫存資料夾（GetSpecialFolder(2)）：專案資料夾裡不留東西
 capPath = fso.BuildPath(fso.GetSpecialFolder(2).Path, fso.GetTempName())
 
 sh.CurrentDirectory = here
 
-' 【複製不完整的守門】專案資料夾是整包複製搬家的，而漏掉檔案時 uv 與 Python 吐的
-' 是英文訊息：那份訊息照樣會被下面攔下來跳出來，但它說不出「你少複製了東西」，
-' 而那正是這個部署方式唯一的失敗模式。2026-08-27 實測過兩種，第二種更糟：
-'     少了 pdf2ppt_gui_2.py -> can't open file ... No such file or directory（結束碼 2）
-'     少了 pyproject.toml   -> uv 往上找不到專案，就拿一個沒有任何相依的臨時環境
-'                              把 GUI 跑起來，啟動時完全沒有錯誤訊息，要等使用者
-'                              按下轉檔才在日誌裡看到 import 失敗
-' 【注意】這裡只檢查「GUI 自己檢查不到的那兩個」：套件本身（pdf2ppt\cli.py）由 GUI
-' 的 is_project_dir()／fail_no_project() 負責，它講得更具體，也會把資料夾路徑一起
-' 印出來——不要在這裡再做一份，兩份清單遲早只改一邊。
-' 【注意】清單由 tests/test_docs.py 釘著：這裡列的路徑必須真的存在於專案裡，否則
-' 守門會在正常的安裝上誤報，而症狀是每次啟動都跳「少了必要的檔案」、程式再也開不
-' 起來。訊息裡的檔名一律用 GetFileName 從被檢查的那條路徑取，不要另外手打一份。
-missing  = ""
-projFile = fso.BuildPath(here, "pyproject.toml")
-If Not fso.FileExists(projFile) Then
-    missing = missing & vbCrLf & "　　" & fso.GetFileName(projFile)
+' 【複製不完整的守門】專案資料夾是整包複製搬家的，而漏掉 src 或 pyproject.toml
+' 時，uv 與 Python 吐的是英文的建置／匯入錯誤。那份訊息照樣會被下面攔下來跳出
+' 來，但它說不出「你少複製了東西」這件事——而那正是這個部署方式唯一的失敗模式。
+' 【注意】檢查的清單由 tests/test_launcher.py 釘著：這裡列的路徑必須真的存在於
+' 專案裡，否則守門會在正常的安裝上誤報。
+missing = ""
+If Not fso.FileExists(fso.BuildPath(here, "pyproject.toml")) Then
+    missing = missing & vbCrLf & "　　pyproject.toml"
 End If
-If Not fso.FileExists(target) Then
-    missing = missing & vbCrLf & "　　" & fso.GetFileName(target)
+If Not fso.FileExists(fso.BuildPath(here, "pdf2ppt_gui_2.py")) Then
+    missing = missing & vbCrLf & "　　pdf2ppt_gui_2.py"
 End If
-' 【共用包】隔壁還有一個共用資料夾，靠 pyproject.toml 的 [tool.uv.sources] 以相對
-' 路徑相依進來（2026-08-28 接上）。那種相依【看不見】：只把這一個資料夾傳給別人
-' 時 uv sync 會失敗，而它吐的是 uv 自己的路徑錯誤，說不出「你少複製了隔壁那個
-' 資料夾」。使用者換電腦是複製整個 C:\SOURCE5\，那時兩個都在；會缺的是「只複製
-' 了這一個」的情況。
-' 【注意】它在哪裡是【讀出來的、不手抄】（2026-08-28）：uv 只吃字面值，所以
-' pyproject.toml 那一行非有不可，那裡就是唯一真值——共用資料夾哪天搬家或改名，
-' 只要改那一行，這道守門與下面的 EnvFresh 自己跟著走。手抄第二份的失效是沉默的：
-' 搬完家守門還在檢查舊路徑，於是【每一次正常啟動】都跳「少了必要的檔案」。
-' 【注意】這一行顯示的是【相對路徑】不是檔名：它跟專案自己那個同名，只印檔名的
-' 話訊息框上會並排兩個一模一樣的 pyproject.toml，使用者分不出少的是哪一個。
-kits = LocalSources(fso, projFile)
-For Each rel In Split(kits, vbTab)
-    If Len(rel) > 0 Then
-        If Not fso.FileExists(fso.BuildPath(here, rel & "\pyproject.toml")) Then
-            missing = missing & vbCrLf & "　　" & rel & "\pyproject.toml"
-        End If
-    End If
-Next
+If Not fso.FileExists(fso.BuildPath(here, "..\winkit\pyproject.toml")) Then
+    missing = missing & vbCrLf & "　　..\winkit\pyproject.toml"
+End If
 If Len(missing) > 0 Then
     MsgBox "這個資料夾裡少了必要的檔案：" & vbCrLf & missing & vbCrLf & vbCrLf & _
            here & vbCrLf & vbCrLf & _
@@ -95,47 +76,52 @@ End If
 ' traceback 直接讀會是亂碼）。改的是本行程的環境區塊，Run 出去的子行程繼承它。
 sh.Environment("PROCESS")("PYTHONIOENCODING") = "utf-8"
 
-' 【先走環境裡的 pythonw，走不通才交給 uv】2026-08-28。uv run 每次啟動都要解析
-' 專案、比對 uv.lock、確認環境同步，實測那一層要 35～40ms——而在「環境已經是新的」
-' 時候那 35～40ms 是白工，使用者付的是「按下圖示到視窗出現」的時間。
-' 【注意】剩下那一百多毫秒的 wscript 與 cmd 兩層【省不掉】：cmd 那一層是重導向、
-' 也就是「藏掉主控台之後錯誤往哪裡去」唯一的來源（見 GuiCmd）。
-'
-' 【注意】uv run 順手做掉的「環境沒同步就自動補起來」是真的會用到的保護，改成直接
-' 叫 pythonw 就沒有了，所以兩道都要留、缺一不可：
-'   一、事前（EnvFresh）：.venv 在不在、而且它比 pyproject.toml／uv.lock／隔壁共用包
-'       的 pyproject.toml 都新。任何一項對不上就整個走 uv，讓它去補。
-'   二、事後（FALLBACK_SECS）：快速路徑非正常結束、而且結束得很快，就用 uv 再跑一次。
-'       「.venv 被整包複製到另一台機器、但那台沒有同一版的 Python」只有這一道接得住
-'       ——那時 pythonw.exe 根本起不來，而事前那道看不出任何異狀（檔案都在、時間也對）。
-'
-' 【注意】這裡刻意【不用】fso.BuildPath(here, ...) 組 .venv 的路徑：那個寫法被
-' tests/test_docs.py 當成「複製不完整的守門清單」在檢查，列進去的每一條都必須真的
-' 存在，否則正常安裝也會被擋下來。而 .venv 不存在是【合法】狀態——它的答案是安靜
-' 退回 uv，不是跳錯誤框。
-pyw = here & "\.venv\Scripts\pythonw.exe"
-
-t0 = Timer
-If fso.FileExists(pyw) And EnvFresh(fso, here, kits) Then
-    rc = RunHidden(sh, GuiCmd(q, q & pyw & q, target, capPath))
-    If rc <> 0 And rc <> RC_SELF_REPORTED And Elapsed(t0) < FALLBACK_SECS Then
-        rc = RunHidden(sh, GuiCmd(q, "uv run pythonw", target, capPath))
-    End If
-Else
-    rc = RunHidden(sh, GuiCmd(q, "uv run pythonw", target, capPath))
+' 透過 cmd /c 才有重導向：WScript.Shell.Run 自己不支援 > 與 2>&1。
+' 【注意】cmd /c 的引號規則：整串外層包一對引號，內層路徑照常用各自的引號。
+' 寫成兩個雙引號想跳脫是錯的——cmd 不吃那套，而專案路徑含中文與可能的空格，
+' 這一點錯了就是「雙擊沒反應」。
+cmd = WrapCmd("uv run pythonw pdf2ppt_gui_2.py", q, capPath)
+usedFast = False
+' 【快速路徑】環境還是新的就直接跑 .venv 裡的 pythonw，跳過 uv 的專案解析與
+' lock 比對（實測那一層 32ms）。環境有任何一點對不上就不走這條，讓 uv 去補。
+If EnvFresh(fso, here) Then
+    cmd = WrapCmd(q & here & "\.venv\Scripts\pythonw.exe" & q & " pdf2ppt_gui_2.py", q, capPath)
+    usedFast = True
 End If
 
-If rc = RC_LAUNCH_FAILED Then
-    MsgBox "無法啟動程式。" & vbCrLf & vbCrLf & _
+' 【注意】兩個參數都不可改：0 = SW_HIDE（cmd 與 uv 都看不到），True = 等它
+' 結束——不等就拿不到結束碼，也就沒辦法在失敗時跳訊息框。代價是 wscript 行程
+' 會活到視窗關閉為止，這是刻意的。
+On Error Resume Next
+started = Timer
+rc = sh.Run(cmd, 0, True)
+If Err.Number <> 0 Then
+    MsgBox "無法啟動程式（" & Err.Description & "）。" & vbCrLf & vbCrLf & _
            "請先確認已安裝 uv（https://docs.astral.sh/uv/），" & vbCrLf & _
            "再執行「安裝.bat」建立環境。", vbCritical, APP_TITLE
     Cleanup fso, capPath
     WScript.Quit 1
 End If
+On Error GoTo 0
 
+' 【事後退路】快速路徑非正常結束、而且不到 5 秒就結束，就用 uv 再跑一次。
+' 這一道接的是事前那道看不見的情況：.venv 被整包複製到另一台機器、但那台沒有同一
+' 版 Python——檔案都在、時間也對，而 pythonw.exe 根本起不來。
+' 【注意】5 秒是往安全那邊靠：使用者真的用過視窗的話，光是選檔就不只 5 秒，所以
+' 「用到一半才出錯」不會被誤判成環境壞掉而重跑一次（那會讓視窗開兩次）。
+' 【注意】Timer 是「今天過了幾秒」，跨午夜會歸零、讓差變成負的，所以補 +86400。
+If usedFast And rc <> 0 And rc <> RC_SELF_REPORTED Then
+    spent = Timer - started
+    If spent < 0 Then spent = spent + 86400
+    If spent < 5 Then
+        cmd = WrapCmd("uv run pythonw pdf2ppt_gui_2.py", q, capPath)
+        rc = sh.Run(cmd, 0, True)
+    End If
+End If
+
+' 程式自己已經說明過了，這裡再跳一個「結束碼 N」的框只是噪音。
+' 安靜收工，但結束碼照傳出去（誰呼叫這支就看得出它失敗了）。
 If rc = RC_SELF_REPORTED Then
-    ' GUI 自己已經把原因說清楚了，這裡再跳一個「結束碼 78」的框只是噪音。
-    ' 安靜收工，但結束碼照樣往外傳（腳本呼叫得到的那一端仍看得出這趟失敗了）。
     Cleanup fso, capPath
     WScript.Quit rc
 End If
@@ -147,8 +133,7 @@ If rc <> 0 Then
         msg = msg & out
     Else
         msg = msg & "沒有攔到任何訊息。若是第一次使用，請先執行「安裝.bat」；" & _
-              "仍然這樣的話，在這個資料夾按住 Shift 點右鍵選在終端機中開啟，" & _
-              "執行 uv run python pdf2ppt_gui_2.py，訊息會直接顯示在視窗裡。"
+              "仍然這樣的話，在這個資料夾按住 Shift 點右鍵選在終端機中開啟，執行 uv run python pdf2ppt_gui_2.py，訊息會直接顯示在視窗裡。"
     End If
     MsgBox msg, vbCritical, APP_TITLE
 End If
@@ -156,133 +141,41 @@ End If
 Cleanup fso, capPath
 
 
-' 組出那條 cmd：透過 cmd /c 才有重導向（WScript.Shell.Run 自己不支援 > 與 2>&1）。
-' 【注意】cmd /c 的引號規則：整串外層包一對引號，內層路徑照常用各自的引號。寫成兩個
-' 雙引號想跳脫是錯的——cmd 不吃那套，而專案路徑含中文與可能的空格，這一點錯了就是
-' 「雙擊沒反應」。exe 那一段由呼叫端決定要不要加引號：帶路徑的要（可能有空格），
-' 「uv run pythonw」那種是三個 token、加了引號 cmd 會把整串當成一個檔名去找。
-Function GuiCmd(q, exe, script, capPath)
-    GuiCmd = "cmd /c " & q & exe & " " & q & script & q & _
-             " > " & q & capPath & q & " 2>&1" & q
+' 把要跑的那一串包成 cmd /c 的形狀。透過 cmd /c 才有重導向：WScript.Shell.Run
+' 自己不支援 > 與 2>&1。
+Function WrapCmd(inner, q, capPath)
+    WrapCmd = "cmd /c " & q & inner & " > " & q & capPath & q & " 2>&1" & q
 End Function
 
-
-' 跑一趟並回結束碼。
-' 【注意】兩個參數都不可改：0 = SW_HIDE（cmd 與 uv 都看不到），True = 等它結束——
-' 不等就拿不到結束碼，也就沒辦法在失敗時跳訊息框。代價是 wscript 行程會活到 GUI
-' 關閉為止，這是刻意的。
-Function RunHidden(sh, cmd)
-    On Error Resume Next
-    RunHidden = sh.Run(cmd, 0, True)
-    If Err.Number <> 0 Then
-        RunHidden = RC_LAUNCH_FAILED
-        Err.Clear
-    End If
-    On Error GoTo 0
-End Function
-
-
-' 這一趟花了幾秒。
-' 【注意】Timer 回的是「今天過了幾秒」，跨過午夜會歸零而讓差變成負的——不修的話，
-' 半夜那一刻啟動的失敗會被當成「一瞬間就結束」，白白多跑一次 uv。
-Function Elapsed(t0)
-    Elapsed = Timer - t0
-    If Elapsed < 0 Then Elapsed = Elapsed + 86400
-End Function
-
-
-' .venv 夠不夠新：拿 site-packages 的修改時間比對「會改變相依的那幾個檔」。
-' 【注意】比的是那個資料夾、不是 pyvenv.cfg：後者只在建立環境那一次寫，之後 uv sync
-' 裝了什麼、拿掉什麼都不會動到它，拿它當時間戳等於永遠回答「環境是新的」。
-' 【注意】這一支的失效方向是【誤判成舊的】：uv sync 認定沒事可做時不會動到
-' site-packages，於是只改了 pyproject.toml 的註解也會讓這裡回 False。那只是退回
-' uv run——也就是這次改動之前的行為，慢一點而已，不會壞。反過來（誤判成新的）才會
-' 讓「相依改了卻沒補」溜過去，所以任何一項對不上就整個放棄快速路徑。
-' 【注意】它【不會自己好】：uv sync 沒真的裝東西時只會印 Checked N packages、
-' 不回頭動 site-packages，於是快速路徑就這樣安靜地退休了（徵狀只有「好像有點
-' 慢」）。改完 pyproject.toml 要看一眼，作法見 docs/dev 那份啟動的文件。
-Function EnvFresh(fso, here, kits)
-    Dim stamp, site, rel
+' 環境還新不新：.venv\Lib\site-packages 的修改時間，不比下面那幾個輸入舊。
+' 任何一項比它新就整個走 uv，讓 uv run 順手做掉「環境沒同步就自動補起來」——那件事在快速路徑上
+' 沒有別人做了。
+' 【注意】比的是 site-packages 這個資料夾，不是 pyvenv.cfg：後者只在建立環境的那
+' 一次寫，之後 uv sync 裝了什麼、拿掉什麼都不會動到它，拿它當時間戳等於永遠回答
+' 「環境是新的」。
+' 【注意】這一支的失效方向是「誤判成舊的」：uv sync 沒事可做時不會動 site-packages，
+' 於是連改個註解都會讓它回 False——那只是退回改動前的行為，慢一點而已，不會壞。
+' 反過來（該補環境卻回 True）才危險，而事後那道退路正是為它準備的。
+Function EnvFresh(fso, here)
+    Dim stamp
     EnvFresh = False
-    site = here & "\.venv\Lib\site-packages"
-    If Not fso.FolderExists(site) Then Exit Function
-    stamp = fso.GetFolder(site).DateLastModified
+    If Not fso.FolderExists(here & "\.venv\Lib\site-packages") Then Exit Function
+    If Not fso.FileExists(here & "\.venv\Scripts\pythonw.exe") Then Exit Function
+    stamp = fso.GetFolder(here & "\.venv\Lib\site-packages").DateLastModified
     If Not NotNewer(fso, here & "\pyproject.toml", stamp) Then Exit Function
     If Not NotNewer(fso, here & "\uv.lock", stamp) Then Exit Function
-    ' 隔壁的共用包：它的【相依】改了，這邊的環境同樣要重裝（它的原始碼改了不必——
-    ' 那是 editable 安裝，import 直接讀那個資料夾）。位置同樣不手抄，由上面那道
-    ' 守門算好的同一份傳進來——同一個值用兩次，也就不會有第二份會漂的路徑。
-    For Each rel In Split(kits, vbTab)
-        If Len(rel) > 0 Then
-            If Not NotNewer(fso, fso.BuildPath(here, rel & "\pyproject.toml"), stamp) _
-               Then Exit Function
-        End If
-    Next
+    If Not NotNewer(fso, here & "\..\winkit\pyproject.toml", stamp) Then Exit Function
     EnvFresh = True
 End Function
 
 
-' pyproject.toml 的 [tool.uv.sources] 裡、以【相對路徑】相依進來的那幾個資料夾，
-' 用 vbTab 串起來回傳（VBScript 沒有回陣列的乾淨寫法，字串接 Split 就夠用）。這一
-' 支的存在理由只有一個：共用資料夾在哪裡【只准寫在 pyproject.toml 裡那一次】。
-' 【注意】非得看區段不可：同一份檔案的 [tool.pytest.ini_options] 裡有
-' pythonpath = ["."]，不分區段地找 path = 會抓到那個「.」（2026-08-28 先用 cmd 的
-' findstr 試過，抓回來的就是它）。
-' 【注意】失效方向是【漏報】：看不懂的寫法就當作沒有這條相依，守門少檢查一項、
-' 使用者退回去看 uv 的英文錯誤。反過來（抓出一個其實不存在的路徑）才會在正常
-' 安裝上誤報、把每一次啟動都擋掉，所以寧可放手也不猜。tests/test_docs.py 拿真正
-' 的 TOML 解析器比對這一支抓到的東西，寫法改成它看不懂的形狀時會紅。
-' 【注意】用 FSO 直接讀、也不用 RegExp，兩個都是為了時間：要抓的兩行（區段標頭
-' 與 path 那一行）純 ASCII，系統編碼解不解得開中文註解都不影響（Big5 的次位元組
-' 範圍不含換行，行不會被吃掉）；而 ADODB.Stream 與 New RegExp 這兩個物件光是建
-' 起來就各要幾毫秒，這一段在【雙擊到視窗出現】的路上（整條 540ms，下面那條快速
-' 路徑省的也才 35~40ms）。實測這一支 ~0ms，換成 RegExp 是 +2ms。
-Function LocalSources(fso, projFile)
-    Dim f, text, lines, i, line, inSec, a, b
-    LocalSources = ""
-    If Not fso.FileExists(projFile) Then Exit Function
-    text = ""
-    On Error Resume Next
-    Set f = fso.OpenTextFile(projFile, 1)
-    If Err.Number = 0 Then
-        If Not f.AtEndOfStream Then text = f.ReadAll
-        f.Close
-    End If
-    Err.Clear
-    On Error GoTo 0
-    If Len(text) = 0 Then Exit Function
-
-    inSec = False
-    lines = Split(Replace(text, vbCr, ""), vbLf)
-    For i = 0 To UBound(lines)
-        line = Trim(lines(i))
-        If Left(line, 1) = "[" Then
-            inSec = (LCase(line) = "[tool.uv.sources]")
-        ElseIf inSec And Left(line, 1) <> "#" Then
-            ' path -> 它後面的 = -> 再後面的第一對引號。這樣寫才不在乎空白怎麼
-            ' 排，也自動略過 git = "..." 那種不是相對路徑的來源。
-            a = InStr(line, "path")
-            If a > 0 Then a = InStr(a, line, "=")
-            If a > 0 Then a = InStr(a, line, """")
-            If a > 0 Then
-                b = InStr(a + 1, line, """")
-                If b > a + 1 Then
-                    LocalSources = LocalSources & vbTab & _
-                                   Replace(Mid(line, a + 1, b - a - 1), "/", "\")
-                End If
-            End If
-        End If
-    Next
-End Function
-
-
-' path 沒有比 stamp 新（不在也算過關——「檔案在不在」是上面那段守門的事，不是這裡的）
+' 這個檔不比 stamp 新。
+' 【注意】不存在的檔案不構成「環境過期」的理由：uv.lock 在還沒同步過的專案裡就
+' 不存在，而那種情況該由 EnvFresh 開頭那兩道（site-packages、pythonw）擋下來。
 Function NotNewer(fso, path, stamp)
-    If fso.FileExists(path) Then
-        NotNewer = (fso.GetFile(path).DateLastModified <= stamp)
-    Else
-        NotNewer = True
-    End If
+    NotNewer = True
+    If Not fso.FileExists(path) Then Exit Function
+    NotNewer = (fso.GetFile(path).DateLastModified <= stamp)
 End Function
 
 

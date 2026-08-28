@@ -129,9 +129,9 @@ render_page（PyMuPDF @200dpi）
 | `icongen` | 圖示畫法：超橢圓輪廓、漸層、超取樣、多尺寸 `.ico` 打包 |
 | `filelog` | 紀錄檔：兩層行程的分流標記、檔頭、輪替 |
 | `power` | 擋睡眠（`SetThreadExecutionState`） |
-| `launcher` | 無黑框啟動器 `.vbs` 的骨架樣板與產生器 |
+| `launcher` | 無黑框啟動器 `.vbs` 的骨架樣板與產生器（本專案 2026-08-28 接上，產物是根目錄那支「啟動.vbs」；欄位在 `tools/make_launcher.py`） |
 
-**落地形式是相對路徑相依，不是 git subtree**：使用者換電腦是複製整個 `C:\SOURCE5\`（2026-08-27 確認），所以共用包放在那底下、各專案用 `[tool.uv.sources]` 指 `{ path = "../winkit", editable = true }` 就成立——複製一次全部帶走、改一次兩邊拿到、debug 直接改隔壁資料夾、沒有 build step。⚠️ 代價是**相對路徑相依看不見**：哪天只把單一專案傳給別人，`uv sync` 會失敗、而錯誤訊息是 uv 的路徑錯誤，說不出「你少複製了隔壁那個資料夾」——所以「啟動.vbs」的守門清單多列了一行（守門與它的測試見 `docs/dev/gui-啟動與錯誤留底.md`）。⚠️ **`[tool.uv.sources]` 那一行是「共用包在哪裡」的唯一真值**（2026-08-28，使用者要求「搬家只改一個地方」）：`.vbs` 的守門與 `EnvFresh` 都是**讀它**讀出來的（`LocalSources`），「安裝.bat」的提示改成不提名字，`uv.lock` 由 uv 自己重寫——搬家或改名就只改那一行。
+**落地形式是相對路徑相依，不是 git subtree**：使用者換電腦是複製整個 `C:\SOURCE5\`（2026-08-27 確認），所以共用包放在那底下、各專案用 `[tool.uv.sources]` 指 `{ path = "../winkit", editable = true }` 就成立——複製一次全部帶走、改一次兩邊拿到、debug 直接改隔壁資料夾、沒有 build step。⚠️ 代價是**相對路徑相依看不見**：哪天只把單一專案傳給別人，`uv sync` 會失敗、而錯誤訊息是 uv 的路徑錯誤，說不出「你少複製了隔壁那個資料夾」——所以「啟動.vbs」的守門清單多列了一行（守門與它的測試見 `docs/dev/gui-啟動與錯誤留底.md`）。⚠️ **`[tool.uv.sources]` 那一行是「共用包在哪裡」的唯一真值**（2026-08-28，使用者要求「搬家只改一個地方」）：「啟動.vbs」是 `tools/make_launcher.py` 的產物，它的守門與 `EnvFresh` 都由那支用 `tomllib` **讀這一行**算出來（`_path_dep_guards()`）；「安裝.bat」的提示改成不提名字，`uv.lock` 由 uv 自己重寫——搬家或改名就只改那一行、重跑產生器。
 
 ### 接線：三個「本專案與姊妹專案不一樣」的地方
 
