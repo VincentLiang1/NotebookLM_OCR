@@ -79,7 +79,6 @@ tools/make_skin.py 畫。兩顆收合鈕與「開啟紀錄」坐在**卡片上**
 """
 from __future__ import annotations
 
-import ctypes
 import datetime
 import io
 import os
@@ -960,13 +959,23 @@ class App(tk.Tk):
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self.after(80, self._drain_log)
         self._refresh_input_state()
-        # 先把高度設對、再現身，最後才鉗工作區——⚠️ 這三步的**順序**就是
+        # 先把高度設對、再擺位置、再現身，最後才鉗工作區——⚠️ 這四步的**順序**就是
         # 「不要先閃一個小畫面」的全部：第一次 _fit_window() 跑在 withdraw 底下
         # （走它自己的未 map 分支，只設高度），deiconify() 出來時已經是最終尺寸；
         # 標題列高度與視窗實際落點要等 map 之後才量得到，所以鉗制與「掉出工作區
         # 就往上移」交給第二次。第二次通常什麼都不會改（target == cur），只有在
         # 工作區裝不下 reqheight 的小螢幕上才會動。
         self._fit_window()
+        # ⚠️ **落點要自己給**（2026-08-28，使用者：「啟動位置每次都不同」）：只設
+        # WxH 的話位置是 Windows 的 CW_USEDEFAULT 層疊規則決定的——每開一次往右下
+        # 推一格，不是置中、也不是上次那裡。擺法在共用包、兩支 app 同一份。
+        # ⚠️ **夾在這兩步中間是必要的**，前後都不行：
+        #  - 更早（例如 WIN_H0 那句旁邊）會拿 460 去算，而 _fit_window() 會把它撐到
+        #    549；geometry() 改高度時 Tk **不動左上角**（視窗只往下長），於是偏上的
+        #    係數就算在錯的數字上了。第一次 _fit_window() 正好把定案高度記進 _auto_h。
+        #  - 更晚（deiconify() 之後）就是「先出現在 A、再跳到 B」，那正是 withdraw
+        #    那一整套花力氣消掉的東西。
+        winui.place_window(self, self.px(WIN_W), self._auto_h)
         self.deiconify()
         self._fit_window()
 
@@ -1485,28 +1494,18 @@ class App(tk.Tk):
 
         ⚠️ 要問**視窗所在的那一個**螢幕，不是主螢幕：接了外接螢幕的機器上，主
         螢幕的工作區高度跟視窗實際待的地方可以差好幾百像素，而這個值是拿來決定
-        「視窗最高能多高」的。"""
-        if not sys.platform.startswith("win"):
-            return None
-        try:
-            class RECT(ctypes.Structure):
-                _fields_ = [("left", ctypes.c_long), ("top", ctypes.c_long),
-                            ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
+        「視窗最高能多高」的。
 
-            class MONITORINFO(ctypes.Structure):
-                _fields_ = [("cbSize", ctypes.c_ulong), ("rcMonitor", RECT),
-                            ("rcWork", RECT), ("dwFlags", ctypes.c_ulong)]
-
-            hwnd = ctypes.windll.user32.GetParent(self.winfo_id()) or self.winfo_id()
-            mon = ctypes.windll.user32.MonitorFromWindow(hwnd, 2)  # NEAREST
-            info = MONITORINFO()
-            info.cbSize = ctypes.sizeof(MONITORINFO)
-            if not ctypes.windll.user32.GetMonitorInfoW(mon,
-                                                        ctypes.byref(info)):
-                return None
-            return info.rcWork.top, info.rcWork.bottom
-        except Exception:
-            return None
+        ⚠️ **問 Windows 的那一段 2026-08-28 收進共用包**（`winkit.winui.work_area`，
+        隨 `place_window` 一起——「工作區在哪」兩支 app 的答案本來就該一樣）。共用包
+        那份順手修掉了這裡原本的一個坑：`MonitorFromWindow` 沒設 `restype`，而
+        HMONITOR 跟 HWND 一樣是**指標寬**、ctypes 預設卻是 32 位元的 `c_int`——被
+        截斷的 handle 不會當場爆炸，`GetMonitorInfoW` 只是回 0，症狀是「這台機器讀
+        不到工作區」，而且要配到高位元有值才偶爾發生一次。
+        ⚠️ 這一層 wrapper 留著是因為**這支只要上下緣**（共用包回的是四元組）：
+        `_fit_window` 從頭到尾只管高度，把左右也拆進去只會多兩個沒人用的名字。"""
+        work = winui.work_area(self)
+        return None if work is None else (work[1], work[3])
 
     def _fit_window(self) -> None:
         """把視窗高度調成剛好裝得下現在的內容，並鉗進所在螢幕的工作區。
