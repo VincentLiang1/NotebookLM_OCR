@@ -42,20 +42,22 @@ def test_page_line_is_parsed_from_the_real_cli_format():
 # 不樁 `single_instance_or_raise`**：要驗的正是那三格真值表有沒有真的接到 `main()`
 # 上。樁掉政策本身的話，「鎖被拿走、視窗卻找不到」那一格在這裡就永遠走不到——而它
 # 是唯一沒有目視徵狀的一格（開發機上第一個實例永遠好好地開著）。
-# ⚠️ 替身一律 `lambda *a, **k:`：`raise_existing_window(class_name=…)` 是**用關鍵字**
-# 傳的（共用包那邊刻意如此），只吃位置參數的替身會當場 TypeError，而那個紅是紅在
-# 測試管線上、不是紅在規則上。
+# ⚠️ 替身一律 `lambda *a, **k:`：共用包用關鍵字傳 `class_name`，只吃位置參數的替身
+# 會當場 TypeError——而那個紅是紅在測試管線上、不是紅在規則上。
 
 
-def _stub_single_instance(monkeypatch, did, *, claimed, found):
-    """把單一實例那兩支原始零件換掉，其餘讓 `main()` 照真的跑。"""
+def _stub_single_instance(monkeypatch, did, *, claimed, found, project_ok=True):
+    """把單一實例那兩支原始零件換掉，其餘讓 `main()` 照真的跑。
+
+    ⚠️ `project_ok` 開成參數、而不是讓呼叫端事後再 `setattr` 蓋一次：蓋回去的寫法
+    要對照兩個地方才知道最後生效的是哪個值。"""
     monkeypatch.setattr(winui, "claim_single_instance",
                         lambda *a, **k: did.append("claim") or claimed)
     monkeypatch.setattr(winui, "raise_existing_window",
                         lambda *a, **k: did.append("raise") or found)
     for name in ("enable_dpi_awareness", "set_app_user_model_id"):
         monkeypatch.setattr(winui, name, lambda *a, n=name, **k: did.append(n))
-    monkeypatch.setattr(G, "is_project_dir", lambda *a: True)
+    monkeypatch.setattr(G, "is_project_dir", lambda *a: project_ok)
     monkeypatch.setattr(G, "App", lambda *a: did.append("App") or _FakeApp())
 
 
@@ -94,7 +96,8 @@ def test_a_second_instance_that_cannot_find_the_window_opens_anyway(monkeypatch)
     _stub_single_instance(monkeypatch, did, claimed=False, found=False)
 
     assert G.main() == 0
-    assert "App" in did,         f"鎖被拿走、視窗又找不到，卻什麼都沒開也什麼都沒說：{did}"
+    assert "App" in did, \
+        f"鎖被拿走、視窗又找不到，卻什麼都沒開也什麼都沒說：{did}"
 
 
 def test_the_first_instance_opens_its_window_without_stealing_the_foreground(
@@ -116,7 +119,8 @@ def test_the_first_instance_opens_its_window_without_stealing_the_foreground(
     assert "raise" not in did, "第一個實例也去叫了一次前景"
     for name in ("enable_dpi_awareness", "set_app_user_model_id"):
         assert name in did, f"{name}() 沒被呼叫：{did}"
-        assert did.index(name) < did.index("App"),             f"{name}() 排到 App()（＝建 Tk）後面去了：{did}"
+        assert did.index(name) < did.index("App"), \
+            f"{name}() 排到 App()（＝建 Tk）後面去了：{did}"
 
 
 def test_a_copy_that_cannot_run_never_takes_the_lock(monkeypatch):
@@ -130,12 +134,15 @@ def test_a_copy_that_cannot_run_never_takes_the_lock(monkeypatch):
     ⚠️ 而且那份好的副本回的是 0 不是 `SELF_REPORTED_RC`，所以「啟動.vbs」不是「已說
     明過所以閉嘴」，是真的認為一切正常。"""
     did = []
-    _stub_single_instance(monkeypatch, did, claimed=True, found=False)
-    monkeypatch.setattr(G, "is_project_dir", lambda *a: False)
+    # ⚠️ 兩個都給 False：守門若被搬回 `is_project_dir()` 之前，`did` 就會多出
+    # `claim`（而且是搶得到的那一格），全等斷言當場紅。
+    _stub_single_instance(monkeypatch, did, claimed=False, found=False,
+                          project_ok=False)
     monkeypatch.setattr(G, "fail_no_project", lambda: did.append("box") or True)
 
     assert G.main() == G.SELF_REPORTED_RC
-    assert did == ["enable_dpi_awareness", "set_app_user_model_id", "box"],         f"跑不起來的副本做了它不該做的事（尤其是搶鎖）：{did}"
+    assert did == ["enable_dpi_awareness", "set_app_user_model_id", "box"], \
+        f"跑不起來的副本做了它不該做的事（尤其是搶鎖）：{did}"
 
 
 class _FakeApp:
