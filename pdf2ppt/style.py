@@ -688,6 +688,13 @@ def _group_color_runs(colors):
 BG_SEG_MERGE = 26     # columns within this Chebyshev distance share a bg run
 BG_SEG_STD = 16       # a clean flat fill's per-column color std stays below this
 BG_SEG_DIST = 32      # adjacent fills must differ by at least this to stay split
+# --- symmetric gradient surfaces (see _gradient_start_bg) ---
+GRAD_MIN_SWING = 30    # ends this far from the middle: a real gradient, not
+#                        a flat surface the ring already reads correctly
+GRAD_MAX_RESID = 8     # per-column residual of a quadratic fit; above this the
+#                        profile is lit geometry or artwork, not a smooth ramp
+GRAD_ENDS_MATCH = 20   # ends farther apart than this are a MONOTONIC gradient,
+#                        where no single end colour can win
 
 
 def glyph_char_iou(img: np.ndarray, bbox, ch: str) -> float | None:
@@ -730,23 +737,17 @@ def glyph_char_iou(img: np.ndarray, bbox, ch: str) -> float | None:
     return float((gi & ci).sum() / max(1, (gi | ci).sum()))
 
 
-def _detect_bg_segments(inner: np.ndarray):
-    """Run-length the box's per-column background color into flat fills.
+def _column_bg(inner: np.ndarray):
+    """(edge rows, per-column background colour) of a box, or None when the
+    box is too small to sample.
 
-    The background of each column is the median of its top+bottom edge rows
-    (above/below the glyph band, so pure background regardless of glyph
-    density — a full-column median is pulled dark by dense strokes, and a
-    single-bg-ref ink mask inverts in a banner's far fill). Consecutive
-    columns within BG_SEG_MERGE of a running mean form one fill. Handles a
-    two-tone banner (dark|light, p2 BSD caption) AND an inline highlight
-    (light|lavender|light, p2 `Perl` / `Email` code chips) the same way.
-    Returns [(x0_local, x1_local, rgb), ...] (>=2 clean fills covering the
-    width) or None for a uniform background or a smooth gradient — gradual
-    columns merge into one run, and a run whose own columns vary more than
-    BG_SEG_STD is rejected (a gradient/photo never resolves into flat
-    blocks). Internal boundaries are refined to the per-channel mid-
-    crossing so a fill edge lands in the inter-glyph gap, not inside a
-    boundary glyph (the source never splits a glyph's own fill)."""
+    Each column's background is the median of its top+bottom edge rows —
+    above/below the glyph band, so it reads pure background regardless of
+    glyph density (a full-column median is pulled dark by dense strokes, and
+    a single-bg-ref ink mask inverts in a banner's far fill), then smoothed
+    over 5 columns. Shared by the two readers of this profile,
+    _detect_bg_segments (flat fills) and _gradient_start_bg (smooth ramps),
+    so they cannot drift apart on what "the background of a column" means."""
     h, w = inner.shape[:2]
     if w < 80 or h < 12:
         return None
@@ -756,6 +757,92 @@ def _detect_bg_segments(inner: np.ndarray):
     if w >= 5:
         ker = np.ones(5) / 5.0
         colc = np.stack([np.convolve(colc[:, i], ker, "same") for i in range(3)], 1)
+    return edge, colc
+
+
+def _gradient_start_bg(inner: np.ndarray):
+    """The surface colour where this line's cover STARTS, when the line sits
+    on a symmetric left-right gradient. None for every other surface.
+
+    An embossed metal plate or ribbon paints a highlight down its middle, so
+    the surface under one line runs dark -> bright -> dark. Every colour
+    estimate in this module reports a single dominant colour, and on that
+    profile the dominant colour is the highlight: the cover comes out a pale
+    slab whose two ends sit ~70 units brighter than the plate it covers,
+    reading as a sheet of paper taped over the sign (Principle_8 p1's three
+    plates: cover [209,218,224] over ends measuring [148,162,170]). Take the
+    colour at the line's own starting edge instead. The cover's left boundary
+    then vanishes into the plate and only the highlight is lost, which reads
+    as a flatter plate rather than as a patch stuck on one.
+
+    Three gates, measured over the six-deck corpus (1284 lines with a
+    background). Together they catch exactly the six lines on that page's
+    plates and nothing else; each nearest miss below is the closest line in
+    the corpus that gate has to stop:
+
+    - swing: an end must differ from the middle by GRAD_MIN_SWING. Below that
+      the surface is flat enough that the ring colour is already right
+      (nearest miss 20.7 — trans p11's Key/Query chips, whose ring is right).
+    - fit: a gradient is a smooth ramp, so a quadratic fits it with a per-
+      column residual under GRAD_MAX_RESID. Lit geometry and artwork fail it
+      (nearest miss 23.5; this page's own Sorting "Valve" sits on the pipe's
+      shaded barrel at 13.8, and its swing of 70 would otherwise qualify).
+    - ends: the two ends must agree within GRAD_ENDS_MATCH. A MONOTONIC
+      gradient has no winning end — whichever is picked, the far end of the
+      cover is off by the full span — so those keep the dominant colour
+      (nearest miss 162.8: Transformer p8's teal->amber chip, ends 198 apart).
+    """
+    sampled = _column_bg(inner)
+    if sampled is None:
+        return None
+    # the 5-column smoothing's own first/last columns average in fewer
+    # samples than the rest, so they are not comparable ends
+    colc = sampled[1][2:-2]
+    w = len(colc)
+    if w < 20:
+        return None
+
+    t = np.linspace(-1.0, 1.0, w)
+    basis = np.stack([np.ones(w), t, t * t], axis=1)
+    coef, *_ = np.linalg.lstsq(basis, colc, rcond=None)
+    resid = np.sqrt(((colc - basis @ coef) ** 2).mean(axis=0)).max()
+    if float(resid) > GRAD_MAX_RESID:
+        return None
+
+    def cheb(a, b) -> float:
+        return float(np.abs(a - b).max())
+
+    seg = max(4, w // 10)
+    start = np.median(colc[:seg], axis=0)
+    mid = np.median(colc[w // 2 - seg // 2: w // 2 + seg // 2], axis=0)
+    end = np.median(colc[-seg:], axis=0)
+    if cheb(start, end) > GRAD_ENDS_MATCH:
+        return None
+    if max(cheb(start, mid), cheb(end, mid)) < GRAD_MIN_SWING:
+        return None
+    return tuple(int(v) for v in start.round())
+
+
+def _detect_bg_segments(inner: np.ndarray):
+    """Run-length the box's per-column background color (_column_bg) into
+    flat fills.
+
+    Consecutive columns within BG_SEG_MERGE of a running mean form one fill.
+    Handles a
+    two-tone banner (dark|light, p2 BSD caption) AND an inline highlight
+    (light|lavender|light, p2 `Perl` / `Email` code chips) the same way.
+    Returns [(x0_local, x1_local, rgb), ...] (>=2 clean fills covering the
+    width) or None for a uniform background or a smooth gradient — gradual
+    columns merge into one run, and a run whose own columns vary more than
+    BG_SEG_STD is rejected (a gradient/photo never resolves into flat
+    blocks). Internal boundaries are refined to the per-channel mid-
+    crossing so a fill edge lands in the inter-glyph gap, not inside a
+    boundary glyph (the source never splits a glyph's own fill)."""
+    sampled = _column_bg(inner)
+    if sampled is None:
+        return None
+    edge, colc = sampled
+    w = inner.shape[1]
 
     bounds, mean, n = [0], colc[0].copy(), 1
     for x in range(1, w):
@@ -1732,8 +1819,18 @@ def estimate_style(img: np.ndarray, line: Line, px_to_slide_pt: float,
     highlight_removed = False
     runs = _split_color_runs(img, line, bg_ref)
     if (bg_rgb is not None and not line.angle and not line.arc_sagitta):
-        local = _detect_bg_segments(inner)
-        if local is not None:
+        # ask about a smooth ramp FIRST: _detect_bg_segments claims gradual
+        # columns merge into one run, but a gradient steep enough to cross
+        # BG_SEG_MERGE inside the box breaks into stair-step "fills" that
+        # pass all three of its flatness checks (Principle_8 p1's centre
+        # plate came out dark|bright|dark, and the highlight-removal branch
+        # below then picked the bright step). A quadratic fit separates the
+        # two directly: painted fills are steps, a plate's sheen is a ramp.
+        grad = _gradient_start_bg(inner)
+        local = _detect_bg_segments(inner) if grad is None else None
+        if grad is not None:
+            bg_rgb = grad
+        elif local is not None:
             ox = float(max(0, x0))
             segs = [(ox + a, (ox + b if i < len(local) - 1 else float(x1)),
                      c) for i, (a, b, c) in enumerate(local)]
