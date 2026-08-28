@@ -11,8 +11,8 @@
 ' 一回事：由外層寫進專案底下的 logs 資料夾，一次執行一個檔、保留 30 天。
 '
 ' 開頭那段「少了什麼檔案」的檢查擋的是這個部署方式唯一的失敗模式：整包複製搬家
-' 時漏掉東西，而 uv 與 Python 只吐得出英文的建置／匯入錯誤，說不出「你少複製了
-' 什麼」——最惡劣的是漏掉 pyproject.toml，那時連錯誤訊息都沒有。
+' 時漏掉東西。uv 與 Python 吐得出來的是英文的建置／匯入錯誤，那份訊息照樣會被下
+' 面攔下來跳出來，但它說不出「你少複製了什麼」——而那是使用者唯一能動手修的事。
 '
 ' 【這個檔是產生出來的，不要手改】骨架住在 winkit（launcher.vbs.tmpl），這一份是
 ' 它套上本專案的欄位之後的產物。改了骨架或欄位就重跑 tools/make_launcher.py，
@@ -48,11 +48,10 @@ capPath = fso.BuildPath(fso.GetSpecialFolder(2).Path, fso.GetTempName())
 
 sh.CurrentDirectory = here
 
-' 【複製不完整的守門】專案資料夾是整包複製搬家的，而漏掉 src 或 pyproject.toml
-' 時，uv 與 Python 吐的是英文的建置／匯入錯誤。那份訊息照樣會被下面攔下來跳出
-' 來，但它說不出「你少複製了東西」這件事——而那正是這個部署方式唯一的失敗模式。
-' 【注意】檢查的清單由 tests/test_launcher.py 釘著：這裡列的路徑必須真的存在於
-' 專案裡，否則守門會在正常的安裝上誤報。
+' 【複製不完整的守門】要擋的是什麼、為什麼要擋，寫在檔頭那一段。
+' 【注意】這裡列的路徑必須真的存在於專案裡，否則守門會在「正常的安裝」上誤報，
+' 而畫面上那句話還信誓旦旦地說「請把整個專案資料夾完整複製過來」——使用者照做也
+' 不會好。清單由 tools/make_launcher.py 給，那一支旁邊有測試釘著這一條。
 missing = ""
 If Not fso.FileExists(fso.BuildPath(here, "pyproject.toml")) Then
     missing = missing & vbCrLf & "　　pyproject.toml"
@@ -121,6 +120,8 @@ End If
 
 ' 程式自己已經說明過了，這裡再跳一個「結束碼 N」的框只是噪音。
 ' 安靜收工，但結束碼照傳出去（誰呼叫這支就看得出它失敗了）。
+' 【注意】這一段必須留在下面那個「沒有正常結束」的訊息框前面：擺到後面去的話兩
+' 個框都會跳，而那正是這個結束碼要消滅的東西。
 If rc = RC_SELF_REPORTED Then
     Cleanup fso, capPath
     WScript.Quit rc

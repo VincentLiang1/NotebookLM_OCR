@@ -112,6 +112,63 @@ def test_shortening_a_path_never_eats_the_file_name():
     assert G._shorten_path(plain) == str(plain)
 
 
+class _FakeRoot:
+    """假的 Tk root：`fail_no_project()` 只用到這三支，而且都不開視窗。"""
+
+    def __init__(self, *, destroy_raises=False):
+        self.destroy_raises = destroy_raises
+
+    def withdraw(self):
+        pass
+
+    def iconbitmap(self, **kwargs):
+        pass
+
+    def destroy(self):
+        if self.destroy_raises:
+            raise RuntimeError("can't invoke \"destroy\" command")
+
+
+@pytest.mark.parametrize("destroy_raises", [False, True])
+def test_a_box_that_appeared_is_reported_as_appeared_even_if_teardown_blows_up(
+        monkeypatch, destroy_raises):
+    """框跳出來了就要回 True——**即使收尾那幾行炸掉**。
+
+    這個回傳值是與「啟動.vbs」講好的握手：True → 呼叫端回 `SELF_REPORTED_RC`，
+    啟動器安靜收工，使用者只看到我們這一個框；False → 回 1，啟動器把 stderr 那
+    一份也跳出來。
+
+    ⚠️ **回報「框」，不是回報「這段跑完了」**（2026-08-28）：`root.destroy()` 排在
+    `return True` 之前、又同在一個 `try` 裡的話，`destroy()` 一拋例外（直譯器已經
+    在拆、顯示工作階段被收掉、`iconbitmap` 留下的舊 handle）就會回報成「沒跳」——
+    而框其實已經給使用者看過了，於是啟動器再跳一次:同一件事兩個框，正是那套握手
+    要消滅的東西。
+    """
+    seen = []
+    monkeypatch.setattr(G.tk, "Tk",
+                        lambda: _FakeRoot(destroy_raises=destroy_raises))
+    monkeypatch.setattr(G.messagebox, "showerror",
+                        lambda title, msg: seen.append(title))
+    assert G.fail_no_project() is True
+    assert seen, "訊息框根本沒跳,卻回報跳了"
+
+
+@pytest.mark.parametrize("boom", ["tk", "showerror"])
+def test_a_box_that_never_appeared_is_reported_as_missing(monkeypatch, boom):
+    """框跳不出來就要回 False,讓啟動端接手顯示 stderr 那一份。
+
+    ⚠️ **不可以無條件回報「已說明過」**:Tk 起不來的機器上那等於什麼都沒說,而啟
+    動器收到那個結束碼會把攔到的訊息連同暫存檔一起刪掉——使用者手上什麼都不剩。
+    """
+    def explode(*args, **kwargs):
+        raise RuntimeError("no display")
+
+    monkeypatch.setattr(G.tk, "Tk",
+                        explode if boom == "tk" else lambda: _FakeRoot())
+    monkeypatch.setattr(G.messagebox, "showerror", explode)
+    assert G.fail_no_project() is False
+
+
 # --------------------------------------------------------------------------- #
 #  皮膚資產（assets/skin/）
 # --------------------------------------------------------------------------- #

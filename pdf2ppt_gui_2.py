@@ -827,7 +827,18 @@ def fail_no_project() -> bool:
     複製品缺東西」延後到最不好懂的時機才講。
 
     訊息仍然寫一份到 **stderr**：那是訊息框跳不出來時唯一的落點，「啟動（顯示
-    訊息）.bat」與直接下指令的人本來也是看那裡。"""
+    訊息）.bat」與直接下指令的人本來也是看那裡。
+
+    ⚠️ **「框跳出來了」在 `showerror()` 回來的當下就記下來，不是靠「走得到函式尾巴」
+    來表示**（2026-08-28 修正）：原本是 `showerror()` → `root.destroy()` →
+    `return True` 一路排在同一個 `try` 裡，於是 `destroy()` 拋例外（直譯器已經在拆、
+    顯示工作階段被收掉、`iconbitmap` 留下的舊 handle）就會落進 `except` 回 False
+    ——**框明明跳過了卻回報沒跳**。呼叫端因此回 1 而不是 `SELF_REPORTED_RC`，
+    「啟動.vbs」的安靜收工那段不會觸發，改去把上面那份 stderr 再跳一次：使用者為同
+    一件事看到兩個框，正是這整套握手要消滅的東西。
+    ⚠️ 反過來破約（回了這個碼、框卻沒跳出來）更慘：啟動器會把攔到的訊息連同暫存檔
+    一起刪掉，使用者手上什麼都不剩。所以這裡回報的必須是「框」，不是「這段跑完了」。
+    """
     msg = (f"這個資料夾裡找不到 pdf2ppt\\cli.py：\n{PROJECT_DIR}\n\n"
            "pdf2ppt_gui_2.py 必須跟 pdf2ppt 資料夾放在一起（也就是專案根目錄）。\n"
            "請把整個專案資料夾完整複製過來，再執行一次「安裝.bat」。")
@@ -836,6 +847,7 @@ def fail_no_project() -> bool:
         sys.stderr.flush()
     except Exception:
         pass
+    shown = False
     try:
         root = tk.Tk()
         root.withdraw()
@@ -845,12 +857,14 @@ def fail_no_project() -> bool:
         except Exception:
             pass
         messagebox.showerror("找不到 pdf2ppt 套件", msg)
+        shown = True          # ⚠️ 這一行要在 destroy() 之前（見 docstring 最後兩段）
         root.destroy()
-        return True
     except Exception:
         # 連 Tk 都起不來（沒有桌面工作階段之類）；stderr 那一份已經寫出去了，
-        # 回 False 讓啟動端接手顯示
-        return False
+        # 讓啟動端接手顯示。⚠️ 走到這裡不一定表示框沒跳——收尾階段炸掉時 shown
+        # 已經是 True，而那時該回報的是「跳過了」。
+        pass
+    return shown
 
 
 
