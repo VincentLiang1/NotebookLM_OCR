@@ -122,7 +122,7 @@ render_page（PyMuPDF @200dpi）
 | --- | --- |
 | `paths` | `appdata_root`／`local_appdata`／`known_folder`／`desktop_dir`／`start_menu_programs_dir`／`repo_root`／`package_dir`／`assets_dir` |
 | `palette` | 色票（設計系統，**不是身分**——「兩支程式在桌面上是一套」） |
-| `winui` | DPI、AppUserModelID、工作列進度／閃爍、深色標題列、跟隨系統的亮暗 |
+| `winui` | DPI、AppUserModelID、工作列進度／閃爍、深色標題列、跟隨系統的亮暗、**還原那一幀的底色**（`set_backdrop`，見 `windows-環境與入口.md` §5.14） |
 | `skin` | 皮膚載入器：四條來源、sprite 切貼、膠囊內距的兩道收口、快取指紋 |
 | `skingen` | 皮膚幾何：超橢圓取樣、九宮格、`plate`／`pill`／`block`／`pack` |
 | `shortcut` | `.lnk` 的 IShellLink／PropertyStore 那整套 COM（含把 AUMID 寫進去） |

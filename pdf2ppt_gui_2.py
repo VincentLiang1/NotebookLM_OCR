@@ -936,6 +936,17 @@ class App(tk.Tk):
         self.geometry(f"{self.px(WIN_W)}x{self.px(WIN_H0)}")
         self.minsize(self.px(WIN_W), self.px(WIN_MIN_H))
         self.configure(background=self.pal["page"])
+        # ⚠️ **底色要給兩邊**（2026-08-29，姊妹專案 MP4-2-SRT 那邊的使用者回報「按
+        # 工作列把程式叫起來時，效能差的電腦看得見它重新繪製畫面」）：上面那一行只管
+        # **Tk 自己畫的**那一份，而視窗最小化再還原時，Tk 還沒畫到的地方露出來的是
+        # **Windows 那一層** —— 它預設是黑的，被內容一塊一塊填掉。這邊視窗小一半、
+        # widget 少七個（1139×757／34 個，對那邊的 1499×1149／41 個），黑的時間
+        # ~79ms 對 ~150ms，所以一直沒被發現；但成因一模一樣（同日實測這支的兩個
+        # window class 的 hbrBackground 也都是 NULL），而兩支在同一台電腦的工作列上
+        # 並排，行為不一致比兩邊都沒做還糟。成因、實測與兩條量過而否決的路
+        # （WS_EX_COMPOSITED、把重繪併成一次）在 winui.set_backdrop。
+        # ⚠️ 位置在 withdraw() 之後：那一支會 update_idletasks()（見上面那段）。
+        winui.set_backdrop(self, self.pal["page"])
 
         self.log_queue: "queue.Queue" = queue.Queue()
         # 整個行程共用同一個 writer。pdf2ppt 的相依套件會在 import 當下就把
