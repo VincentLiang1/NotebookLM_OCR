@@ -35,6 +35,59 @@ def test_page_line_is_parsed_from_the_real_cli_format():
         assert not G._PAGE_RE.match(line), line
 
 
+def test_a_second_instance_only_raises_the_window_it_found(monkeypatch):
+    """程式已經開著時再點圖示：**不開第二個**，把既有那個叫到前景。
+
+    使用者 2026-08-28：「啟動多個程式沒有用」。兩份轉檔會搶同一顆 GPU、也各自載一份
+    OCR 模型，而兩邊都以為自己在正常轉檔——那是一種查不出來的慢。
+    ⚠️ **不可以只是安靜退出**：使用者剛按下桌面圖示，什麼都沒發生的話他會以為程式
+    壞了、再點兩三次。
+    ⚠️ **要擋在紀錄檔與 Tk 之前**：第二個實例只要走到 `App()`，`logs\\` 底下就會多長
+    一個只有檔頭的檔，而那個資料夾正是出事時要去讀的地方。
+    ⚠️ **離開碼必須是 0**：非 0 的話「啟動.vbs」會跳一個訊息框，而且會觸發它那道
+    「非正常結束又不到 5 秒就用 uv 再跑一次」的退路——那會真的開出第二個視窗，
+    正好是這條規則要擋的事。"""
+    did = []
+    monkeypatch.setattr(winui, "claim_single_instance", lambda: False)
+    monkeypatch.setattr(winui, "raise_existing_window",
+                        lambda *a: did.append("raise") or True)
+    for name in ("enable_dpi_awareness", "set_app_user_model_id"):
+        monkeypatch.setattr(winui, name, lambda *a, n=name: did.append(n))
+    monkeypatch.setattr(G, "is_project_dir",
+                        lambda *a: did.append("is_project_dir") or True)
+    monkeypatch.setattr(G, "App", lambda *a: did.append("App"))
+
+    assert G.main() == 0, "第二個實例回了非 0：啟動器會跳框、還會用 uv 再跑一次"
+    assert did == ["raise"], f"第二個實例做了它不該做的事：{did}"
+
+
+def test_the_first_instance_does_not_steal_the_foreground(monkeypatch):
+    """**第一個**實例不可以把視窗叫到前景。
+
+    ⚠️ 這是「工作列的提醒不可以搶前景」那條硬規則的邊界（見 `docs/dev/windows-環境
+    與入口.md` §5.3）：叫到前景只在「使用者剛點了圖示、而程式已經開著」那一種情況
+    成立。判斷寫反的話，每一次正常啟動都會多做一次前景切換——而開發機上看起來完全
+    正常，因為那時本來就要開視窗。"""
+    did = []
+    monkeypatch.setattr(winui, "claim_single_instance", lambda: True)
+    monkeypatch.setattr(winui, "raise_existing_window",
+                        lambda *a: did.append("raise") or True)
+    for name in ("enable_dpi_awareness", "set_app_user_model_id"):
+        monkeypatch.setattr(winui, name, lambda *a: None)
+    monkeypatch.setattr(G, "is_project_dir", lambda *a: True)
+    monkeypatch.setattr(G, "App", lambda *a: _FakeApp())
+
+    assert G.main() == 0
+    assert did == [], "第一個實例也去叫了一次前景"
+
+
+class _FakeApp:
+    """`main()` 只對 App 做一件事：`mainloop()`。不要真的建 Tk。"""
+
+    def mainloop(self) -> None:
+        pass
+
+
 def test_degraded_pages_are_grouped_and_translated():
     """同一種下場的頁碼併在一起講：30 頁降級 12 頁時逐頁列會長到放不下。"""
     out = G._fmt_degraded("page 3 dropped, page 7 image only, page 9 image only")
