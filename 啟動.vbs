@@ -29,7 +29,7 @@ Const RC_LAUNCH_FAILED = -1
 Const FALLBACK_SECS = 5
 Const APP_TITLE = "NotebookLM PDF → PPT"
 
-Dim sh, fso, here, q, target, capPath, pyw, t0, rc, out, msg, projFile, kitFile, missing
+Dim sh, fso, here, q, target, capPath, pyw, t0, rc, out, msg, projFile, kits, rel, missing
 
 Set sh  = CreateObject("WScript.Shell")
 Set fso = CreateObject("Scripting.FileSystemObject")
@@ -63,22 +63,30 @@ End If
 If Not fso.FileExists(target) Then
     missing = missing & vbCrLf & "　　" & fso.GetFileName(target)
 End If
-' 【共用包】winkit 住在隔壁資料夾，靠 pyproject.toml 的 [tool.uv.sources] 以相對
+' 【共用包】隔壁還有一個共用資料夾，靠 pyproject.toml 的 [tool.uv.sources] 以相對
 ' 路徑相依進來（2026-08-28 接上）。那種相依【看不見】：只把這一個資料夾傳給別人
 ' 時 uv sync 會失敗，而它吐的是 uv 自己的路徑錯誤，說不出「你少複製了隔壁那個
 ' 資料夾」。使用者換電腦是複製整個 C:\SOURCE5\，那時兩個都在；會缺的是「只複製
 ' 了這一個」的情況。
+' 【注意】它在哪裡是【讀出來的、不手抄】（2026-08-28）：uv 只吃字面值，所以
+' pyproject.toml 那一行非有不可，那裡就是唯一真值——共用資料夾哪天搬家或改名，
+' 只要改那一行，這道守門與下面的 EnvFresh 自己跟著走。手抄第二份的失效是沉默的：
+' 搬完家守門還在檢查舊路徑，於是【每一次正常啟動】都跳「少了必要的檔案」。
 ' 【注意】這一行顯示的是【相對路徑】不是檔名：它跟專案自己那個同名，只印檔名的
 ' 話訊息框上會並排兩個一模一樣的 pyproject.toml，使用者分不出少的是哪一個。
-kitFile = fso.BuildPath(here, "..\winkit\pyproject.toml")
-If Not fso.FileExists(kitFile) Then
-    missing = missing & vbCrLf & "　　..\winkit\pyproject.toml"
-End If
+kits = LocalSources(fso, projFile)
+For Each rel In Split(kits, vbTab)
+    If Len(rel) > 0 Then
+        If Not fso.FileExists(fso.BuildPath(here, rel & "\pyproject.toml")) Then
+            missing = missing & vbCrLf & "　　" & rel & "\pyproject.toml"
+        End If
+    End If
+Next
 If Len(missing) > 0 Then
     MsgBox "這個資料夾裡少了必要的檔案：" & vbCrLf & missing & vbCrLf & vbCrLf & _
            here & vbCrLf & vbCrLf & _
            "請把整個專案資料夾完整複製過來，再執行一次「安裝.bat」。" & vbCrLf & _
-           "（上面若列出 ..\winkit，那是隔壁的共用資料夾，要跟專案一起複製。）", _
+           "（上面若列出 .. 開頭的路徑，那是隔壁的共用資料夾，要跟專案一起複製。）", _
            vbCritical, APP_TITLE
     WScript.Quit 1
 End If
@@ -108,7 +116,7 @@ sh.Environment("PROCESS")("PYTHONIOENCODING") = "utf-8"
 pyw = here & "\.venv\Scripts\pythonw.exe"
 
 t0 = Timer
-If fso.FileExists(pyw) And EnvFresh(fso, here) Then
+If fso.FileExists(pyw) And EnvFresh(fso, here, kits) Then
     rc = RunHidden(sh, GuiCmd(q, q & pyw & q, target, capPath))
     If rc <> 0 And rc <> RC_SELF_REPORTED And Elapsed(t0) < FALLBACK_SECS Then
         rc = RunHidden(sh, GuiCmd(q, "uv run pythonw", target, capPath))
@@ -190,8 +198,11 @@ End Function
 ' site-packages，於是只改了 pyproject.toml 的註解也會讓這裡回 False。那只是退回
 ' uv run——也就是這次改動之前的行為，慢一點而已，不會壞。反過來（誤判成新的）才會
 ' 讓「相依改了卻沒補」溜過去，所以任何一項對不上就整個放棄快速路徑。
-Function EnvFresh(fso, here)
-    Dim stamp, site
+' 【注意】它【不會自己好】：uv sync 沒真的裝東西時只會印 Checked N packages、
+' 不回頭動 site-packages，於是快速路徑就這樣安靜地退休了（徵狀只有「好像有點
+' 慢」）。改完 pyproject.toml 要看一眼，作法見 docs/dev 那份啟動的文件。
+Function EnvFresh(fso, here, kits)
+    Dim stamp, site, rel
     EnvFresh = False
     site = here & "\.venv\Lib\site-packages"
     If Not fso.FolderExists(site) Then Exit Function
@@ -199,9 +210,69 @@ Function EnvFresh(fso, here)
     If Not NotNewer(fso, here & "\pyproject.toml", stamp) Then Exit Function
     If Not NotNewer(fso, here & "\uv.lock", stamp) Then Exit Function
     ' 隔壁的共用包：它的【相依】改了，這邊的環境同樣要重裝（它的原始碼改了不必——
-    ' 那是 editable 安裝，import 直接讀那個資料夾）。
-    If Not NotNewer(fso, here & "\..\winkit\pyproject.toml", stamp) Then Exit Function
+    ' 那是 editable 安裝，import 直接讀那個資料夾）。位置同樣不手抄，由上面那道
+    ' 守門算好的同一份傳進來——同一個值用兩次，也就不會有第二份會漂的路徑。
+    For Each rel In Split(kits, vbTab)
+        If Len(rel) > 0 Then
+            If Not NotNewer(fso, fso.BuildPath(here, rel & "\pyproject.toml"), stamp) _
+               Then Exit Function
+        End If
+    Next
     EnvFresh = True
+End Function
+
+
+' pyproject.toml 的 [tool.uv.sources] 裡、以【相對路徑】相依進來的那幾個資料夾，
+' 用 vbTab 串起來回傳（VBScript 沒有回陣列的乾淨寫法，字串接 Split 就夠用）。這一
+' 支的存在理由只有一個：共用資料夾在哪裡【只准寫在 pyproject.toml 裡那一次】。
+' 【注意】非得看區段不可：同一份檔案的 [tool.pytest.ini_options] 裡有
+' pythonpath = ["."]，不分區段地找 path = 會抓到那個「.」（2026-08-28 先用 cmd 的
+' findstr 試過，抓回來的就是它）。
+' 【注意】失效方向是【漏報】：看不懂的寫法就當作沒有這條相依，守門少檢查一項、
+' 使用者退回去看 uv 的英文錯誤。反過來（抓出一個其實不存在的路徑）才會在正常
+' 安裝上誤報、把每一次啟動都擋掉，所以寧可放手也不猜。tests/test_docs.py 拿真正
+' 的 TOML 解析器比對這一支抓到的東西，寫法改成它看不懂的形狀時會紅。
+' 【注意】用 FSO 直接讀、也不用 RegExp，兩個都是為了時間：要抓的兩行（區段標頭
+' 與 path 那一行）純 ASCII，系統編碼解不解得開中文註解都不影響（Big5 的次位元組
+' 範圍不含換行，行不會被吃掉）；而 ADODB.Stream 與 New RegExp 這兩個物件光是建
+' 起來就各要幾毫秒，這一段在【雙擊到視窗出現】的路上（整條 540ms，下面那條快速
+' 路徑省的也才 35~40ms）。實測這一支 ~0ms，換成 RegExp 是 +2ms。
+Function LocalSources(fso, projFile)
+    Dim f, text, lines, i, line, inSec, a, b
+    LocalSources = ""
+    If Not fso.FileExists(projFile) Then Exit Function
+    text = ""
+    On Error Resume Next
+    Set f = fso.OpenTextFile(projFile, 1)
+    If Err.Number = 0 Then
+        If Not f.AtEndOfStream Then text = f.ReadAll
+        f.Close
+    End If
+    Err.Clear
+    On Error GoTo 0
+    If Len(text) = 0 Then Exit Function
+
+    inSec = False
+    lines = Split(Replace(text, vbCr, ""), vbLf)
+    For i = 0 To UBound(lines)
+        line = Trim(lines(i))
+        If Left(line, 1) = "[" Then
+            inSec = (LCase(line) = "[tool.uv.sources]")
+        ElseIf inSec And Left(line, 1) <> "#" Then
+            ' path -> 它後面的 = -> 再後面的第一對引號。這樣寫才不在乎空白怎麼
+            ' 排，也自動略過 git = "..." 那種不是相對路徑的來源。
+            a = InStr(line, "path")
+            If a > 0 Then a = InStr(a, line, "=")
+            If a > 0 Then a = InStr(a, line, """")
+            If a > 0 Then
+                b = InStr(a + 1, line, """")
+                If b > a + 1 Then
+                    LocalSources = LocalSources & vbTab & _
+                                   Replace(Mid(line, a + 1, b - a - 1), "/", "\")
+                End If
+            End If
+        End If
+    Next
 End Function
 
 

@@ -30,7 +30,9 @@
 """
 import importlib
 import re
-from pathlib import Path
+import subprocess
+import tomllib
+from pathlib import Path, PurePosixPath
 
 import winkit
 
@@ -182,6 +184,12 @@ def test_docs_do_not_point_at_files_that_do_not_exist():
             if stem.parent.is_dir() and any(stem.parent.glob(stem.name + "*")):
                 continue
             problems.append(f"{doc} 指向不存在的 {hit}")
+        # ⚠️ `..\某某` 是**隔壁那個資料夾**（共用包）。程式已經不看這種字面值了
+        # （改讀 `pyproject.toml` 的 `[tool.uv.sources]`），但敘述照樣會過期：
+        # 共用包搬家或改名之後，這幾句還在教人去看一個不存在的地方。
+        for hit in set(re.findall(r"\.\.[\\/]([A-Za-z0-9_.-]+)", text)):
+            if not (ROOT.parent / hit).exists():
+                problems.append(f"{doc} 指向不存在的隔壁資料夾 ../{hit}")
     assert not problems, "死指路：\n  " + "\n  ".join(problems)
 
 
@@ -376,6 +384,99 @@ def test_the_launcher_guard_lists_files_that_really_exist():
     inside = sorted(n for n in checked if n.replace("\\", "/").startswith("pdf2ppt/"))
     assert not inside, (
         f"守門伸進 pdf2ppt 套件裡了 {inside}：那是 fail_no_project() 的工作")
+
+
+def _uv_local_sources():
+    """`pyproject.toml` 的 `[tool.uv.sources]` 裡以**相對路徑**相依進來的資料夾。
+
+    這是「共用資料夾在哪裡」的**唯一真值**：uv 只吃字面值，所以那一行非寫死在
+    那裡不可——反過來說，別處就一份都不准再抄（下面三支釘著）。"""
+    with (ROOT / "pyproject.toml").open("rb") as fh:
+        sources = tomllib.load(fh)["tool"]["uv"]["sources"]
+    return {v["path"] for v in sources.values()
+            if isinstance(v, dict) and "path" in v}
+
+
+def test_every_local_uv_source_really_sits_where_pyproject_says():
+    r"""`[tool.uv.sources]` 列的每個相對路徑都要真的指得到一個專案。
+
+    ⚠️ **這一支守的是誤報**，理由與上面那支守門完全一樣：「啟動.vbs」的守門
+    改成**讀這一份**（2026-08-28）之後，這裡寫錯就等於清單寫錯——**每一次正常
+    的啟動**都會跳「少了必要的檔案」，而它是使用者唯一的入口。`uv sync` 也會
+    跟著失敗，但它吐的是英文的路徑錯誤，說不出少了什麼。"""
+    rels = _uv_local_sources()
+    assert rels, "[tool.uv.sources] 一個相對路徑相依都不剩了？守門會整個空掉"
+    bad = sorted(r for r in rels if not (ROOT / r / "pyproject.toml").is_file())
+    assert not bad, f"pyproject.toml 指到的共用資料夾不在那裡：{bad}"
+
+
+def test_the_entry_files_do_not_write_down_where_the_shared_folder_lives():
+    r"""共用資料夾搬家或改名時**只改 `pyproject.toml` 那一行**（使用者
+    2026-08-28 要求「只改一個地方就改好」）。所以兩個入口檔裡不可以有第二份
+    字面值：「啟動.vbs」用讀的（`LocalSources`），「安裝.bat」那句提示改成不
+    提名字（批次檔沒有可靠的 TOML 讀法——用 `findstr` 抓會抓到
+    `[tool.pytest.ini_options]` 的 `pythonpath = ["."]`，2026-08-28 實測）。
+
+    ⚠️ **手抄一份的失效是沉默的**：搬完家 `.vbs` 的守門還在檢查舊路徑，於是
+    每一次**正常**啟動都跳「少了必要的檔案」；`.bat` 那句則是搬完家還在教使用者
+    去找一個已經不存在的資料夾。兩邊都不會有人來報，而改的人不會想到要看它們。"""
+    for name in ("啟動.vbs", "安裝.bat"):
+        text = (ROOT / name).read_text(encoding="cp950")
+        for rel in sorted(_uv_local_sources()):
+            for shape in (rel, rel.replace("/", "\\"), PurePosixPath(rel).name):
+                assert shape not in text, (
+                    f"{name} 又寫死了一份「{shape}」——共用資料夾在哪裡是"
+                    " pyproject.toml 的 [tool.uv.sources] 的事，這裡要嘛用讀的、"
+                    "要嘛不提")
+
+
+def test_the_readme_calls_the_shared_folder_by_its_current_name():
+    """`README.md` 的「資料夾複製不完整時」那一段**指名道姓**講隔壁那個資料夾。
+
+    程式已經不看名字了（改讀 `[tool.uv.sources]`），但**給人看的那一句還是要對**
+    ——搬完家或改完名之後，那句話會繼續教使用者去找一個不存在的資料夾，而使用者
+    正是在「東西不見了」的時候才讀它。名字寫在 `pyproject.toml`，這裡只要求
+    README 講的是**現在那一個**。"""
+    missing = sorted(PurePosixPath(rel).name for rel in _uv_local_sources()
+                     if PurePosixPath(rel).name not in README_MD)
+    assert not missing, (
+        f"README 沒提到現在的共用資料夾 {missing}——它那一段還在講舊名字？")
+
+
+def test_the_launcher_parses_the_same_sources_a_real_toml_parser_sees(tmp_path):
+    r"""「啟動.vbs」的 `LocalSources` 是一支手寫的迷你剖析器（VBScript 沒有 TOML
+    解析器，而守門必須在 Python 起來之前就知道答案）。這一支拿**真正的** TOML
+    解析器跟它對答案，而且跑的是**出貨的那一份**——把那支函式原封不動抽出來餵給
+    `cscript`，不是在這裡照它的規則再寫一次（再寫一次就等於兩份會各自漂的程式）。
+
+    ⚠️ **它的失效方向是漏報，而漏報是沉默的**：把 `[tool.uv.sources]` 改寫成它
+    看不懂的形狀（多行表、`path` 跟鍵不同行），守門就靜靜地少檢查一項，使用者
+    退回去看 uv 的英文錯誤——不會有任何徵狀。2026-08-28 實測過一個真的坑：不分
+    區段地找 `path =` 會抓到 `[tool.pytest.ini_options]` 的 `pythonpath = ["."]`。"""
+    vbs = (ROOT / "啟動.vbs").read_text(encoding="cp950")
+    assert "kits = LocalSources(fso, projFile)" in vbs, (
+        "守門沒有去讀 pyproject.toml（或改了寫法）")
+    assert "EnvFresh(fso, here, kits)" in vbs, (
+        "EnvFresh 沒有吃守門算好的那一份：兩處各讀一次就是兩份會漂的路徑")
+    fn = re.search(r"^Function LocalSources\(.*?^End Function$", vbs, re.M | re.S)
+    assert fn, "啟動.vbs 的 LocalSources 不見了（改名要一起改這支測試）"
+
+    # ⚠️ 探針寫進 pytest 的 tmp_path、不落在專案裡（驗證產物要清乾淨那條）
+    probe = tmp_path / "probe.vbs"
+    driver = "\r\n".join([
+        "Option Explicit",
+        'Dim fso : Set fso = CreateObject("Scripting.FileSystemObject")',
+        "WScript.Echo LocalSources(fso, WScript.Arguments(0))",
+        "", fn.group(0), ""])
+    probe.write_bytes(driver.encode("cp950"))
+    done = subprocess.run(
+        ["cscript", "//nologo", str(probe), str(ROOT / "pyproject.toml")],
+        capture_output=True, text=True, encoding="cp950", errors="replace")
+    assert done.returncode == 0, f"cscript 跑不起來：{done.stderr}"
+    seen = {s.replace("\\", "/") for s in done.stdout.strip().split("\t") if s}
+    assert seen == _uv_local_sources(), (
+        f"啟動.vbs 抓到 {sorted(seen)}，pyproject.toml 實際上是 "
+        f"{sorted(_uv_local_sources())}——守門會漏檢查沒抓到的那幾個")
 
 
 def test_the_launcher_keeps_a_way_back_to_uv():

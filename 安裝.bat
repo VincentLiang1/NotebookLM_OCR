@@ -9,8 +9,12 @@ if errorlevel 1 (
   echo.
   echo 安裝失敗。兩個最常見的原因：
   echo   1. 還沒安裝 uv：https://docs.astral.sh/uv/
-  echo   2. 隔壁的 winkit 資料夾沒有跟著複製過來 —— 本工具靠相對路徑用它，
-  echo      它必須與這個資料夾並排（也就是 ..\winkit）。
+  rem 共用資料夾的名字與位置刻意不寫在這裡：唯一真值是 pyproject.toml 的
+  rem [tool.uv.sources]，搬家只改那一行。批次檔沒有可靠的 TOML 讀法（用
+  rem findstr 抓 path 會抓到 pytest 那段的 pythonpath 的那個點，2026-08-28
+  rem 實測），所以這裡改成一句不會過期的話，精確的清單交給「啟動.vbs」。
+  echo   2. 隔壁的共用資料夾沒有跟著複製過來 —— 本工具靠相對路徑用它，
+  echo      只複製這一個資料夾是不夠的，請把它的上一層整個複製過來。
   pause
   exit /b 1
 )
