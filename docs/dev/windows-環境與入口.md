@@ -254,7 +254,7 @@ GUI 端在 `pdf2ppt_gui_2.py` 的 `App._apply_window_icon()`。⚠️ 兩個點�
 
 ### 拖放與貼上
 
-`enable_file_drop()`（`tkinterdnd2`，MIT，附 tkdnd 二進位）。⚠️ **不要為了它把基底類別換成 `TkinterDnD.Tk`**：那個類別的 `__init__` 在載不到 tkdnd 時直接 raise，等於用一個純加分的功能換掉「這支程式一定開得起來」。改成自己呼叫 `TkinterDnD._require()`（同一支函式）再註冊**子控制項**——⚠️ `tkinter.Tk` **不是** `BaseWidget` 的子類，而 tkinterdnd2 是把 `drop_target_register` 掛在 `BaseWidget` 上的，所以根視窗本身沒有那個方法。⚠️ `event.data` 是 **Tcl list 字面值**（含空白的路徑會被 `{}` 包起來），要用 `tk.splitlist()` 拆。
+`enable_file_drop()`（`tkinterdnd2`，MIT，附 tkdnd 二進位）。⚠️ **這件事拆成兩半，而且第二半不在啟動路徑上**（2026-08-28）：`file_drop_available()` 只做 import（實測 0.6 ms，`_build_ui` 當場問，提示字「，或把 PDF 直接拖進這個視窗」據此寫），真正把 tkdnd 載起來的 `_require()` **實測 44～85 ms**，延到 `deiconify()` 之後的 `App._late_file_drop`（掛在 `after_idle` 上，排在「把視窗畫出來」那些 idle 工作後面）。⚠️ 拆的理由是**提示字不可以閃**：延後整件事的話，第一幀會先寫「不能拖」再改口，而 import 便宜到可以留下來回答「套件在不在」——那正是提示字需要的全部。⚠️ `dnd_ok` 的**唯一真值仍是 `enable_file_drop()`**：套件裝了而 .dll 載不起來（架構不合、資安軟體擋）只有真的走一趟才知道，那時 `_late_file_drop` 會改口（提示字說得出「可以拖進來」，就不能其實接不住）。⚠️ **不要為了它把基底類別換成 `TkinterDnD.Tk`**：那個類別的 `__init__` 在載不到 tkdnd 時直接 raise，等於用一個純加分的功能換掉「這支程式一定開得起來」。改成自己呼叫 `TkinterDnD._require()`（同一支函式）再註冊**子控制項**——⚠️ `tkinter.Tk` **不是** `BaseWidget` 的子類，而 tkinterdnd2 是把 `drop_target_register` 掛在 `BaseWidget` 上的，所以根視窗本身沒有那個方法。⚠️ `event.data` 是 **Tcl list 字面值**（含空白的路徑會被 `{}` 包起來），要用 `tk.splitlist()` 拆。
 
 Ctrl+V 貼上路徑綁在整個視窗上。⚠️ **焦點在輸入類控制項上時一律放行**（回 `None` 讓 Tk 走預設貼上），否則在「頁碼」欄貼一段文字會同時把輸入 PDF 換掉。
 

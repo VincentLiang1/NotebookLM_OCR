@@ -378,6 +378,28 @@ def test_the_launcher_guard_lists_files_that_really_exist():
         f"守門伸進 pdf2ppt 套件裡了 {inside}：那是 fail_no_project() 的工作")
 
 
+def test_the_launcher_keeps_a_way_back_to_uv():
+    r"""「啟動.vbs」2026-08-28 起先跑 `.venv\Scripts\pythonw.exe`，`uv` 只在走不通時
+    才出場（省掉 `uv run` 解析專案、比對 lock 的 35～40ms）。
+
+    ⚠️ **那兩道退路就是這個做法的全部安全性**：`uv run` 順手做掉的「環境沒同步就
+    自動補起來」，換成直接叫 `pythonw` 之後沒有人做了。事前那道（`EnvFresh`：`.venv`
+    要比 `pyproject.toml`／`uv.lock`／共用包的 `pyproject.toml` 都新）擋的是「相依改了
+    沒 sync」；事後那道（`FALLBACK_SECS`：很快就非正常結束＝GUI 根本沒開起來，用 uv
+    再跑一次）擋的是「`.venv` 被整包複製到一台沒有同一版 Python 的機器」——後者事前
+    那道看不出來，檔案都在、時間也對。
+
+    ⚠️ **拿掉任何一道都不會有徵狀**：快速路徑在開發機上永遠成功，壞掉的是別人的機器，
+    而症狀是「雙擊之後跳一個英文的 ModuleNotFoundError」或「什麼都沒發生」。"""
+    vbs = (ROOT / "啟動.vbs").read_text(encoding="cp950")
+    assert r"\.venv\Scripts\pythonw.exe" in vbs, "快速路徑不見了（或改了寫法）"
+    assert vbs.count('"uv run pythonw"') >= 2, (
+        "uv 的退路少了一處：事前判定走不通、事後重跑各要用到一次")
+    assert "Function EnvFresh" in vbs, "事前那道（EnvFresh）不見了"
+    assert "FALLBACK_SECS" in vbs and "Elapsed(t0)" in vbs, (
+        "事後那道（跑不到 FALLBACK_SECS 就失敗 -> 用 uv 再跑一次）不見了")
+
+
 def test_the_launcher_message_box_uses_the_app_name():
     """「啟動.vbs」的訊息框標題是 `pdf2ppt/brand.py` 那個名字的**短版手抄**。
 

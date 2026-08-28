@@ -752,6 +752,25 @@ def _shorten_path(path: Path, budget: int = 52) -> str:
     return f"{text[:head]}…\\{name}" if head else f"…\\{name}"
 
 
+def file_drop_available() -> bool:
+    """`tkinterdnd2` 這個套件在不在（拖放這件事**便宜的那一半**，實測 0.6ms）。
+
+    ⚠️ **拆成兩半是為了讓提示字在第一幀就正確、又不必為它等 85ms**：真正花時間的
+    是 `enable_file_drop()` 裡的 `_require()`（載 tkdnd 的 Tcl 套件與 .dll，實測
+    44–85ms），而 import 本身便宜到可以留在啟動路徑上。提示字（「，或把 PDF 直接拖
+    進這個視窗」）只需要知道**套件在不在**，那正是這一支答得起的問題。
+
+    ⚠️ 它回 True **不保證接得上**：.dll 在這台機器上載不載得起來，只有
+    `enable_file_drop()` 真的走一趟才知道，所以那邊仍然是 `dnd_ok` 的唯一真值
+    （見 `App._late_file_drop`）。
+    """
+    try:
+        import tkinterdnd2  # noqa: F401
+        return True
+    except Exception:
+        return False
+
+
 def enable_file_drop(widgets, on_paths) -> bool:
     """讓這些控制項接得住從檔案總管拖進來的檔案，回傳有沒有接上。
 
@@ -978,6 +997,12 @@ class App(tk.Tk):
         winui.place_window(self, self.px(WIN_W), self._auto_h)
         self.deiconify()
         self._fit_window()
+        # ⚠️ **拖放排在最後、而且排進 idle 佇列**（2026-08-28）：載 tkdnd 要 44–85ms，
+        # 而使用者要用到它至少得先把游標移到檔案總管去——那段時間遠比 85ms 長。
+        # `after_idle` 讓它排在「把視窗畫出來」那些 idle 工作後面，所以畫面先出來。
+        # ⚠️ 提示字不會因此閃動：`_build_ui` 已經用便宜的 import 問過「套件在不在」
+        # 並據此寫好那句話（見 `file_drop_available`）。
+        self.after_idle(self._late_file_drop)
 
     # ---- 外觀 ----
     def _apply_window_icon(self) -> None:
@@ -1409,9 +1434,11 @@ class App(tk.Tk):
         self._append("提示：首次轉檔會自動下載 OCR 模型（約數十 MB），"
                      "期間進度條不會報頁數，請耐心等候。\n")
 
-        # 拖放：接得上就把提示換成拖放版（_refresh_input_state 讀這個旗標）
-        self.dnd_ok = enable_file_drop(
-            (root, card, self.in_entry), self._on_files_dropped)
+        # 拖放：接得上就把提示換成拖放版（_refresh_input_state 讀這個旗標）。
+        # ⚠️ 這裡只做**便宜的那一半**（import，0.6ms）：把 tkdnd 真的載起來要
+        # 44–85ms，而那是**視窗出現之後**才用得到的東西，延到 _late_file_drop
+        self._dnd_targets = (root, card, self.in_entry)
+        self.dnd_ok = file_drop_available()
         # 貼上路徑。⚠️ 綁在視窗上，所以輸入欄自己的貼上也會叫到這裡——焦點
         # 在任何輸入類控制項上時要原封不動放行，否則使用者在頁碼欄貼一段文字
         # 會變成「整條路徑被換掉」
@@ -1567,6 +1594,19 @@ class App(tk.Tk):
             # 輸出檔名、驗證、提示文字全部由 in_path 的 trace 接手
             # （_refresh_input_state）——打字、拖放、貼上走的是同一條路
             self.in_path.set(p)
+
+    def _late_file_drop(self) -> None:
+        """視窗已經在螢幕上了，這時才真的去載 tkdnd（見 `enable_file_drop`）。
+
+        ⚠️ **九成九不會改到畫面**：`_build_ui` 已經照「套件在不在」寫好提示字，這裡
+        只是把那個預期兌現。唯一兌現不了的情況是「套件裝了、但 tkdnd 在這台機器上載
+        不起來」（架構不合、資安軟體擋 .dll），那時才改口——**而且非改不可**：提示字
+        說得出「可以拖進來」，就不能讓它其實接不住。
+        """
+        ok = enable_file_drop(self._dnd_targets, self._on_files_dropped)
+        if ok != self.dnd_ok:
+            self.dnd_ok = ok
+            self._refresh_input_state()
 
     def _on_files_dropped(self, event) -> None:
         """檔案總管拖進來的檔案。⚠️ 一次可以拖一疊，我們只吃第一個。

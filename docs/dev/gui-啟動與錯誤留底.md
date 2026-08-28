@@ -50,14 +50,30 @@
 
 ```vbs
 capPath = fso.BuildPath(fso.GetSpecialFolder(2).Path, fso.GetTempName())
-cmd = "cmd /c " & q & "uv run pythonw " & q & target & q & _
-      " > " & q & capPath & q & " 2>&1" & q
-rc = sh.Run(cmd, 0, True)
+' exe 是「帶引號的 pythonw 絕對路徑」或字面上的 "uv run pythonw"（見 1b）
+rc = RunHidden(sh, GuiCmd(q, exe, target, capPath))   ' RunHidden 內部就是 sh.Run(cmd, 0, True)
 ```
 
 ⚠️ **`cmd /c` 的引號規則**：整串外層包一對引號，內層路徑照常用各自的引號。cmd 看到 `/c` 後第一個字元是引號時會剝掉最外層那一對，剩下的才是真正要跑的命令列。寫成 `""path""`（想用雙引號跳脫）是錯的——cmd 不吃那套。專案路徑含中文與可能的空格，這一點錯了就是「雙擊沒反應」。
 
 `Run(cmd, 0, True)` 的兩個參數都不可改：`0` 是 `SW_HIDE`（cmd 與 uv 都看不到），`True` 是等它結束——**不等就拿不到結束碼**，也就沒辦法在失敗時跳訊息框。代價是 `wscript` 行程會活到 GUI 關閉為止，這是刻意的。
+
+⚠️ **`Run` 自己丟例外時 `RunHidden` 回 `RC_LAUNCH_FAILED`(-1)**，不是讓例外往外跑。挑負數是因為結束碼不會是負的，撞不到真的 `rc`；呼叫端看到它就跳「無法啟動程式」那個框。
+
+#### 1b. 先走 `.venv` 的 `pythonw`，走不通才交給 `uv`（2026-08-28）
+
+`uv run` 每次啟動都要解析專案、比對 `uv.lock`、確認環境同步。**實測那一層是 35～40 ms**（按下圖示到視窗出現：改之前 540 ms、只改這一條 501 ms），而在「環境已經是新的」時候那 35～40 ms 是白工。所以快速路徑直接叫 `.venv\Scripts\pythonw.exe`。
+
+⚠️ **剩下那一百多毫秒省不掉**：直接跑 `pythonw`（完全不經過 `wscript` 與 `cmd`）量到 401 ms，`.vbs` 走完整條是 540 ms——差的是那兩層殼，而 `cmd` 那層正是重導向、也就是**整個第 1 節的錯誤攔截**唯一的來源。要省它就等於把黑視窗那套接力拆掉，不划算。
+
+⚠️ **`uv run` 順手做掉的「環境沒同步就自動補起來」是真的會用到的保護**，換成直接叫 `pythonw` 就沒有了。所以退路有兩道，缺一不可：
+
+- **事前 `EnvFresh()`**：`.venv\Lib\site-packages` 的修改時間必須不比 `pyproject.toml`、`uv.lock`、隔壁共用包的 `pyproject.toml` 舊。任何一項對不上就整個走 `uv`，讓它去補。⚠️ 比的是**那個資料夾**、不是 `pyvenv.cfg`——後者只在建立環境那一次寫，之後 `uv sync` 裝了什麼、拿掉什麼都不會動到它，拿它當時間戳等於永遠回答「環境是新的」。⚠️ 共用包只看它的 `pyproject.toml`（相依變了才要重裝）；它的**原始碼**改了不必，那是 editable 安裝，`import` 直接讀那個資料夾。
+- **事後 `FALLBACK_SECS`（`.vbs` 自己的常數，5 秒）**：快速路徑非正常結束、**而且不到 5 秒就結束**，就用 `uv` 再跑一次。⚠️ 這一道接的是事前那道看不見的情況：`.venv` 被整包複製到另一台機器、但那台沒有同一版的 Python——檔案都在、時間也對，而 `pythonw.exe` 根本起不來。⚠️ 取 5 秒是往安全那一邊靠：使用者真的用過視窗的話光是選檔就不只 5 秒，所以「用到一半才出錯」不會被誤判成環境壞掉而白跑一次（那會讓視窗開兩次）。
+
+⚠️ **`.venv` 的路徑刻意不用 `fso.BuildPath(here, ...)` 組**：那個寫法被 `tests/test_docs.py::test_the_launcher_guard_lists_files_that_really_exist` 當成「複製不完整的守門清單」在檢查（列進去的每一條都必須真的存在，否則正常安裝也會被擋下來）。而 `.venv` 不存在是**合法**狀態——它的答案是安靜退回 `uv`，不是跳錯誤框。
+
+⚠️ **兩道退路由 `tests/test_docs.py::test_the_launcher_keeps_a_way_back_to_uv` 釘著**：拿掉任何一道都不會有徵狀，因為快速路徑在開發機上永遠成功——壞掉的是別人的機器。
 
 結束碼非 0 時把暫存檔讀回來、**內容直接放進 `MsgBox`**，然後刪檔。
 
