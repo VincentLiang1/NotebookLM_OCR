@@ -102,28 +102,6 @@ rc = sh.Run(cmd, 0, True)
 
 ⚠️ **兩道退路由 `tests/test_docs.py::test_the_launcher_keeps_a_way_back_to_uv` 釘著**：拿掉任何一道都不會有徵狀，因為快速路徑在開發機上永遠成功——壞掉的是別人的機器。
 
-#### 1c. 同一個登入 session 只開一個（2026-08-28）
-
-程式已經開著時再點圖示，**不開第二個**，把既有那個叫到前景。決策層那一段（為什麼、以及它與「絕對不要搶前景」的界線）在 `docs/spec/09-執行環境與效能.md` §9.8；這裡是機制。
-
-```python
-if not winui.claim_single_instance():     # main() 的第一件事
-    winui.raise_existing_window()
-    return 0
-```
-
-⚠️ **兩支都在共用包**（`winkit.winui`，作法與姊妹專案同一份）：判斷靠**具名互斥鎖**（`Local\` ＋ `host().app_id`），找視窗認 **class ＋ 標題**兩個條件（Tk 的頂層視窗是 `TkTopLevel`，檔案總管是 `CabinetWClass`）。⚠️ **只認標題會撈到同名資料夾的檔案總管視窗**——本專案的 `APP_DIR_NAME` 與 `APP_TITLE` 今天不同值，但那是碰巧，不是保證。
-
-⚠️ **`Local\` 不是 `Global\`**：切換使用者、遠端桌面各自開一個才是對的。⚠️ **搶輸的那一次要把自己的 handle 關掉**（共用包做了）：同名互斥鎖每開一次多一個 handle，要等最後一個關掉才真的消失——留著的話，第一個實例收工後那把鎖還在，下一次啟動被自己的殘骸擋在門外。⚠️ **拿不到 Windows API 就放行**。
-
-⚠️ **擋在 `main()` 的第一行**：`enable_dpi_awareness()`／`set_app_user_model_id()`／`is_project_dir()` 全在它後面，`App()`（＝紀錄檔與 Tk）更在後面。第二個實例只要走到 `App()`，`logs\` 底下就會多長一個**只有檔頭**的檔，而那個資料夾正是出事時要去讀的地方。
-
-⚠️ **離開碼是 0**：非 0 的話「啟動.vbs」會把它當成失敗跳訊息框，而且會踩到 1b 那道「非正常結束又不到 5 秒就用 uv 再跑一次」的退路——那會**真的開出第二個視窗**，正好是這條規則要擋的事。
-
-⚠️ **代價**：第二次點圖示仍然要付一趟完整的直譯器啟動才安靜退出。擋在 `.vbs` 那一層可以更早，但那要嘛只認得到視窗標題（會誤中同名資料夾），要嘛得查行程清單（每次啟動都多付）。**擋在 Python 這一層是刻意的。**
-
-守門：`tests/test_gui_helpers.py::test_a_second_instance_only_raises_the_window_it_found`（第二個實例只做一件事、而且回 0）與 `::test_the_first_instance_does_not_steal_the_foreground`（判斷寫反的話，每一次正常啟動都會多做一次前景切換，而開發機上看起來完全正常）。故障注入三種都紅：判斷寫反、安靜退出不叫前景、回非 0。另外實地驗過：兩個行程同時搶，第一個 `True`、第二個 `False`，第一個收工後下一個又拿得到（handle 沒殘留）；`raise_existing_window()` 對一個標題是本程式名的 Tk 視窗回 `True`，視窗關掉後回 `False`。
-
 結束碼非 0 時把暫存檔讀回來、**內容直接放進 `MsgBox`**，然後刪檔。
 
 ⚠️ **有一個結束碼是例外**：`.vbs` 的 `RC_SELF_REPORTED` 常數（⚠️ 產生器**從 GUI 那個常數讀**，不再手抄一份；它是共用包樣板的 opt-in 欄位 `self_reported_rc`，沒接的下游產物裡一個字都不會提到它）代表「GUI 自己已經跳過訊息框了」（2026-08-25 使用者指示「讓 .vbs 把它當成已說明過，跳過那個框」）。收到它就 `Cleanup` 後 `WScript.Quit rc`：安靜收工、結束碼照傳。⚠️ **事後那道退路也要排除它**（`rc <> RC_SELF_REPORTED`）：那道的前提是「視窗根本沒開起來」，而兩者都長得像「不到 5 秒就非正常結束」——分不開的話 uv 會再跑一次，使用者為同一件事看到兩個框，而那正是這個暗號要消滅的東西。目前唯一會回這個值的是「同層找不到 `pdf2ppt` 套件」（`fail_no_project()`），而且**只在訊息框真的跳出來時才回**——Tk 起不來就回 1，讓這裡接手顯示。
@@ -139,6 +117,38 @@ if not winui.claim_single_instance():     # main() 的第一件事
 暫存檔在**每一條路徑上都要刪**（成功、失敗、`Run` 自己丟例外）：它只是「把訊息端到訊息框」的通道。
 
 ⚠️ **這條路的單點是 `%TEMP%` 寫不進去**：重導向失敗會讓 `cmd` 直接回非 0，GUI 根本不會起來，而使用者看到的是「結束碼 1、沒有攔到任何訊息」。訊息框在這種情況會把人導向「先跑 `安裝.bat`，再不行就從終端機執行 `uv run python pdf2ppt_gui_2.py`」。選 `%TEMP%` 而不是專案資料夾，是因為專案資料夾唯讀（放在共用磁碟、被同步工具鎖住）的機會實際上更高。
+
+### 1c. 同一個登入 session 只開一個（2026-08-28）
+
+⚠️ **這一節在 Python 層，不在 `.vbs` 層**（所以它排在 §1 那一整段之外，2026-08-28 移出來的）：`.vbs` 那一層擋得更早，但它要嘛只認得到視窗標題（會誤中同名資料夾），要嘛得查行程清單（每次啟動都多付）——**擋在 Python 這一層是刻意的**。
+
+程式已經開著時再點圖示，**不開第二個**，把既有那個叫到前景。決策層那一段（為什麼、以及它與「絕對不要搶前景」的界線）在 `docs/spec/09-執行環境與效能.md` §9.8；這裡是機制。
+
+```python
+if not winui.single_instance_or_raise():   # is_project_dir() 之後、App() 之前
+    return 0
+```
+
+⚠️ **政策整條在共用包**（`winui.single_instance_or_raise`，2026-08-28 從兩個下游收上去的）：下游只剩上面那兩行。收上去的理由是它有**第三格**——搶輸了、卻**找不到**那個視窗——而手抄的版本兩個下游逐字相同、卻沒有任何機制偵測分歧（共用包的下游稽核只跑各下游自己的測試，而那些測試又各自把零件樁掉）。⚠️ **不要自己抄回 `claim` ＋ `raise` 那兩行**：少掉的正是那一格。
+
+⚠️ **三格真值表**：搶得到 → 開；搶輸、找得到視窗 → 把它給使用者看，這一份收工；⚠️ **搶輸、找不到視窗 → 照常開**（失效方向往「放行」倒）。第三格真的到得了：第一個實例還在 `App.__init__`（視窗全程 `withdraw()`，見 `docs/dev/windows-環境與入口.md` §5.13）、卡在某個訊息框、正在 `destroy()` 與行程結束之間，或者是個已經沒有視窗的殘留行程（轉檔跑在 daemon thread 的 onnxruntime 上，直譯器關不掉就是這一種）。
+
+⚠️ **判斷靠具名互斥鎖**（`Local\` ＋ `host().app_id`），找視窗認 **class ＋ 標題**兩個條件（Tk 的頂層視窗是 `TkTopLevel`，檔案總管是 `CabinetWClass`）。⚠️ **只認標題會撈到同名資料夾的檔案總管視窗**——⚠️ 會撞名的是**專案資料夾名**（開在檔案總管裡時標題就是它），那**不歸任何常數管**，所以「今天剛好不同值」這種話靠不住（2026-08-28 更正：這裡原本寫成 `APP_DIR_NAME` 與 `APP_TITLE`，那兩個是「`%LOCALAPPDATA%` 的快取資料夾名」與「視窗標題」，都不是會撞的那一個）。
+
+⚠️ **`Local\` 不是 `Global\`**：切換使用者、遠端桌面各自開一個才是對的。⚠️ **搶輸的那一次要把自己的 handle 關掉**（共用包做了）：同名互斥鎖每開一次多一個 handle，要等最後一個關掉才真的消失。⚠️ 理由**不是**「第一個實例收工後那把鎖還在」（2026-08-28 更正）——搶輸的行程立刻 `return`，而 Windows 在行程拆除時會關掉它所有的 handle；真正的理由是**同一個行程裡重複呼叫**（測試就會，共用包那支只給測試用的復位也靠這件事成立）。⚠️ **拿不到 Windows API 就放行**。
+
+⚠️ **「隱藏」也要先 `ShowWindow(SW_RESTORE)`，不只「最小化」**（2026-08-28 更正）：`App.__init__` 全程 `withdraw()`（量好高度才 `deiconify()`），而 `EnumWindows` **會列舉隱藏視窗**——那段期間標題對得上、`IsIconic` 是 0，對隱藏的 HWND 呼叫 `SetForegroundWindow` 實測回 1（成功）卻什麼都沒顯示，於是找視窗那一支回報成功而畫面全黑。顯示縮放不在出貨的五檔內、皮膚要當場畫時那段可以長達數秒。
+
+⚠️ **`SetForegroundWindow` 在出貨的那條啟動鏈上「失敗」是常態**：2026-08-28 實測回 0、前景不動（前景鎖只把權力給最後收到輸入事件的那個行程，而我們隔了 `wscript` → `cmd` → `pythonw` 兩層 `CreateProcess`；本機 `SPI_GETFOREGROUNDLOCKTIMEOUT` 讀到 2147483647）。**擋下來就退成閃工作列**（`FLASHW_TRAY | FLASHW_TIMERNOFG`），那本來就是 `docs/dev/windows-環境與入口.md` §5.8 寫的「擋下來的結果還是閃工作列」。⚠️ 四種更用力的做法**全部量過而否決**：`SW_MINIMIZE` ＋ `SW_RESTORE` 之後再叫仍回 0；`AttachThreadInput` **本身**就回 0（接不上前景執行緒），而且它會把兩條輸入佇列綁在一起——前景執行緒卡住時我們跟著卡；`SwitchToThisWindow`（Alt+Tab 用的那支）前景也不動；`HWND_TOPMOST` → `HWND_NOTOPMOST` 那個 Z 序把戲**抬得動**（實測 rank 1 → 0），但行程若在兩次呼叫之間死掉，**別人的視窗就永久卡在最上層**、而使用者沒有辦法把它弄回去。
+
+⚠️ **排在 `is_project_dir()` 之後**（2026-08-28 更正，原本是 `main()` 的第一行）：擋在最前面的話，一份缺了 `pdf2ppt/` 的副本（那種副本過得了「啟動.vbs」的守門，那支只檢查 `pyproject.toml`、`pdf2ppt_gui_2.py` 與共用資料夾）會先佔住鎖，接著跳 `fail_no_project()` 的框——而那時桌面上只有 class `#32770` 的訊息框與標題 `tk` 的隱藏 root，**兩個都比對不到** `APP_TITLE`。框被壓在別的視窗後面沒關掉的話，另一份好的副本從此既搶不到鎖、也找不到視窗可以叫，而且它回的是 0 不是 `SELF_REPORTED_RC`——「啟動.vbs」不是「已說明過所以閉嘴」，是真的認為一切正常。⚠️ 原本擋在最前面的唯一理由是「不要多一個只有檔頭的 `logs\` 檔」，而那個理由在新位置仍然成立：紀錄檔是 `App()` 開的。⚠️ `enable_dpi_awareness()`／`set_app_user_model_id()` 仍然排在**更前面**：它們必須在建第一個 Tk 之前，而 `fail_no_project()` 也會建一個 Tk。
+
+⚠️ **離開碼是 0**：非 0 的話「啟動.vbs」會把它當成失敗跳訊息框，而且會踩到 1b 那道「非正常結束又不到 5 秒就用 uv 再跑一次」的退路——那會**真的開出第二個視窗**，正好是這條規則要擋的事。
+
+⚠️ **代價**：第二次點圖示仍然要付一趟完整的直譯器啟動（實測約 340ms，含 `wscript` ＋ `cmd` 兩層與模組匯入）才安靜退出。
+
+守門：`tests/test_gui_helpers.py` 四支——`::test_a_second_instance_shows_the_existing_window_instead_of_opening_one`、`::test_a_second_instance_that_cannot_find_the_window_opens_anyway`（第三格，**沒有目視徵狀的那一格**）、`::test_the_first_instance_opens_its_window_without_stealing_the_foreground`（順便釘 `enable_dpi_awareness()`／`set_app_user_model_id()` 仍在 `App()` 之前——單一實例那道守門就插在它們旁邊，是最容易被順手吃掉的位置）、`::test_a_copy_that_cannot_run_never_takes_the_lock`。⚠️ **四支一律樁 `claim_single_instance` 與 `raise_existing_window` 兩支原始零件、不樁政策本身**：樁掉政策的話第三格永遠走不到。故障注入四種都紅（2026-08-28 實測）：回到舊的三行、守門搬回 `is_project_dir()` 之前、拿掉 `enable_dpi_awareness()`、拿掉 `set_app_user_model_id()`。互斥鎖與三格真值表本身由共用包那邊的 `test_winui` 釘著（⚠️ **那個檔在共用包、不在本 repo，所以這裡不可以寫成路徑**——文件測試會判它死指路）。另外實地驗過：兩個行程同時搶，第一個 `True`、第二個 `False`，第一個收工後下一個又拿得到（handle 沒殘留）；找視窗那一支對一個標題是本程式名的 Tk 視窗回 `True`，視窗關掉後回 `False`。
+
 
 ### 2. GUI 的執行紀錄 —— 執行期
 

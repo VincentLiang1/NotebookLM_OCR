@@ -35,50 +35,107 @@ def test_page_line_is_parsed_from_the_real_cli_format():
         assert not G._PAGE_RE.match(line), line
 
 
-def test_a_second_instance_only_raises_the_window_it_found(monkeypatch):
+# --------------------------------------------------------------------------- #
+#  同一個登入 session 只開一個
+# --------------------------------------------------------------------------- #
+# ⚠️ **這四支一律樁 `claim_single_instance` 與 `raise_existing_window` 兩支原始零件,
+# 不樁 `single_instance_or_raise`**：要驗的正是那三格真值表有沒有真的接到 `main()`
+# 上。樁掉政策本身的話，「鎖被拿走、視窗卻找不到」那一格在這裡就永遠走不到——而它
+# 是唯一沒有目視徵狀的一格（開發機上第一個實例永遠好好地開著）。
+# ⚠️ 替身一律 `lambda *a, **k:`：`raise_existing_window(class_name=…)` 是**用關鍵字**
+# 傳的（共用包那邊刻意如此），只吃位置參數的替身會當場 TypeError，而那個紅是紅在
+# 測試管線上、不是紅在規則上。
+
+
+def _stub_single_instance(monkeypatch, did, *, claimed, found):
+    """把單一實例那兩支原始零件換掉，其餘讓 `main()` 照真的跑。"""
+    monkeypatch.setattr(winui, "claim_single_instance",
+                        lambda *a, **k: did.append("claim") or claimed)
+    monkeypatch.setattr(winui, "raise_existing_window",
+                        lambda *a, **k: did.append("raise") or found)
+    for name in ("enable_dpi_awareness", "set_app_user_model_id"):
+        monkeypatch.setattr(winui, name, lambda *a, n=name, **k: did.append(n))
+    monkeypatch.setattr(G, "is_project_dir", lambda *a: True)
+    monkeypatch.setattr(G, "App", lambda *a: did.append("App") or _FakeApp())
+
+
+def test_a_second_instance_shows_the_existing_window_instead_of_opening_one(
+        monkeypatch):
     """程式已經開著時再點圖示：**不開第二個**，把既有那個叫到前景。
 
     使用者 2026-08-28：「啟動多個程式沒有用」。兩份轉檔會搶同一顆 GPU、也各自載一份
     OCR 模型，而兩邊都以為自己在正常轉檔——那是一種查不出來的慢。
     ⚠️ **不可以只是安靜退出**：使用者剛按下桌面圖示，什麼都沒發生的話他會以為程式
     壞了、再點兩三次。
-    ⚠️ **要擋在紀錄檔與 Tk 之前**：第二個實例只要走到 `App()`，`logs\\` 底下就會多長
-    一個只有檔頭的檔，而那個資料夾正是出事時要去讀的地方。
+    ⚠️ **不可以走到 `App()`**：那一步會開紀錄檔，`logs\\` 底下就多長一個只有檔頭的
+    檔，而那個資料夾正是出事時要去讀的地方。
     ⚠️ **離開碼必須是 0**：非 0 的話「啟動.vbs」會跳一個訊息框，而且會觸發它那道
     「非正常結束又不到 5 秒就用 uv 再跑一次」的退路——那會真的開出第二個視窗，
     正好是這條規則要擋的事。"""
     did = []
-    monkeypatch.setattr(winui, "claim_single_instance", lambda: False)
-    monkeypatch.setattr(winui, "raise_existing_window",
-                        lambda *a: did.append("raise") or True)
-    for name in ("enable_dpi_awareness", "set_app_user_model_id"):
-        monkeypatch.setattr(winui, name, lambda *a, n=name: did.append(n))
-    monkeypatch.setattr(G, "is_project_dir",
-                        lambda *a: did.append("is_project_dir") or True)
-    monkeypatch.setattr(G, "App", lambda *a: did.append("App"))
+    _stub_single_instance(monkeypatch, did, claimed=False, found=True)
 
     assert G.main() == 0, "第二個實例回了非 0：啟動器會跳框、還會用 uv 再跑一次"
-    assert did == ["raise"], f"第二個實例做了它不該做的事：{did}"
+    assert "raise" in did, "第二個實例安靜退出了，既有的視窗沒有被叫出來"
+    assert "App" not in did, f"第二個實例走到了 App()，logs 會多一個空檔：{did}"
 
 
-def test_the_first_instance_does_not_steal_the_foreground(monkeypatch):
-    """**第一個**實例不可以把視窗叫到前景。
+def test_a_second_instance_that_cannot_find_the_window_opens_anyway(monkeypatch):
+    """⚠️ **鎖被拿走、卻找不到那個視窗 → 照常開**（`docs/spec/09-執行環境與效能.md`
+    §9.8「失效方向要往放行倒」）。
 
-    ⚠️ 這是「工作列的提醒不可以搶前景」那條硬規則的邊界（見 `docs/dev/windows-環境
-    與入口.md` §5.3）：叫到前景只在「使用者剛點了圖示、而程式已經開著」那一種情況
-    成立。判斷寫反的話，每一次正常啟動都會多做一次前景切換——而開發機上看起來完全
-    正常，因為那時本來就要開視窗。"""
+    那個狀態是真的到得了的：第一個實例還在 `App.__init__`（視窗全程 `withdraw()`、
+    標題比對不到）、正在 `destroy()` 與行程結束之間，或者是個已經沒有視窗的殘留行程
+    （轉檔跑在 daemon thread 的 onnxruntime 上，直譯器關不掉時就是這一種）。
+    ⚠️ 這一格**沒有任何目視徵狀**：開發機上第一個實例永遠好好地開著，所以永遠走不到
+    ——安靜地 `return 0` 的話，使用者看到的是「點了圖示什麼都沒發生」，而且 rc=0 讓
+    「啟動.vbs」也依約定閉嘴。"""
     did = []
-    monkeypatch.setattr(winui, "claim_single_instance", lambda: True)
-    monkeypatch.setattr(winui, "raise_existing_window",
-                        lambda *a: did.append("raise") or True)
-    for name in ("enable_dpi_awareness", "set_app_user_model_id"):
-        monkeypatch.setattr(winui, name, lambda *a: None)
-    monkeypatch.setattr(G, "is_project_dir", lambda *a: True)
-    monkeypatch.setattr(G, "App", lambda *a: _FakeApp())
+    _stub_single_instance(monkeypatch, did, claimed=False, found=False)
 
     assert G.main() == 0
-    assert did == [], "第一個實例也去叫了一次前景"
+    assert "App" in did,         f"鎖被拿走、視窗又找不到，卻什麼都沒開也什麼都沒說：{did}"
+
+
+def test_the_first_instance_opens_its_window_without_stealing_the_foreground(
+        monkeypatch):
+    """**第一個**實例不可以把視窗叫到前景，而且那兩支 Windows 設定要先做完。
+
+    ⚠️ 前景那一半是「工作列的提醒不可以搶前景」那條硬規則的邊界（正本在
+    `docs/dev/windows-環境與入口.md` §5.8）：叫到前景只在「使用者剛點了圖示、而程式
+    已經開著」那一種情況成立。判斷寫反的話，每一次正常啟動都會多做一次前景切換——而
+    開發機上看起來完全正常，因為那時本來就要開視窗。
+    ⚠️ 另一半釘的是 `enable_dpi_awareness()`／`set_app_user_model_id()` **仍然在
+    `App()` 之前被呼叫**：兩支都是文件明載的靜默失效（前者缺了整個視窗被點陣放大、
+    每個字都是鋸齒，後者缺了工作列顯示的是 wscript 的圖示），而單一實例那道守門就
+    插在它們旁邊——最容易在下一次編輯時被順手吃掉的位置。"""
+    did = []
+    _stub_single_instance(monkeypatch, did, claimed=True, found=True)
+
+    assert G.main() == 0
+    assert "raise" not in did, "第一個實例也去叫了一次前景"
+    for name in ("enable_dpi_awareness", "set_app_user_model_id"):
+        assert name in did, f"{name}() 沒被呼叫：{did}"
+        assert did.index(name) < did.index("App"),             f"{name}() 排到 App()（＝建 Tk）後面去了：{did}"
+
+
+def test_a_copy_that_cannot_run_never_takes_the_lock(monkeypatch):
+    """⚠️ **跑不起來的副本不可以佔住那把鎖**（2026-08-28）。
+
+    守門排在 `is_project_dir()` **之後**的理由：一份缺了 `pdf2ppt/` 的副本（那種副本
+    過得了「啟動.vbs」的守門，那支只檢查 `pyproject.toml`、`pdf2ppt_gui_2.py` 與共用
+    資料夾）若擋在最前面就會先搶到鎖，接著跳 `fail_no_project()` 的框——而它的視窗是
+    class `#32770` 的訊息框與標題 `tk` 的隱藏 root，**兩個都比對不到** `APP_TITLE`。
+    框被壓在別的視窗後面沒關掉的話，另一份好的副本從此搶不到鎖、也找不到視窗。
+    ⚠️ 而且那份好的副本回的是 0 不是 `SELF_REPORTED_RC`，所以「啟動.vbs」不是「已說
+    明過所以閉嘴」，是真的認為一切正常。"""
+    did = []
+    _stub_single_instance(monkeypatch, did, claimed=True, found=False)
+    monkeypatch.setattr(G, "is_project_dir", lambda *a: False)
+    monkeypatch.setattr(G, "fail_no_project", lambda: did.append("box") or True)
+
+    assert G.main() == G.SELF_REPORTED_RC
+    assert did == ["enable_dpi_awareness", "set_app_user_model_id", "box"],         f"跑不起來的副本做了它不該做的事（尤其是搶鎖）：{did}"
 
 
 class _FakeApp:
@@ -236,6 +293,12 @@ def test_the_shipped_skin_matches_what_the_generator_draws_today():
             # 只有原始碼的兩台機器會顯示不同的 hover/pressed/disabled，正是這支測試
             # 存在要擋的分歧。⚠️ 產生器出來的就已經全是 list（`states`／`border` 都寫
             # 成 list 字面值），與 JSON 讀回來的直接可比，不必先正規化。
+            # ⚠️ **這個 `if` 2026-08-28 補回來**：它在 a231a2f「拿掉沒作用的正規化」
+            # 時被連同那層 `_as_lists()` 一起刪掉了，只剩下面那句 `stale.append`
+            # 縮排在像素那條分支裡——於是 `elems` 綁了沒人用、`sprites.json` 的
+            # border／width／height／padding／on／states 漂掉時測試照樣綠，而像素
+            # 真的不同時還會多印一句從來沒驗過的「元件定義變了」。
+            if elems != var["elements"]:
                 stale.append(f"{theme}@{scale:g}：元件定義變了")
     assert not stale, ("assets/skin/ 不是現在這份 make_skin.py 的產物，"
                        "請重跑 `uv run python tools/make_skin.py`：\n  "
