@@ -7,7 +7,10 @@ echo.
 uv sync
 if errorlevel 1 (
   echo.
-  echo 安裝失敗。請確認已安裝 uv：https://docs.astral.sh/uv/
+  echo 安裝失敗。兩個最常見的原因：
+  echo   1. 還沒安裝 uv：https://docs.astral.sh/uv/
+  echo   2. 隔壁的 winkit 資料夾沒有跟著複製過來 —— 本工具靠相對路徑用它，
+  echo      它必須與這個資料夾並排（也就是 ..\winkit）。
   pause
   exit /b 1
 )

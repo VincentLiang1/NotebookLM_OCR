@@ -14,6 +14,8 @@
 import pytest
 
 import pdf2ppt_gui_2 as G
+from winkit import skin as wskin, winui
+from winkit.palette import PALETTES
 from pathlib import Path
 
 
@@ -67,7 +69,7 @@ def test_shortening_a_path_never_eats_the_file_name():
 def _skin_meta():
     import json
     return json.loads(
-        (G.SKIN_DIR / "sprites.json").read_text(encoding="utf-8"))
+        (wskin.skin_dir() / "sprites.json").read_text(encoding="utf-8"))
 
 
 def test_every_skin_plate_declares_what_it_sits_on():
@@ -91,7 +93,7 @@ def test_the_shipped_skin_matches_what_the_generator_draws_today():
     長得不一樣——而且都不會報錯。改了那支腳本要重跑再提交。"""
     from PIL import Image
 
-    make_skin = G.import_make_skin()
+    make_skin = wskin.import_make_skin()
 
     meta = _skin_meta()
     stale = []
@@ -114,7 +116,7 @@ def test_the_shipped_skin_matches_what_the_generator_draws_today():
             if rects != {k: list(v) for k, v in var["sprites"].items()}:
                 stale.append(f"{theme}@{scale:g}：sprite 的位置或名單變了")
                 continue
-            shipped = Image.open(G.SKIN_DIR / var["file"]).convert("RGBA")
+            shipped = Image.open(wskin.skin_dir() / var["file"]).convert("RGBA")
             if shipped.tobytes() != sheet.tobytes():
                 stale.append(f"{theme}@{scale:g}：{var['file']} 的像素變了")
             # ⚠️ **`states` 一起比**（2026-08-27 補）：這裡原本把 `states` 從兩邊
@@ -157,7 +159,7 @@ def _pill_styles() -> dict:
     上「變更…／開啟簡報／開啟資料夾」三顆走的就是它）；進度條雖然也是膠囊，但它的
     高度是 GUI 直接拿 `Sq.trough` 的 `height` 去設 `thickness` 的，量法不同、也漂不掉。
     """
-    var = _skin_meta()["variants"][f"{G.preferred_theme_mode()}@1"]
+    var = _skin_meta()["variants"][f"{winui.preferred_theme_mode(PALETTES)}@1"]
     out = {}
     for style, _src, table in G.SKIN_SWAPS:
         if style == "Horizontal.TProgressbar":      # 見 docstring
@@ -187,30 +189,30 @@ def _measure_pills(scale: float, pin_height: bool = True) -> dict:
     from tkinter import ttk
 
     styles = _pill_styles()
-    var = _skin_meta()["variants"][f"{G.preferred_theme_mode()}@{scale:g}"]
+    var = _skin_meta()["variants"][f"{winui.preferred_theme_mode(PALETTES)}@{scale:g}"]
     try:
         root = tk.Tk()
     except tk.TclError as exc:                    # 沒有顯示裝置
         pytest.skip(f"這台機器開不了 Tk：{exc}")
-    orig = G.SquircleSkin._from_assets
+    orig = wskin.SquircleSkin._from_assets
     try:
         root.withdraw()
         root.tk.call("tk", "scaling", scale * 96.0 / 72.0)
         if not pin_height:
-            # ⚠️ 簽章要跟著 `_from_assets(self, root)` 走（2026-08-27 加了磁碟快取
-            # 之後那一支收一個目錄參數）——少一個參數的話這裡會 TypeError，而
-            # `install()` 把它接住當成「沒有資產」，測試就變成在量沒有皮膚的畫面
-            def unpinned(self, root):
-                spec = orig(self, root)
-                if spec is None:
+            # ⚠️ 簽章要跟著共用包那一支 `_from_assets(self, root, tag, *, exact)`
+            # 走——少一個參數的話這裡會 TypeError，而 `install()` 把它接住當成「沒有
+            # 資產」，測試就變成在量沒有皮膚的畫面。⚠️ 2026-08-28 起它回的是 `elems`
+            # 本身（前景色改成直接查色票，不再從資產繞一圈）。
+            def unpinned(self, root, tag, *, exact=False):
+                elems = orig(self, root, tag, exact=exact)
+                if elems is None:
                     return None
-                elems, fg = spec
-                return {n: dict(e, height=1) for n, e in elems.items()}, fg
-            G.SquircleSkin._from_assets = unpinned
+                return {n: dict(e, height=1) for n, e in elems.items()}
+            wskin.SquircleSkin._from_assets = unpinned
         try:
             _fam, _pal, skin = G.apply_ui_style(root, scale)
         finally:
-            G.SquircleSkin._from_assets = orig
+            wskin.SquircleSkin._from_assets = orig
         if skin is None:
             pytest.skip("這台機器裝不上 squircle 皮膚（多半是沒有 sv_ttk）")
         frame = ttk.Frame(root)
@@ -224,7 +226,7 @@ def _measure_pills(scale: float, pin_height: bool = True) -> dict:
             w.destroy()
         return out
     finally:
-        G.SquircleSkin._from_assets = orig
+        wskin.SquircleSkin._from_assets = orig
         root.destroy()
 
 
@@ -242,7 +244,7 @@ def test_every_pill_widget_fits_its_plate_exactly():
     五檔餘裕 0/1/1/2/2，而 Segoe UI 在 150% 下要 47、底板只有 45。
     """
     bad, tight = [], []
-    for scale in G.import_make_skin().SCALES:
+    for scale in wskin.import_make_skin().SCALES:
         for style, (got, plate) in _measure_pills(scale).items():
             if got != plate:
                 how = "下緣被裁掉" if got > plate else "底板垂直重複貼"

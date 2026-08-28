@@ -46,7 +46,7 @@ import pymupdf
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[1]
-ASSETS = ROOT / "assets"
+ASSETS = ROOT / "pdf2ppt" / "assets"
 
 # 色票。藍色刻意與 NotebookLM 原稿的 #3186FF 錯開
 TILE = "#2B7CF6"        # 磚底

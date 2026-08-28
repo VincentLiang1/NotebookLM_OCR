@@ -1,82 +1,28 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""產生圖形介面的皮膚資產（assets/skin/ 底下那一組）。
+"""產生圖形介面的皮膚資產（`pdf2ppt/assets/skin/` 底下那一組）。
 
     uv run python tools/make_skin.py
 
-這支是**形狀**的唯一真值：圓角半徑、內距、九宮格的切法全寫在這裡，`assets/skin/`
-的 PNG 與 `sprites.json` 都是它的產物。改了半徑就重跑一次，然後把 `assets/skin/`
-整個目錄跟著程式碼一起提交。⚠️ **不要手改產物**——下一次重跑就被蓋掉（與
+這支是**這支程式要哪些底板**的唯一真值：圓角半徑、高度、內距、要產哪幾檔縮放全寫
+在這裡，`pdf2ppt/assets/skin/` 的 PNG 與 `sprites.json` 都是它的產物。改了半徑就重
+跑一次，然後把 `pdf2ppt/assets/skin/` 整個目錄跟著程式碼一起提交。⚠️ **不要手改產物**——下一次重跑就被蓋掉（與
 `tools/make_icon.py` 同一條原則）。
 
-⚠️ **顏色不在這裡**，在 `pdf2ppt/palette.py`（產生器與介面共用一份，理由見那支的
+⚠️ **顏色不在這裡**，在共用包 `winkit.palette`（產生器與介面共用一份，理由見那支的
 docstring）。這裡只負責把那些顏色畫成形狀。
 
-為什麼是圖
-----------
-ttk 內建的繪圖能力只有矩形、3D 浮雕邊框、直線——**沒有圓角、沒有抗鋸齒、沒有
-任意路徑**。Windows 原生的 vista 佈景不必用圖，是因為它把繪圖整個交給作業系統
-的 UxTheme API，拿到的是系統長什麼樣就什麼樣、形狀不能自訂。所以在 Tk 上要一個
-自訂形狀的圓角，只有兩條路：**預先渲染成圖片**，或換掉整個 GUI 框架。
-
-現在這個 Sun Valley 佈景（sv_ttk）自己就是這樣做的：一張 `spritesheet_light.png`
-切成一堆小圖，再用 `ttk::style element create ... image` 掛上去。本檔產出的東西
-與它同構，換掉的也正是它的 `Button.button`／`AccentButton.button`／`Entry.field`
-／`Checkbutton.indicator`／進度條那幾個元件，另外多畫幾張沒有前身的底板（卡片、
-日誌槽、低調按鈕大小各一號）。
-
-形狀：正圓角，直邊保持直的
+形狀與那五個地雷:在共用包裡
 --------------------------
-輪廓是 `|x|^n + |y|^n = r^n` 的四分之一：`n=2` 就是**正圓弧**，n 愈大愈方。
+⚠️ **「怎麼畫」2026-08-28 整批搬進 `winkit.skingen`**:為什麼非得預先渲染成圖片、
+超橢圓為什麼是 n=2.0 的正圓弧、九宮格與膠囊那五個一踩就壞的地方(中段要夠寬、
+`border` 不可超過邊長的一半而且要逐軸比、先畫 RGB 最後才放 alpha、會長高的用
+`block()`、膠囊的圖高必須精確等於元件高度)——**動任何一個 `SQ_*` 之前先讀那一支**。
 
-⚠️ **這裡曾經是 5.0（squircle），2026-08-26 使用者指定改成正圓**：他要「按鈕都
-依照 MP4-2-SRT 樣式」，而那支同一天已經因為同一句話（「所有按鈕圓角弧度也跟
-meeting-scribe 那張截圖相同」）換成了正圓。**畫面上不要有兩種曲線**。
-
-為什麼 5.0 撐不住：超橢圓幾乎填滿整個角落方框、只在最角落切掉一點，半徑 21 時
-**視覺上的圓角只有 7px**（量 sprite 的 alpha 量出來的）。小按鈕看不出來，卡片那麼
-大一塊就是「幾乎直角」——所以光加大半徑沒有用，指數才是那個旋鈕。
-
-⚠️ **按鈕與輸入框是膠囊（2026-08-27）**：指數維持 2.0，但半徑改成「那一類元件
-自己高度的一半」，弧走完 90 度才碰到直邊，交界處沒有轉折。使用者的原話是「這個
-按鈕的圓角效果，感覺還不是很平順」，指的正是停止鈕——它自然高 40 邏輯 px，而當時
-的半徑只有 12（30%），所以那個轉折在整片深紅上特別讀得出來。取值與逐檔驗算見
-`SQ_H_*` 那一段。**卡片與日誌槽不跟**（它們沒有一種高度，膠囊在一整塊內容區上讀起來
-是藥丸不是容器）；曲線本身還是同一種，所以「畫面上不要有兩種曲線」仍然成立。
-
-⚠️ 五個一踩就壞的地方（1~3 是 2026-08-26 換皮時撞到的，第 4 點是同月卡片化時
-撞到的，第 5 點是 2026-08-27 膠囊化時撞到的；完整記述在
-`docs/dev/windows-環境與入口.md` §5.9）：
-
-1. **底板中段要夠寬**（`SQ_MID`）。九宮格的中段是 Tk **一格一格重複貼**滿的，
-   不是拉伸；中段留 1px 的話，填一顆 840px 寬的收合鈕就是幾百次繪製呼叫，重畫
-   整個視窗要 2.5 秒（看起來就像當掉）。對照組：sv_ttk 的按鈕 sprite 是 20×20
-   配 `-border 4`，中段 12px。
-2. **`border` 不可超過圖片邊長的一半——而且是「逐軸」比。** 切不出九宮格時 ttk
-   會在幾何計算裡原地打轉，事件迴圈當場卡死——沒有例外、沒有訊息。⚠️ 2026-08-27
-   膠囊化之後 `border` 是四元組 `[左, 上, 右, 下]`，要比的是**左＋右對圖寬、
-   上＋下對圖高**，兩軸各自獨立。⚠️ **不可以拿水平的 border 去比圖高**：膠囊的圖
-   又扁又寬（`Sq.subtle` @1x 是 142×45、左右各 23），照「邊長」的字面理解會在現行
-   資產上驗出三十幾筆假違規，而最順手的「修法」——把 `br` 降成 `H/2`——正好踩到
-   `pill()` docstring 明文禁止的那件事（中段第一欄不是純色、水平重複貼透出細紋）。
-   這條的機器版在 `tests/test_gui_helpers.py::test_pill_plates_are_sliced_horizontally_only`。
-3. **先畫成不透明的 RGB，最後才把遮罩放進 alpha 通道。** 拿遮罩去 `paste` 一張
-   RGB 到透明畫布上的話，角落抗鋸齒帶的 RGB 會先跟畫布的黑色混一次，而 Tk 合成
-   時又依 alpha 混第二次，四個角就各浮出一圈比底色深的邊。
-4. **第 1 點有垂直版**（`block()`）。卡片與日誌槽會被撐到好幾百 px 高，而只留
-   1px 高的中段就是垂直幾百次 × 水平十幾次的繪製呼叫。會被撐得又寬又高的東西
-   一律用 `block()`（兩個方向都留中段）；只被水平拉開、高度釘死的（按鈕、輸入框、
-   進度條）走 `pill()`，那一路垂直根本不切。
-5. **第 2 點有第二個上限：`border` 也不可超過「用它的那個元件」高度的一半。**
-   第 2 點講的是圖片自己切不切得開（切不開會卡死），這一點講的是切得開、但畫不
-   下：`2(r+1)` 超過元件實際高度時，Tk 把上下兩個圓角**畫到框外**，形狀變成兩個
-   半圓疊在一起、左右各鼓出一塊（2026-08-27 實測 r=29 配 47px 高的按鈕）。⚠️ 不會
-   當掉、不會報錯，只有截圖看得出來。⚠️ **這一點只管得到還有垂直 border 的那三個**
-   （卡片 `SQ_R_CARD`、日誌槽 `SQ_R_BOX`、核取方塊 `SQ_R_CHK`）。**膠囊的垂直
-   border 是 0，這個上限對它們永遠觸發不了**——曾經寫成「膠囊化把這個上限從很遠
-   變成只差幾 px」，那是 2026-08-27 上午（半徑改 H/2、還切四邊）那一版的狀況，
-   當天下午改成垂直不切之後方向就反了。膠囊那一路綁的是另一條：**內容需求必須
-   矮於圖高**，見 `pill()` 與 `SQ_H_*` 那一段。
+⚠️ **不要把那幾條抄回這裡**:兩份就是兩份會漂的說明,而三個 repo 漂開的成因正是
+「要產哪幾張皮」與「超橢圓怎麼取樣」寫在同一支檔案裡(量到 763 行的差距)。這裡留下
+來的是**這一支的長相**:要產哪幾張底板、每一張多高多圓、出貨哪幾檔縮放、哪一張坐在
+什麼顏色上。
 
 為什麼要產生五種縮放
 --------------------
@@ -87,20 +33,26 @@ meeting-scribe 那張截圖相同」）換成了正圓。**畫面上不要有兩
 from __future__ import annotations
 
 import json
-import math
-import sys
 from pathlib import Path
 
-from PIL import Image, ImageColor, ImageDraw
+from PIL import Image, ImageDraw
+
+# 幾何走共用包（見檔頭「形狀」那一段）。⚠️ **這一行就是 A/B 界線**：右邊那些是
+# 「兩支程式都該一樣」的畫法，左邊留下來的是「這一支要產哪幾張、每一張多大」。
+from winkit.skingen import (SQ_N, SQ_SS, SQ_STEPS,   # noqa: F401（SQ_N 只被文件引用）
+                            block, block_elem, pad_right, pill,
+                            pill_elem, plate, px, shade)
+from winkit.skingen import pack as _pack
 
 ROOT = Path(__file__).resolve().parent.parent
-OUT = ROOT / "assets" / "skin"
+OUT = ROOT / "pdf2ppt" / "assets" / "skin"
 
-# 色票是共用的（見 `pdf2ppt/palette.py` 的 docstring）。⚠️ 走 sys.path 而不是
-# 直接 `from pdf2ppt.palette import ...`，是為了讓這支在專案還沒 `uv sync` 過的
-# 環境下也跑得動——它是開發工具，不該要求先把整套相依裝起來。
-sys.path.insert(0, str(ROOT))
-from pdf2ppt.palette import PALETTES as SKINS   # noqa: E402
+# 色票走共用包（見 `winkit.palette` 的 docstring）。⚠️ **2026-08-28 從專案裡的
+# `palette` 換過來**：顏色是「兩支程式要對得起來」的設計系統，不是這一支的身分，
+# 所以它的唯一真值在共用包裡，改一次兩邊拿到。⚠️ 連帶拿掉了那行 `sys.path.insert`
+# ——它當初的用意是「專案還沒 uv sync 過也跑得動」，而這支本來就要 Pillow，那個
+# 承諾早就不成立了。
+from winkit.palette import PALETTES as SKINS
 
 # 顯示縮放。⚠️ 這五個值要對上 Windows 顯示設定裡的那五檔。
 SCALES = (1.0, 1.25, 1.5, 1.75, 2.0)
@@ -117,9 +69,10 @@ SCALES = (1.0, 1.25, 1.5, 1.75, 2.0)
 # 2 = 2026-08-27 膠囊化：`border` 從 int 變成 `[左, 上, 右, 下]` 四元組。
 SCHEMA_VERSION = 2
 
-SQ_N = 2.0            # 角落的曲線指數：**2.0 就是正圓弧**（見檔頭）
-SQ_SS = 4             # 遮罩超取樣倍率（畫 4× 再縮回來，這就是抗鋸齒）
-SQ_STEPS = 24         # 每個角取樣幾個點（再多肉眼看不出來，只是變慢）
+# ⚠️ `SQ_N`（曲線指數，2.0 ＝正圓弧）、`SQ_SS`（超取樣倍率）、`SQ_STEPS`（每個角
+# 取樣幾點）**是 import 進來的**，不在這裡定義：它們是「怎麼畫」而不是「畫什麼」，
+# 唯一真值在 `winkit.skingen`（連同那三個值為什麼是這樣的完整理由）。這裡只留
+# 「這支程式要哪些形狀、多大」。
 
 # ---------------------------------------------------------------------------
 # 按鈕與輸入框：**高度**（邏輯 px），半徑不再是自己一把尺
@@ -191,89 +144,6 @@ SQ_PAD_FIELD = 4      # 輸入框（與按鈕同一張底板，就跟按鈕同�
 SQ_PAD_SUNKEN = 5     # 日誌槽（不是膠囊，內距與輸入框無關，2026-08-27 拆開）
 
 
-def px(n: float, scale: float) -> int:
-    return max(1, int(round(n * scale)))
-
-
-def _sq_points(w: float, h: float, r: float) -> list[tuple[float, float]]:
-    """圓角的輪廓點：四個角各是四分之一超橢圓，直邊保持直的。"""
-    r = min(r, w / 2.0, h / 2.0)
-    k = 2.0 / SQ_N
-    q = [(r - r * math.cos(t) ** k, r - r * math.sin(t) ** k)
-         for t in (i / SQ_STEPS * (math.pi / 2) for i in range(SQ_STEPS + 1))]
-    rev = list(reversed(q))
-    return (q                                     # 左上：(0,r) → (r,0)
-            + [(w - x, y) for x, y in rev]        # 右上：(w-r,0) → (w,r)
-            + [(w - x, h - y) for x, y in q]      # 右下：(w,h-r) → (w-r,h)
-            + [(x, h - y) for x, y in rev])       # 左下：(r,h) → (0,h-r)
-
-
-def _sq_mask(w: int, h: int, r: float) -> Image.Image:
-    m = Image.new("L", (w * SQ_SS, h * SQ_SS), 0)
-    ImageDraw.Draw(m).polygon(
-        [(x * SQ_SS, y * SQ_SS) for x, y in _sq_points(w, h, r)], fill=255)
-    return m.resize((w, h), Image.LANCZOS)
-
-
-def plate(w: int, h: int, r: float, fill: str,
-          line: str | None = None, lw: int = 1,
-          on: str | None = None) -> Image.Image:
-    """一張圓角底板：實色填滿，可選描邊。
-
-    ⚠️ 先畫成不透明的 RGB、**最後**才把遮罩放進 alpha 通道（理由見檔頭第 3 點）。
-
-    `on` ＝ **這張底板坐在什麼顏色上**。給了就把圓角外側直接畫成那個色、整張圖
-    不透明；不給就留透明。
-
-    ⚠️ **一定要給。** 理由是 ttk 的繪製順序：它先用樣式的 `background` 把整塊填滿，
-    **再**把九宮格的圖畫上去——圓角外側那圈透明區露出來的是那個 background，不是
-    父容器的顏色。沒有卡片的年代這件事看不出來（樣式的預設背景正好就是視窗底），
-    2026-08-26 卡片化之後就是「按鈕的圓角外露出一圈視窗底的灰、方方正正貼在白卡
-    上」。⚠️ 也**不要**改走「把樣式的 `background` 設成外側色」那條捷徑：那對
-    `TFrame` 有效，但對有自己 `background` 語意的控制項（`Treeview` 的列底色、
-    `TEntry` 的欄位底）就是把別的東西一起改掉。代價只是「同一張底板不能重複用在
-    兩種背景上」——本專案的每個控制項都只坐在一種底色上（按鈕／輸入框／核取方塊
-    在卡片上、卡片與收合鈕在視窗底上）。
-    """
-    w, h = max(1, w), max(1, h)
-    outer = _sq_mask(w, h, r)
-    img = Image.new("RGB", (w, h), fill)
-    if line and lw > 0:
-        inner = Image.new("L", (w, h), 0)
-        inner.paste(_sq_mask(max(1, w - 2 * lw), max(1, h - 2 * lw),
-                             max(1.0, r - lw)), (lw, lw))
-        ring = Image.composite(outer, Image.new("L", (w, h), 0),
-                               Image.eval(inner, lambda v: 255 - v))
-        # 這一次 paste 是**在不透明的圖層裡**混色，描邊與填色混得對
-        img.paste(Image.new("RGB", (w, h), line), (0, 0), ring)
-    if on is not None:
-        # 圓角外側直接畫成它坐的那個顏色，整張不透明（見 docstring）。
-        # ⚠️ 用 `outer` 當遮罩貼上去：抗鋸齒那一圈於是與外側色**混得對**，而不是
-        # 先跟黑色混一次再由 Tk 混第二次（檔頭第 3 點的同一個坑）
-        base = Image.new("RGB", (w, h), on)
-        base.paste(img, (0, 0), outer)
-        return base.convert("RGBA")
-    img = img.convert("RGBA")
-    img.putalpha(outer)
-    return img
-
-
-def shade(color: str, amt: float) -> str:
-    """把**色碼**往白（amt>0）或黑（amt<0）拉，回傳新的色碼。
-
-    ⚠️ **對顏色做，不是對圖片做。** 這支原本是整張圖去 blend，那在底板還透明的
-    年代沒問題；底板改成不透明（見 `plate` 的 `on`）之後，整張 blend 會把圓角外側
-    那圈「它坐的顏色」一起壓暗——按下按鈕時，卡片上會浮出一圈比周圍暗的方框。
-
-    hover 有明確色碼、pressed 沒有，所以 pressed 那一階一律由這支從同一個底色推
-    出來，免得再手配一組沒有人記得該差多少的色碼。
-    """
-    rgb = ImageColor.getrgb(color)
-    tone = 255 if amt >= 0 else 0
-    return "#%02x%02x%02x" % tuple(
-        round(c + (tone - c) * abs(amt)) for c in rgb)
-
-
 def chevron(size: int, color: str, down: bool) -> Image.Image:
     """收合鈕的三角形（▶／▼）。
 
@@ -295,13 +165,6 @@ def chevron(size: int, color: str, down: bool) -> Image.Image:
     return img
 
 
-def _pad_right(img: Image.Image, gap: int) -> Image.Image:
-    """右邊補一段透明——核取方塊／三角形與標題之間的縫，layout 裡沒有地方塞。"""
-    out = Image.new("RGBA", (img.width + gap, img.height), (0, 0, 0, 0))
-    out.paste(img, (0, 0))
-    return out
-
-
 def build_variant(theme: str, scale: float) -> tuple[dict, dict]:
     """畫出一組（某個佈景 × 某個縮放）的所有底板，回傳 (圖片, 元件定義)。
 
@@ -314,35 +177,6 @@ def build_variant(theme: str, scale: float) -> tuple[dict, dict]:
     mid = px(SQ_MID, scale)
     imgs: dict[str, Image.Image] = {}
     elems: dict[str, dict] = {}
-
-    def pill(h_logical: int) -> tuple[int, int, float, int]:
-        """膠囊底板：左右兩端各**一個完整半圓**，中間一段純色。
-
-        回傳 `(圖寬, 圖高, 半徑, 水平 border)`。半徑就是圖高的一半——這是
-        apple.com 那種 `border-radius: 980px` 的長相，弧走完 90 度、切線已經水平了
-        才碰到上下那條直線，所以沒有交界。
-
-        ⚠️ **垂直方向不切九宮格**（`border` 的上下兩格給 0），因為切了就等於在圖裡
-        留一段直邊，半徑再也大不過 `H/2 − 1`。代價是**圖高必須精確等於元件高度**，
-        三種情況實測過（2026-08-27，見檔頭第 5 點）：圖比元件矮 → 垂直**重複貼**，
-        底部長出第二段；圖比元件高 → **裁切**，下緣被削平；相等 → 完美膠囊。
-
-        ⚠️ 所以元件的 `height` 要給圖高（進度條一直是這樣做的）。⚠️ **`height` 是
-        「地板」不是「釘死」**：實際高度 ＝ max(內容需求, `height`)，兩個方向都要守——
-        內容撐過圖高就變成上面那個「裁切」（所以那一類按鈕的字 + 樣式垂直 padding
-        必須矮於圖高，GUI 那幾行 `st.configure(..., padding=…)` 要留餘裕，見
-        `SQ_H_*` 那段）；版面把它拉高過圖高就變成上面那個「重複貼」（`sticky` 帶著
-        `n`／`s`，所以放進 `weight>0` 的 grid 列或 `pack(fill="y")` 都會拉高它——
-        目前每一處都挑對了，但那是**逐處挑對的結果、不是機制保證**，加新控制項時
-        要自己確認，清單在 GUI 的版面那一段）。
-
-        ⚠️ `border` 取 `ceil(H/2)` 不是 `H/2`：H 是奇數時半圓會多佔半欄，border
-        少一欄的話中段第一欄不是純色，水平重複貼就會透出一條細紋。
-
-        """
-        h = px(h_logical, scale)
-        br = (h + 1) // 2
-        return 2 * br + mid, h, h / 2.0, br
 
     def hpad(n: int) -> list[int]:
         """膠囊的內距：**只給左右，上下給 0**。
@@ -361,30 +195,17 @@ def build_variant(theme: str, scale: float) -> tuple[dict, dict]:
         """
         return [px(n, scale), 0, px(n, scale), 0]
 
-    def block(r: int) -> tuple[int, int]:
-        """兩個方向都留中段。給**會被撐得又寬又高**的東西用（卡片、日誌槽）。
-
-        ⚠️ 這是檔頭第 1 點的垂直版（第 4 點），而且它比水平版痛得多：中段高只有
-        1px 的話，填一張 400px 高的卡片就是垂直三百多次 × 水平十幾次的繪製呼叫，
-        而畫面上有三張卡片加一個日誌槽。代價是圖片面積變大，但那是實色圓角、
-        PNG 壓得掉。
-
-        ⚠️ 元件的 `width`／`height` **不可以跟著改成圖片邊長**——那兩個是「最小
-        尺寸」，給了整張圖的邊長之後每一張卡片都會被硬撐成一百多 px 高。"""
-        return 2 * (r + 1) + mid, 2 * (r + 1) + mid
-
     # ---- 一般按鈕：瀏覽…／變更…／開啟簡報／開啟資料夾（都坐在卡片上）----
     # ⚠️ **不描邊**：灰底本身就跟白卡分得開，再加一圈線就變成「框中框」（卡片
     # 一圈、按鈕一圈），meeting-scribe 的按鈕也是無框的
-    w, h, r, br_ = pill(SQ_H)
+    w, h, r, br_ = pill(SQ_H, scale, mid)
     for key, fill in (("button-rest", p["btn"]), ("button-dis", p["btn_off"]),
                       ("button-pressed", p["btn_lo"]), ("button-hover", p["btn_hi"])):
         imgs[key] = plate(w, h, r, fill, on=p["card"])
-    elems["Sq.button"] = dict(
-        states=[["", "button-rest"], ["disabled", "button-dis"],
-                ["pressed", "button-pressed"], ["active", "button-hover"]],
-        border=[br_, 0, br_, 0], width=2 * br_ + 1, height=h,
-        padding=hpad(SQ_PAD), sticky="nswe", on=p["card"])
+    elems["Sq.button"] = pill_elem(
+        [["", "button-rest"], ["disabled", "button-dis"],
+         ["pressed", "button-pressed"], ["active", "button-hover"]],
+        h, br_, p["card"], padding=hpad(SQ_PAD))
 
     # ---- 線框鈕：「瀏覽…」----
     # ⚠️ **整個畫面只有這一顆**（使用者 2026-08-27）：它是「選檔」這條主線的起點，
@@ -402,11 +223,10 @@ def build_variant(theme: str, scale: float) -> tuple[dict, dict]:
     imgs["cta-dis"] = plate(w, h, r, p["card"], p["line_off"], lw=lw, on=p["card"])
     imgs["cta-pressed"] = plate(w, h, r, shade(p["cta_hi"], -0.12), on=p["card"])
     imgs["cta-hover"] = plate(w, h, r, p["cta_hi"], on=p["card"])
-    elems["Sq.cta"] = dict(
-        states=[["", "cta-rest"], ["disabled", "cta-dis"],
-                ["pressed", "cta-pressed"], ["active", "cta-hover"]],
-        border=[br_, 0, br_, 0], width=2 * br_ + 1, height=h,
-        padding=hpad(SQ_PAD), sticky="nswe", on=p["card"])
+    elems["Sq.cta"] = pill_elem(
+        [["", "cta-rest"], ["disabled", "cta-dis"],
+         ["pressed", "cta-pressed"], ["active", "cta-hover"]],
+        h, br_, p["card"], padding=hpad(SQ_PAD))
 
     # ---- 低調按鈕：兩張可收合卡片的標題列，與「開啟紀錄」----
     # ⚠️ 靜止態就是**卡片底色本身**：那三顆讀起來要像區段標題而不是三條灰色橫槓
@@ -421,52 +241,44 @@ def build_variant(theme: str, scale: float) -> tuple[dict, dict]:
     # 壞法見 `pill()`）。
     for elem, prefix, hh in (("Sq.subtle", "subtle", SQ_H_ADV),
                              ("Sq.subtlesm", "subtlesm", SQ_H_SUB)):
-        sw, sh, sr, sbr = pill(hh)
+        sw, sh, sr, sbr = pill(hh, scale, mid)
         for key, fill in ((f"{prefix}-rest", p["card"]),
                           (f"{prefix}-dis", p["card"]),
                           (f"{prefix}-pressed", p["btn_lo"]),
                           (f"{prefix}-hover", p["btn"])):
             imgs[key] = plate(sw, sh, sr, fill, on=p["card"])
-        elems[elem] = dict(
-            states=[["", f"{prefix}-rest"], ["disabled", f"{prefix}-dis"],
-                    ["pressed", f"{prefix}-pressed"],
-                    ["active", f"{prefix}-hover"]],
-            border=[sbr, 0, sbr, 0], width=2 * sbr + 1, height=sh,
-            padding=hpad(SQ_PAD), sticky="nswe", on=p["card"])
+        elems[elem] = pill_elem(
+            [["", f"{prefix}-rest"], ["disabled", f"{prefix}-dis"],
+             ["pressed", f"{prefix}-pressed"], ["active", f"{prefix}-hover"]],
+            sh, sbr, p["card"], padding=hpad(SQ_PAD))
 
     # ---- 版面的卡片 ----
     # ⚠️ **內距給 0**：卡片的內距是版面的一把尺（GUI 的 CARD_PAD，要過 App.px()
     # 跟著顯示縮放走），不是底板自帶的。按鈕／輸入框那幾張要自帶內距，是因為它們
     # 換掉的 sv_ttk 圖片本來就帶著一份（見 SQ_PAD）；卡片沒有前身，不必補。
     cr = px(SQ_R_CARD, scale)
-    cw, ch = block(cr)      # ⚠️ 卡片很高，見 block() 的說明
+    cw, ch = block(cr, mid)      # ⚠️ 卡片很高，見 block() 的說明
     imgs["card-rest"] = plate(cw, ch, cr, p["card"], p["card_line"], on=p["page"])
-    elems["Sq.card"] = dict(
-        states=[["", "card-rest"]],
-        border=cr + 1, width=2 * (cr + 1) + 1, height=2 * (cr + 1) + 1,
-        padding=0, sticky="nswe", on=p["page"])
+    elems["Sq.card"] = block_elem([["", "card-rest"]], cr, 0, p["page"])
 
     # ---- 日誌槽：卡片裡凹下去的那一層 ----
     # ⚠️ 圓角**由這一層畫**：`tk.Text` 是 classic 控制項，沒有 ttk 樣式、做不到
     # 圓角。Text 縮在這個框裡（GUI 那邊給 SP_SM 的內距），方角才不會伸進弧裡。
     br = px(SQ_R_BOX, scale)
-    bw, bh = block(br)      # 同上：日誌槽是版面上唯一會長高的東西
+    bw, bh = block(br, mid)      # 同上：日誌槽是版面上唯一會長高的東西
     imgs["sunken-rest"] = plate(bw, bh, br, p["field"], p["line"], on=p["card"])
-    elems["Sq.sunken"] = dict(
-        states=[["", "sunken-rest"]],
-        border=br + 1, width=2 * (br + 1) + 1, height=2 * (br + 1) + 1,
-        padding=px(SQ_PAD_SUNKEN, scale), sticky="nswe", on=p["card"])
+    elems["Sq.sunken"] = block_elem([["", "sunken-rest"]], br,
+                                    px(SQ_PAD_SUNKEN, scale), p["card"])
 
     # ---- 輸入框：取得焦點時描邊換成 accent 並加粗到 2px ----
     imgs["field-rest"] = plate(w, h, r, p["field"], p["line"], on=p["card"])
     imgs["field-dis"] = plate(w, h, r, p["field_off"], p["line_off"], on=p["card"])
     imgs["field-focus"] = plate(w, h, r, p["field"], p["accent"],
                                 lw=max(2, px(2, scale)), on=p["card"])
-    elems["Sq.field"] = dict(
-        states=[["", "field-rest"], ["disabled", "field-dis"],
-                ["focus", "field-focus"]],
-        border=[br_, 0, br_, 0], width=2 * br_ + 1, height=h,
-        padding=hpad(SQ_PAD_FIELD), sticky="nswe", on=p["card"])
+    elems["Sq.field"] = pill_elem(
+        [["", "field-rest"], ["disabled", "field-dis"],
+         ["focus", "field-focus"]],
+        h, br_, p["card"], padding=hpad(SQ_PAD_FIELD))
 
     # ---- 核取方塊：沒勾是凹下去的空框，勾了才上色（Apple 自己的用法）----
     box, ckr, gap = px(SQ_CHK_BOX, scale), px(SQ_R_CHK, scale), px(SQ_CHK_GAP, scale)
@@ -478,12 +290,12 @@ def build_variant(theme: str, scale: float) -> tuple[dict, dict]:
             fill=p["on_accent"], width=max(2, px(2, scale)), joint="curve")
         return img
 
-    imgs["check-off"] = _pad_right(
+    imgs["check-off"] = pad_right(
         plate(box, box, ckr, p["field"], p["line"], on=p["card"]), gap)
-    imgs["check-on"] = _pad_right(ticked(p["accent"]), gap)
-    imgs["check-off-dis"] = _pad_right(
+    imgs["check-on"] = pad_right(ticked(p["accent"]), gap)
+    imgs["check-off-dis"] = pad_right(
         plate(box, box, ckr, p["field_off"], p["line_off"], on=p["card"]), gap)
-    imgs["check-on-dis"] = _pad_right(ticked(shade(p["accent"], -0.45)), gap)
+    imgs["check-on-dis"] = pad_right(ticked(shade(p["accent"], -0.45)), gap)
     # ⚠️ 這一顆**不切九宮格**（border=0）：方塊是固定尺寸的，拉伸只會把它拉歪
     elems["Sq.check"] = dict(
         states=[["", "check-off"], ["disabled selected", "check-on-dis"],
@@ -502,24 +314,22 @@ def build_variant(theme: str, scale: float) -> tuple[dict, dict]:
     # ⚠️ 多切的那一欄不會壞掉（中段仍落在純色區、只是白白多切一欄），所以這是
     # 一致性修正不是修 bug；改完 `tests/..::test_pill_plates_are_sliced_horizontally_only`
     # 一起管它。
-    pw, th, pr, pbr = pill(SQ_PB_TH)
+    pw, th, pr, pbr = pill(SQ_PB_TH, scale, mid)
     imgs["trough"] = plate(pw, th, pr, p["trough"], on=p["card"])
     imgs["pbar"] = plate(pw, th, pr, p["accent"], on=p["trough"])
     for name, key, on in (("Sq.trough", "trough", p["card"]),
                           ("Sq.pbar", "pbar", p["trough"])):
-        elems[name] = dict(states=[["", key]], border=[pbr, 0, pbr, 0],
-                           width=2 * pbr + 1, height=th,
-                           padding=0, sticky="nswe", on=on)
+        elems[name] = pill_elem([["", key]], th, pbr, on, padding=0)
 
     # ---- 收合鈕的三角形（見 chevron）----
     # ⚠️ **不進 `elems`**：它們不是 ttk 元件，是 GUI 直接拿去當按鈕的 `image`
     # （`compound="left"`）。沒有皮膚時退回文字字元，見 GUI 的 `_set_chevron`。
     cv, cg = px(SQ_CHEV, scale), px(SQ_CHEV_GAP, scale)
-    imgs["chev-right"] = _pad_right(chevron(cv, p["ink"], False), cg)
-    imgs["chev-down"] = _pad_right(chevron(cv, p["ink"], True), cg)
+    imgs["chev-right"] = pad_right(chevron(cv, p["ink"], False), cg)
+    imgs["chev-down"] = pad_right(chevron(cv, p["ink"], True), cg)
 
     # ---- 主要動作鈕的兩張皮：開始是 Apple 藍、停止是深紅 ----
-    rw, rh, rr, rbr = pill(SQ_H_RUN)
+    rw, rh, rr, rbr = pill(SQ_H_RUN, scale, mid)
     for kind, hover in (("accent", p["accent_hi"]), ("stop", None)):
         imgs[f"{kind}-rest"] = plate(rw, rh, rr, p[kind], on=p["card"])
         imgs[f"{kind}-dis"] = plate(rw, rh, rr, p["run_off"], on=p["card"])
@@ -527,42 +337,36 @@ def build_variant(theme: str, scale: float) -> tuple[dict, dict]:
                                         on=p["card"])
         imgs[f"{kind}-hover"] = plate(rw, rh, rr, hover or shade(p[kind], 0.10),
                                       on=p["card"])
-        elems[f"Sq.{kind}"] = dict(
-            states=[["", f"{kind}-rest"], ["disabled", f"{kind}-dis"],
-                    ["pressed", f"{kind}-pressed"], ["active", f"{kind}-hover"]],
-            border=[rbr, 0, rbr, 0], width=2 * rbr + 1, height=rh,
-            padding=hpad(SQ_PAD), sticky="nswe", on=p["card"])
+        elems[f"Sq.{kind}"] = pill_elem(
+            [["", f"{kind}-rest"], ["disabled", f"{kind}-dis"],
+             ["pressed", f"{kind}-pressed"], ["active", f"{kind}-hover"]],
+            rh, rbr, p["card"], padding=hpad(SQ_PAD))
 
     return imgs, elems
 
 
 def pack(imgs: dict[str, Image.Image]) -> tuple[Image.Image, dict]:
-    """把底板疊成一張 sprite sheet（單欄，最省事也最好對）。
+    """本專案的 sprite 佈局：走共用包那一支，並且**打開去重**。
 
-    ⚠️ **逐位元組相同的底板只鋪一次**（2026-08-27 補）：好幾組狀態本來就是同一張
-    圖——低調皮的 `rest` 與 `dis` 都是卡片色（那一顆停用時本來就不該變色）、
-    `accent-dis` 與 `stop-dis` 都是 `run_off`。它們各出貨一份純粹是浪費，而讓兩個 key
-    指到同一個 rect 對消費端完全透明（`_from_assets` 是照 rect 去裁的，裁兩次同一塊
-    區域沒有任何差別）。⚠️ **不要改成「把重複的 key 從 `states` 拿掉」**：狀態表要
-    完整列出來，ttk 才知道每個狀態該用哪張圖。
+    ⚠️ **去重在共用包裡預設是關的**，那是刻意的：開關一改，產出的 sheet 就變了，而
+    姊妹專案有「出貨的資產 == 現在的產生器」那種逐位元組比對的測試——共用包改預設，
+    那邊當場變紅而在這裡看不到（2026-08-28 `check_downstreams` 真的抓到過一次）。
+    所以「要不要去重」由各下游自己決定，理由與量到的數字在 `skingen.pack`。
+
+    ⚠️ **這一層薄薄的轉呼叫不是多餘的**：皮膚載入器存磁碟快取時走的是
+    `make_skin.pack`（見 `winkit.skin` 的 `_save_cache`），所以出貨資產與快取的
+    佈局在定義上就是同一種——直接讓那邊呼叫共用包的話，兩者會一個去重、一個不去重。
     """
-    sheet_w = max(im.width for im in imgs.values())
-    rects, top, y = {}, {}, 0
-    for k in sorted(imgs):
-        im = imgs[k]
-        sig = (im.width, im.height, im.tobytes())
-        if sig not in top:
-            top[sig] = y
-            y += im.height
-        rects[k] = [0, top[sig], im.width, im.height]
-    sheet = Image.new("RGBA", (sheet_w, y), (0, 0, 0, 0))
-    for k, (_x, t, _w, _h) in rects.items():
-        sheet.paste(imgs[k], (0, t))
-    return sheet, rects
+    return _pack(imgs, dedup=True)
 
 
 def main() -> int:
     OUT.mkdir(parents=True, exist_ok=True)
+    # ⚠️ **前景色不進資產**（2026-08-28 拿掉）：主要動作鈕停用／啟用時的字色改成由
+    # 載入器直接查色票。烘進 `sprites.json` 的那一版有個無聲的漂法——色票改了卻忘了
+    # 重跑這支，停用態的字色會停在舊值而畫面其他地方都更新了。順帶修掉一個已經漂開
+    # 的名字：資產裡那個鍵叫 `run_off`，而色票的 `run_off` 是**另一個顏色**（停用態
+    # 的底色），讀起來像同一個其實不是。
     meta = {"version": SCHEMA_VERSION, "scales": list(SCALES), "variants": {}}
     for theme in ("light", "dark"):
         for scale in SCALES:
@@ -572,8 +376,6 @@ def main() -> int:
             sheet.save(OUT / name, optimize=True)
             meta["variants"][f"{theme}@{scale:g}"] = {
                 "file": name,
-                "fg": {"on_accent": SKINS[theme]["on_accent"],
-                       "run_off": SKINS[theme]["run_off_fg"]},
                 "sprites": rects,
                 "elements": elems,
             }

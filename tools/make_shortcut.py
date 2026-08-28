@@ -37,12 +37,8 @@ Constrained Language Mode 都擋得掉）。ctypes 直接叫 `IShellLinkW` 不�
 """
 from __future__ import annotations
 
-import ctypes
-import os
 import sys
-from ctypes import POINTER, byref, c_int, c_void_p, c_wchar_p
 from pathlib import Path
-from uuid import UUID
 
 # 路徑的單一出處：專案根目錄、桌面、「開始」功能表都從這一支拿——`repo_root()` 往
 # 上幾層、OneDrive 把桌面整個重導走的那個坑、問不到已知資料夾時該退到哪裡，理由全
@@ -66,178 +62,23 @@ from uuid import UUID
 # 兩邊現在同形（沿革見 `docs/dev/windows-環境與入口.md` §5.3）。
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from pdf2ppt import brand                                    # noqa: E402
-from pdf2ppt.paths import (desktop_dir, repo_root,           # noqa: E402
-                           start_menu_programs_dir)
+from winkit.paths import (assets_dir, desktop_dir, repo_root,  # noqa: E402
+                          start_menu_programs_dir)
+from winkit.shortcut import script_host, write_shortcut       # noqa: E402
 
 ROOT = repo_root()
 
 LAUNCHER = "啟動.vbs"          # 不開黑視窗的那條，README 教的也是它
-ICON = Path("assets") / "icon.ico"
+# ⚠️ 圖示走 `assets_dir()`（＝套件底下的 `assets/`），不是自己從 ROOT 拼：資產跟著
+# **套件**走，而「它在哪」只有共用包那一份說了算。
+ICON = assets_dir() / "icon.ico"
 
-_S_OK = 0
-_CLSCTX_INPROC_SERVER = 1
-_CLSID_SHELL_LINK = "{00021401-0000-0000-C000-000000000046}"
-_IID_ISHELL_LINK_W = "{000214F9-0000-0000-C000-000000000046}"
-_IID_IPERSIST_FILE = "{0000010B-0000-0000-C000-000000000046}"
-_IID_IPROPERTY_STORE = "{886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99}"
-# PKEY_AppUserModel_ID（propkey.h）：工作列拿來認「這是哪個應用程式」
-_PKEY_AUMID_FMTID = "{9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3}"
-_PKEY_AUMID_PID = 5
-
-# vtable 上的**順序**，不是名字——數錯一格就是呼叫到隔壁那個方法，而那多半
-# 是當場 crash 不是回錯誤碼。所以照介面宣告的順序整段抄在這裡對照：
-#   IUnknown:      0 QueryInterface  1 AddRef  2 Release
-#   IShellLinkW:   3 GetPath  4 GetIDList  5 SetIDList  6 GetDescription
-#                  7 SetDescription  8 GetWorkingDirectory  9 SetWorkingDirectory
-#                  10 GetArguments  11 SetArguments  12 GetHotkey  13 SetHotkey
-#                  14 GetShowCmd  15 SetShowCmd  16 GetIconLocation
-#                  17 SetIconLocation  18 SetRelativePath  19 Resolve  20 SetPath
-#   IPersistFile:  3 GetClassID  4 IsDirty  5 Load  6 Save  7 SaveCompleted
-_QUERY_INTERFACE, _RELEASE = 0, 2
-_SET_DESCRIPTION, _SET_WORKING_DIRECTORY = 7, 9
-_SET_ARGUMENTS = 11
-_SET_ICON_LOCATION, _SET_PATH = 17, 20
-_PERSIST_SAVE = 6
-#   IPropertyStore: 3 GetCount  4 GetAt  5 GetValue  6 SetValue  7 Commit
-_PS_SET_VALUE, _PS_COMMIT = 6, 7
-
-
-class _GUID(ctypes.Structure):
-    _fields_ = [
-        ("Data1", ctypes.c_ulong),
-        ("Data2", ctypes.c_ushort),
-        ("Data3", ctypes.c_ushort),
-        ("Data4", ctypes.c_ubyte * 8),
-    ]
-
-
-class _PROPERTYKEY(ctypes.Structure):
-    _fields_ = [("fmtid", _GUID), ("pid", ctypes.c_ulong)]
-
-
-class _PROPVARIANT(ctypes.Structure):
-    """只夠用來裝一個 VT_LPWSTR 的 PROPVARIANT。
-
-    ⚠️ **尾巴那個 `pad` 不可以省**：真正的 PROPVARIANT 是 24 bytes（x64）／
-    16（x86），而 `PropVariantClear` 會把整個結構清成零——宣告短了就是寫出界
-    8 個位元組。這裡刻意排成與真實大小相同（8 + 指標 + 指標）。
-    ⚠️ 也不要找 `InitPropVariantFromString`：那是 propvarutil.h 的 **inline**
-    函式，propsys.dll 沒有匯出這個符號（2026-08-25 實測 not found）。"""
-    _fields_ = [("vt", ctypes.c_ushort),
-                ("r1", ctypes.c_ushort),
-                ("r2", ctypes.c_ushort),
-                ("r3", ctypes.c_ushort),
-                ("p", c_void_p),
-                ("pad", c_void_p)]
-
-
-_VT_LPWSTR = 31
-
-
-def _propvariant_str(text: str) -> _PROPVARIANT:
-    """把字串包成 VT_LPWSTR 的 PROPVARIANT；字串用 CoTaskMemAlloc 配置，
-    才能由 `PropVariantClear` 收回去。"""
-    ole32 = ctypes.windll.ole32
-    ole32.CoTaskMemAlloc.restype = c_void_p          # ⚠️ 不設就會在 x64 被截斷
-    ole32.CoTaskMemAlloc.argtypes = [ctypes.c_size_t]
-    buf = (text + chr(0)).encode("utf-16-le")
-    mem = ole32.CoTaskMemAlloc(len(buf))
-    if not mem:
-        raise MemoryError("CoTaskMemAlloc 失敗")
-    ctypes.memmove(mem, buf, len(buf))
-    pv = _PROPVARIANT()
-    pv.vt = _VT_LPWSTR
-    pv.p = mem
-    return pv
-
-
-def _guid(text: str) -> _GUID:
-    u = UUID(text)
-    return _GUID(u.time_low, u.time_mid, u.time_hi_version,
-                 (ctypes.c_ubyte * 8)(*u.bytes[8:]))
-
-
-def script_host() -> Path | None:
-    """`wscript.exe` 的位置（見模組 docstring 的第一條 ⚠️）。找不到回 None。"""
-    host = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "wscript.exe"
-    return host if host.is_file() else None
-
-
-def _call(obj: c_void_p, slot: int, argtypes: tuple, *args) -> int:
-    """叫 COM 物件 vtable 上第 slot 個方法，回 HRESULT。
-
-    ⚠️ argtypes 明寫、不用 `type(a)` 推：`byref()` 回的是 CArgObject，推出來
-    的型別是錯的，而錯的型別在這一層不會報錯、只會把垃圾推上堆疊。"""
-    vtable = ctypes.cast(obj, POINTER(c_void_p))[0]
-    method = ctypes.cast(vtable, POINTER(c_void_p))[slot]
-    return ctypes.WINFUNCTYPE(ctypes.c_long, c_void_p, *argtypes)(method)(obj, *args)
-
-
-def _check(hr: int, what: str) -> None:
-    if hr != _S_OK:
-        raise OSError(f"{what} 失敗（HRESULT 0x{hr & 0xFFFFFFFF:08X}）")
-
-
-def write_shortcut(dest: Path, target: Path, arguments: str, workdir: Path,
-                   icon: Path, description: str) -> None:
-    """寫出一個 .lnk；失敗一律拋例外（呼叫端決定要不要當成致命）。"""
-    ole32 = ctypes.windll.ole32
-    ole32.CoInitialize(None)
-    try:
-        clsid, iid = _guid(_CLSID_SHELL_LINK), _guid(_IID_ISHELL_LINK_W)
-        link = c_void_p()
-        _check(ole32.CoCreateInstance(byref(clsid), None, _CLSCTX_INPROC_SERVER,
-                                      byref(iid), byref(link)),
-               "CoCreateInstance(ShellLink)")
-        try:
-            _check(_call(link, _SET_PATH, (c_wchar_p,), str(target)), "SetPath")
-            _check(_call(link, _SET_ARGUMENTS, (c_wchar_p,), arguments),
-                   "SetArguments")
-            _check(_call(link, _SET_WORKING_DIRECTORY, (c_wchar_p,), str(workdir)),
-                   "SetWorkingDirectory")
-            _check(_call(link, _SET_DESCRIPTION, (c_wchar_p,), description),
-                   "SetDescription")
-            # 第二個參數是 .ico 裡的第幾張圖；icon.ico 是同一個圖示的八個尺寸、
-            # 不是八張不同的圖，所以固定 0（Windows 自己會挑合適的尺寸）
-            _check(_call(link, _SET_ICON_LOCATION, (c_wchar_p, c_int), str(icon), 0),
-                   "SetIconLocation")
-
-            # ⚠️ 要在 IPersistFile::Save **之前**寫：Commit 只改記憶體裡的
-            # 那個連結物件，真正落檔的是後面那個 Save。少了這一段，使用者
-            # 把捷徑釘到工作列之後，釘的那顆與執行中的視窗會是兩個按鈕
-            # （釘選那顆的身分是從 wscript.exe 推出來的）。
-            store_iid = _guid(_IID_IPROPERTY_STORE)
-            store = c_void_p()
-            if _call(link, _QUERY_INTERFACE, (c_void_p, c_void_p),
-                     byref(store_iid), byref(store)) == _S_OK:
-                try:
-                    key = _PROPERTYKEY(_guid(_PKEY_AUMID_FMTID), _PKEY_AUMID_PID)
-                    prop = _propvariant_str(brand.APP_ID)
-                    try:
-                        _check(_call(store, _PS_SET_VALUE, (c_void_p, c_void_p),
-                                     byref(key), byref(prop)),
-                               "SetValue(AppUserModelID)")
-                        _check(_call(store, _PS_COMMIT, ()), "Commit")
-                    finally:
-                        ole32.PropVariantClear(byref(prop))
-                finally:
-                    _call(store, _RELEASE, ())
-
-            persist_iid = _guid(_IID_IPERSIST_FILE)
-            persist = c_void_p()
-            _check(_call(link, _QUERY_INTERFACE, (c_void_p, c_void_p),
-                         byref(persist_iid), byref(persist)),
-                   "QueryInterface(IPersistFile)")
-            try:
-                # 第二個參數 fRemember=TRUE：把這個路徑記成物件目前的檔案
-                _check(_call(persist, _PERSIST_SAVE, (c_wchar_p, c_int),
-                             str(dest), 1), "Save")
-            finally:
-                _call(persist, _RELEASE, ())
-        finally:
-            _call(link, _RELEASE, ())
-    finally:
-        ole32.CoUninitialize()
+# ⚠️ **IShellLink／PropertyStore 那整套 COM 2026-08-28 搬進共用包 `winkit.shortcut`**
+# （見上面的 import）：vtable 的順序、`hr >= 0` 才算成功、`CoUninitialize` 只能配對
+# 呼叫、把 AppUserModelID 寫進 .lnk——那些是「怎麼寫一顆 .lnk」，兩支程式都該一樣。
+# ⚠️ 這裡留下來的是「**要放在哪、叫什麼名字、對使用者說什麼**」，那是這支程式的身分。
+# ⚠️ **`APP_ID` 不再由這裡傳**：共用包直接從 `winkit.host()` 拿（＝`brand.APP_ID`），
+# 所以「程式宣告的身分」與「寫進捷徑的身分」在定義上就是同一個值，不必再靠人記得。
 
 
 def install_to(folder: Path) -> Path:
@@ -253,7 +94,7 @@ def install_to(folder: Path) -> Path:
         target, args = host, f'"{vbs}"'
     else:
         target, args = vbs, ""
-    write_shortcut(dest, target, args, ROOT, ROOT / ICON, brand.APP_DESC)
+    write_shortcut(dest, target, args, ROOT, ICON, brand.APP_DESC)
     return dest
 
 
@@ -270,10 +111,10 @@ def main() -> int:
     if not (ROOT / LAUNCHER).is_file():
         print(f"[提醒] 找不到 {LAUNCHER}，略過建立捷徑。")
         return 3
-    if not (ROOT / ICON).is_file():
+    if not ICON.is_file():
         # 圖示缺了還是建得出捷徑（Windows 會用預設圖示），但那顆圖示在桌面上
         # 認不出來，寧可講一句
-        print(f"[提醒] 找不到 {ICON}，捷徑會用系統預設圖示。"
+        print(f"[提醒] 找不到 {ICON.relative_to(ROOT)}，捷徑會用系統預設圖示。"
               "　可以跑 uv run python tools/make_icon.py 重新產生。")
 
     # 只講原因，不講「那你改用啟動.vbs」——那句由「安裝.bat」的 :nolnk 統一印。

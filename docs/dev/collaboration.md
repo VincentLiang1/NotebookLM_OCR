@@ -190,7 +190,7 @@ GUI 測試與突變清單三個檔）。⚠️ **這不是測試太嚴，是它�
 `SCALES` 五檔 → 八檔（補 2.25／2.5／3.0）、六張新 PNG、sprite 表重產（+3,649 行）連同十四支檔案的修改
 **至今仍未提交**，而它自己的 `CLAUDE.md` 在同一批未提交變更裡就寫著「那次不是跨 repo：當時沒有人從別的 repo
 寫進來，這條規則是從那個經驗推出來的**預防**，不是事故報告」。本 repo 這一側**沒有任何一筆改動流向那裡**
-（`SCALES` 一直是五檔、`assets/skin/` 一直是十張 PNG＋`sprites.json`）。
+（`SCALES` 一直是五檔、`pdf2ppt/assets/skin/` 一直是十張 PNG＋`sprites.json`）。
 
 規則照留——它防的是**下一次**，而那個風險是真的：這份文件與 `docs/dev/documentation.md` 本來就寫著「三個 repo
 一起改」。

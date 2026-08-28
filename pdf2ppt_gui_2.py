@@ -47,7 +47,7 @@ docs/dev/windows-環境與入口.md 5.1。
 條主線的兩半（使用者圈了那條帶說「去掉」）。
 
 ⚠️ 卡片是 2026-08-26 加的（使用者「參考 MP4-2-SRT UI 的圓角、卡片、顏色」）：
-底色分三階 page → card → field（唯一真值在 pdf2ppt/palette.py），圓角底板由
+底色分三階 page → card → field（唯一真值在共用包 winkit.palette），圓角底板由
 tools/make_skin.py 畫。兩顆收合鈕與「開啟紀錄」坐在**卡片上**、走低調皮
 （靜止態就是卡片底色，滑過才浮出灰底）——做成實底的話，畫面上最重的三個元素會是
 三條灰橫槓，而它們講的是最不重要的三件事。
@@ -79,39 +79,38 @@ tools/make_skin.py 畫。兩顆收合鈕與「開啟紀錄」坐在**卡片上**
 """
 from __future__ import annotations
 
-import base64
 import ctypes
 import datetime
-import hashlib
 import io
-import json
 import os
 import queue
 import re
-import shutil
 import subprocess
 import sys
 import threading
-import time
 import traceback
 from pathlib import Path
 
 import tkinter as tk
 from tkinter import filedialog, font as tkfont, messagebox, ttk
 
-# ⚠️ 這三行是本檔**僅有**的三處「從專案套件裡拿東西」，而且是刻意的：
-# `pdf2ppt/palette.py` 與 `pdf2ppt/brand.py` 一行 import 都沒有、`pdf2ppt/paths.py`
-# 只 import 標準函式庫加上 `brand`、`pdf2ppt/__init__.py` 也只有一句 docstring，所以
-# 這三行**不會**把 numpy／pymupdf／python-pptx 那一整串拉進啟動路徑（那些只有按下
-# 轉檔的那一刻、`_run_conversion` 裡 import cli 時才付出）。顏色抽成一份的理由見那支
-# 的 docstring —— 產生器（tools/make_skin.py）與這裡共用同一份色票；路徑抽成一份的
-# 理由同理，差別是那一份屬於**三個姊妹專案共用、下游不該改**的底層工具（見
-# `pdf2ppt/paths.py` 的 docstring）。⚠️ **名字與用途那句話走 `pdf2ppt/brand.py`**：
-# 那支是「這支程式的身分」，複製這個專案去做下一支 Windows AP 時只有它必須改——所以
-# 這裡**不要**再寫死第二份字面值（`tests/test_paths.py` 掃著）。
-from pdf2ppt.brand import APP_ID, APP_SUB, APP_TITLE
-from pdf2ppt.palette import PALETTES
-from pdf2ppt.paths import appdata_root
+# ⚠️ 這幾行是本檔**僅有**的「從套件裡拿東西」，而且是刻意的：`pdf2ppt/brand.py`
+# 一行 import 都沒有、`pdf2ppt/__init__.py` 只有 docstring 加上共用包的 `bind()`
+# （`winkit` 的 `__init__` 自己也零相依），所以它們**不會**把 numpy／pymupdf／
+# python-pptx 那一整串拉進啟動路徑（那些只有按下轉檔的那一刻、`_run_conversion`
+# 裡 import cli 時才付出）。
+# ⚠️ **落地位置與色票走共用包**（2026-08-28，本檔原本讀的那兩支模組整支搬過去了）：
+# 它們是兩支 Windows AP 共用、**下游不該改**的底層工具與設計系統，位置與身分值全部
+# 由 `pdf2ppt/__init__.py` 的 `winkit.bind()` 注入。⚠️ **色票改一次兩邊生效**——
+# 「兩支程式在桌面上是一套」（使用者 2026-08-26）就是這個意思，所以改色之前要想到
+# 姊妹專案也會跟著變（見 CLAUDE.md 共用包那一條）。
+# ⚠️ **名字與用途那句話走 `pdf2ppt/brand.py`**：那支是「這支程式的身分」，複製這個
+# 專案去做下一支 Windows AP 時只有它必須改——所以這裡**不要**再寫死第二份字面值
+# （`tests/test_paths.py` 掃著）。
+from winkit import filelog, paths, winui
+from winkit import skin as wskin
+from winkit.skin import Button
+from pdf2ppt.brand import APP_SUB, APP_TITLE
 
 # 專案根目錄 ＝ **本檔所在的資料夾**，沒有第二個候選（使用者 2026-08-25 指示
 # 拿掉介面上的位置選擇）。⚠️ 一定要用 `__file__` 而不是 cwd：從「啟動.vbs」／
@@ -120,7 +119,7 @@ from pdf2ppt.paths import appdata_root
 PROJECT_DIR = Path(__file__).resolve().parent
 
 # 視窗圖示。檔案本身由 tools/make_icon.py 產生（幾何與色票的唯一真值在那支）。
-APP_ICON = PROJECT_DIR / "assets" / "icon.ico"
+APP_ICON = paths.assets_dir() / "icon.ico"
 
 # 間距尺規（邏輯 px，一律再過 App.px() 換算成實體像素）。⚠️ **版面裡不要再出現
 # 別的間距數字**：2026-08-25 晚上使用者說「還是有點擠」，量出來的成因不是字太小
@@ -202,6 +201,12 @@ SUBTLE_STYLE = "Subtle.TButton"  # 同一張皮、小一號的內距（開啟紀
 # 沒有強調。
 CTA_STYLE = "Cta.TButton"
 
+# 視窗第一句（程式用途那句副標）。⚠️ 樣式名**必須以 `.Muted.TLabel` 結尾**才繼承得
+# 到說明文字的前景色——ttk 是照後綴一層層往上找的（`Sub.Muted.TLabel` →
+# `Muted.TLabel` → `TLabel`）。取名成 `Subtitle.TLabel` 就只會繼承到 `TLabel`，
+# 顏色會掉回預設的黑。10pt 粗體（使用者 2026-08-25 晚指示）。
+SUB_STYLE = "Sub.Muted.TLabel"
+
 # 狀態字會出現的**所有**長相。用途是量出右欄要保留多寬——⚠️ 這一格的寬度必須
 # 釘住（不然「就緒」換成「載入 OCR 引擎…」時進度條的右端會跟著左右抽動），但
 # **要用量的、不要用猜的**：2026-08-25 一開始寫死 `width=20` 個字元，結果進度條
@@ -221,8 +226,12 @@ STATUS_SAMPLES = ("等待選檔", "就緒", "準備中…", "載入 OCR 引擎�
 # `--font` 是**輸出到 PPTX 裡**的東亞字型，必須是 Microsoft YaHei（style.py 的
 # 寬度量測固定用 msyh.ttc 校準，換掉會讓排版估算失準——這也正是介面上不再露出
 # 字型選單的理由）；這裡只管介面自己的字，兩者不可互相「順手統一」。
-UI_FONT = "Microsoft JhengHei UI"
-UI_FONT_FALLBACK = "Microsoft JhengHei"   # 舊版 Windows 沒有 UI 版
+# ⚠️ **介面字型的挑法在共用包**（`winkit.skin.ui_font_family`：挑不到 Microsoft
+# JhengHei UI 就退 JhengHei，再挑不到就讓 Tk 用系統預設，不要硬塞不存在的名字）。
+# ⚠️ **這跟 --font 完全是兩回事**：`--font` 是**輸出到 PPTX 裡**的東亞字型，必須是
+# Microsoft YaHei（style.py 的寬度量測固定用 msyh.ttc 校準，換掉會讓排版估算失準
+# ——這也正是介面上不再露出字型選單的理由）；共用包那個只管介面自己的字，兩者不可
+# 互相「順手統一」。
 # 佈景：**Sun Valley**（`sv-ttk`，MIT）—— 一套模仿 Windows 11 Fluent／WinUI 的
 # ttk 佈景（圓角、細框線、Fluent 的輸入框與勾選方塊、內建亮／暗兩套）。
 #
@@ -234,56 +243,15 @@ UI_FONT_FALLBACK = "Microsoft JhengHei"   # 舊版 Windows 沒有 UI 版
 # docs/dev/windows-環境與入口.md §5。
 #
 # ⚠️ 佈景只挑得動 **ttk** 控制項；`tk.Text`（日誌區）與視窗底色是 classic 的，
-# 顏色要自己餵 —— 那正是色票（`pdf2ppt/palette.py`）存在的理由。
-THEME_ENV = "NOTEBOOKLM_PDF2PPT_THEME"     # light / dark，不設就跟隨 Windows
-# ⚠️ **色票不在這裡**（2026-08-26 起）：`pdf2ppt/palette.py` 是唯一真值，皮膚產生
+# 顏色要自己餵 —— 那正是色票（`winkit.palette`）存在的理由。
+# ⚠️ **佈景的亮暗、DPI、工作列那一整套走共用包 `winkit.winui`**（2026-08-28，本檔
+# 原本自己有一份，那份正是共用包那一支的出處）：它們是「兩支程式在同一台電腦的工作
+# 列上並排」的行為，**不一致比兩邊都沒做還糟**。覆寫佈景的環境變數是
+# `winui.theme_env()`（＝`<brand.ENV_PREFIX>_THEME`，組出來的名字與收攏前一字不差）。
+# ⚠️ **色票不在這裡**（2026-08-26 起）：`winkit.palette` 是唯一真值，皮膚產生
 # 器 `tools/make_skin.py` 讀的是同一份。它原本真的分成兩份（產生器一份「畫進圖片
 # 的顏色」、這裡一份「文字的顏色」），而重疊的鍵一旦漂開，症狀是「按鈕的藍跟卡片
 # 邊框的灰差一階」——肉眼看得到卻查不出來源。
-
-
-def enable_dpi_awareness() -> None:
-    """讓 Windows 用真實像素畫這個視窗。⚠️ **必須在建立 Tk 之前呼叫**。
-
-    不設的話，Windows 會把整個視窗當成 96dpi 畫完、再**點陣放大**到顯示縮放
-    （本機 150%，就是 1.5×），字的邊緣全是鋸齒 —— 使用者 2026-08-25 回報的
-    「UI 字體有鋸齒狀」就是這個，**跟字型無關**（本機的 TkDefaultFont 本來
-    就已經是 Microsoft JhengHei UI）。
-
-    設了之後 Tk 量到的是真實 DPI（實測 95.9 → 143.9），**用點數指定的字型會
-    自己換算成正確的像素高**，但**寫死的像素數字不會**（geometry、padx、
-    wraplength…）——那些一律要過 App.px()，否則 150% 下整個版面會縮成 2/3。
-    """
-    if not sys.platform.startswith("win"):
-        return
-    try:                                   # Win8.1+：PROCESS_SYSTEM_DPI_AWARE
-        ctypes.windll.shcore.SetProcessDpiAwareness(1)
-    except Exception:
-        try:                               # Win7/8 的舊 API
-            ctypes.windll.user32.SetProcessDPIAware()
-        except Exception:
-            pass                           # 沒有就算了：只是回到會鋸齒的舊行為
-
-
-def set_app_user_model_id() -> None:
-    """讓工作列用「視窗自己的圖示」，不要沿用啟動鏈上游那支執行檔的。
-
-    ⚠️ **必須在建立第一個視窗之前呼叫**（和 enable_dpi_awareness 一樣）：
-    視窗一旦建出來，工作列就已經把它歸好隊了。
-
-    症狀是使用者 2026-08-25 回報的「工作列上的圖示不是我設計的那顆」——標題列
-    那顆是對的，**工作列那顆是 wscript 的**。兩顆走的是不同的路：標題列讀視窗
-    的 `WM_SETICON`（`iconbitmap` 設的就是它），工作列則是先把視窗歸到某個
-    AppUserModelID、再用**那個身分**的圖示。行程沒有自己宣告身分時，Windows
-    會沿用啟動鏈上游的執行檔，而我們這條鏈是「捷徑 → wscript.exe → cmd → uv
-    → pythonw」，於是拿到 wscript 的圖示。宣告了就用視窗自己的。
-    """
-    if not sys.platform.startswith("win"):
-        return
-    try:
-        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_ID)
-    except Exception:
-        pass                               # 純外觀，失敗就回到舊行為
 
 
 def ui_font_family(root: tk.Misc) -> str:
@@ -293,224 +261,6 @@ def ui_font_family(root: tk.Misc) -> str:
         if fam in fams:
             return fam
     return tkfont.nametofont("TkDefaultFont").actual("family")
-
-
-def preferred_theme_mode() -> str:
-    """"light" 或 "dark"：環境變數優先，否則跟隨 Windows 的「應用程式模式」。
-
-    讀 registry 而不是加一個 darkdetect 依賴 —— 就這一個值，而且它正是
-    darkdetect 在 Windows 上讀的那一個。讀不到就當亮色（絕大多數的情況）。"""
-    override = (os.environ.get(THEME_ENV) or "").strip().lower()
-    if override in PALETTES:
-        return override
-    try:
-        import winreg
-        with winreg.OpenKey(
-                winreg.HKEY_CURRENT_USER,
-                r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"
-        ) as key:
-            return "light" if winreg.QueryValueEx(
-                key, "AppsUseLightTheme")[0] else "dark"
-    except Exception:
-        return "light"
-
-
-def window_handle(root: tk.Misc) -> int:
-    """視窗真正的 top-level HWND（拿不到回 0）。
-
-    ⚠️ **`winfo_id()` 不是它**：那是 Tk 自己那個**子**視窗，DWM 與工作列都不認
-    —— 要往上取一層才是工作列上那顆按鈕對應的視窗。
-
-    ⚠️ **`restype` 一定要設**：`ctypes.windll` 的預設回傳型別是 `c_int`（32 位
-    元），而 64 位元 Windows 的 HWND 是指標寬。值小的時候看起來完全正常，一旦
-    某次配到高位元有值的 handle 就會被**靜默截斷**成另一個視窗的號碼——那種
-    bug 只會偶爾發生一次，查起來毫無線索。
-    """
-    user32 = ctypes.windll.user32
-    user32.GetParent.restype = ctypes.c_void_p
-    user32.GetParent.argtypes = [ctypes.c_void_p]
-    return user32.GetParent(root.winfo_id()) or 0
-
-
-def use_dark_titlebar(root: tk.Misc) -> None:
-    """把視窗標題列也換成深色（Windows 10 20H1+ 的 DWM 屬性）。
-
-    不做的話深色介面會頂著一條白色標題列，比整片亮色還醜。失敗就算了。"""
-    if not sys.platform.startswith("win"):
-        return
-    try:
-        root.update_idletasks()          # 先讓 HWND 真的存在
-        ctypes.windll.dwmapi.DwmSetWindowAttribute(
-            ctypes.c_void_p(window_handle(root)), 20,
-            ctypes.byref(ctypes.c_int(1)), ctypes.sizeof(ctypes.c_int))
-    except Exception:
-        pass
-
-
-# --------------------------------------------------------------------------- #
-#  工作列：使用者切走之後，唯一還看得見的東西
-# --------------------------------------------------------------------------- #
-# ⚠️ 這一整段的存在理由是「**使用者不會盯著這個視窗看**」：一份三十頁的簡報要
-# 跑好幾分鐘，人會切去做別的事，而那一刻視窗裡的進度條、狀態字、結果列**全部
-# 看不見了**。Windows 對這件事有兩個原生答案，這裡兩個都用——轉檔中把工作列
-# 按鈕本身畫成進度條，收工時閃那顆按鈕。
-#
-# ⚠️ **絕對不要改成把視窗搶到前景**（`focus_force`／`deiconify`／`-topmost`）：
-# 使用者這時正在別的視窗打字，搶焦點會把他的按鍵吃掉。而且 Windows 本來就有
-# 前景鎖擋著，擋下來的結果**還是閃工作列**——差別只在系統選的閃法比我們吵。
-#
-# 全段沿用本檔既有的原則（見 `set_app_user_model_id`）：**純外觀，任何一步失敗
-# 就安靜回到舊行為**，不可以讓轉檔本身跟著倒。
-
-# ITaskbarList3（shell32 內建，Win7 起）。⚠️ vtable 的位置是介面定義的一部分、
-# 不會變動：IUnknown 佔 0-2、ITaskbarList 佔 3-7、ITaskbarList2 佔 8，
-# ITaskbarList3 自己的方法從 9 開始算。
-_CLSID_TASKBARLIST = "{56FDF344-FD6D-11D0-958A-006097C9A090}"
-_IID_ITASKBARLIST3 = "{EA1AFB91-9E28-4B86-90E9-9E9F8A5EEFAF}"
-_VT_HRINIT = 3
-_VT_SETPROGRESSVALUE = 9
-_VT_SETPROGRESSSTATE = 10
-# TBPFLAG（shellapi.h）。⚠️ 這是**位元旗標**不是序號，別自己重排。
-TBPF_NOPROGRESS = 0x0
-TBPF_INDETERMINATE = 0x1
-TBPF_NORMAL = 0x2
-TBPF_ERROR = 0x4
-TBPF_PAUSED = 0x8
-
-# FlashWindowEx 的旗標。只閃**工作列按鈕**（TRAY），不閃標題列（CAPTION）：
-# 視窗如果只是被蓋住一半，標題列閃起來很吵而且沒有多給任何資訊。
-# TIMERNOFG＝一直閃到使用者把視窗切到前景為止，不必自己算次數。
-FLASHW_TRAY = 0x2
-FLASHW_TIMERNOFG = 0xC
-
-_taskbar_ptr: ctypes.c_void_p | None = None
-_taskbar_dead = False        # 建過一次失敗就不再重試（每頁都重試一次會很吵）
-
-
-class _GUID(ctypes.Structure):
-    _fields_ = [("Data1", ctypes.c_uint32), ("Data2", ctypes.c_uint16),
-                ("Data3", ctypes.c_uint16), ("Data4", ctypes.c_ubyte * 8)]
-
-
-class _FLASHWINFO(ctypes.Structure):
-    _fields_ = [("cbSize", ctypes.c_uint), ("hwnd", ctypes.c_void_p),
-                ("dwFlags", ctypes.c_uint), ("uCount", ctypes.c_uint),
-                ("dwTimeout", ctypes.c_uint)]
-
-
-def _com_call(ptr: ctypes.c_void_p, index: int, *argtypes):
-    """取 COM 物件 vtable 上第 `index` 個方法，回傳可直接呼叫的函式。
-
-    呼叫慣例是 `fn(ptr, 其餘參數…)` —— COM 的 this 指標要自己帶。"""
-    vtbl = ctypes.cast(ptr, ctypes.POINTER(ctypes.c_void_p)).contents.value
-    slot = ctypes.cast(vtbl, ctypes.POINTER(ctypes.c_void_p))[index]
-    return ctypes.WINFUNCTYPE(
-        ctypes.c_long, ctypes.c_void_p, *argtypes)(slot)
-
-
-def _taskbar() -> ctypes.c_void_p | None:
-    """取得 ITaskbarList3（第一次呼叫時建立並 `HrInit`）。失敗一律回 None。
-
-    ⚠️ **只能在主執行緒呼叫**：COM 物件綁在建立它的 apartment 上，而
-    `CoInitialize` 給的是 STA。本檔所有呼叫點（`_start`／`_scan_line`／
-    `_finish`）都在 Tk 的主執行緒上，背景工作執行緒不可以碰它。"""
-    global _taskbar_ptr, _taskbar_dead
-    if _taskbar_ptr is not None or _taskbar_dead:
-        return _taskbar_ptr
-    try:
-        ole32 = ctypes.windll.ole32
-        # 已經初始化過會回 S_FALSE(1)，那不是錯誤，不必也不該去 CoUninitialize
-        ole32.CoInitialize(None)
-        clsid, iid = _GUID(), _GUID()
-        if ole32.CLSIDFromString(_CLSID_TASKBARLIST, ctypes.byref(clsid)) < 0:
-            raise OSError("CLSIDFromString")
-        if ole32.IIDFromString(_IID_ITASKBARLIST3, ctypes.byref(iid)) < 0:
-            raise OSError("IIDFromString")
-        ptr = ctypes.c_void_p()
-        hr = ole32.CoCreateInstance(
-            ctypes.byref(clsid), None, 1,          # CLSCTX_INPROC_SERVER
-            ctypes.byref(iid), ctypes.byref(ptr))
-        if hr < 0 or not ptr:
-            raise OSError(f"CoCreateInstance hr=0x{hr & 0xFFFFFFFF:08X}")
-        if _com_call(ptr, _VT_HRINIT)(ptr) < 0:
-            raise OSError("HrInit")
-        _taskbar_ptr = ptr
-    except Exception:
-        _taskbar_dead = True             # 純外觀：這台機器沒有就算了
-    return _taskbar_ptr
-
-
-def taskbar_progress(root: tk.Misc, done: int, total: int) -> None:
-    """把工作列按鈕畫成進度條。`total <= 0` 代表「還不知道總量」（跑馬燈）。
-
-    對應視窗裡那條 `ttk.Progressbar` 的兩個階段：載入引擎時沒有頁數可報，用
-    indeterminate；收到第一行 `page N (n/total)` 之後才有分母。"""
-    if not sys.platform.startswith("win"):
-        return
-    try:
-        tb = _taskbar()
-        hwnd = window_handle(root)
-        if tb is None or not hwnd:
-            return
-        state = TBPF_NORMAL if total > 0 else TBPF_INDETERMINATE
-        _com_call(tb, _VT_SETPROGRESSSTATE, ctypes.c_void_p, ctypes.c_int)(
-            tb, hwnd, state)
-        if total > 0:
-            _com_call(tb, _VT_SETPROGRESSVALUE, ctypes.c_void_p,
-                      ctypes.c_ulonglong, ctypes.c_ulonglong)(
-                tb, hwnd, done, total)
-    except Exception:
-        pass
-
-
-def taskbar_finish(root: tk.Misc, state: str) -> None:
-    """收工時的工作列狀態：`ok` 清掉、`warn` 留黃的、`error` 留紅的。
-
-    ⚠️ **有降級與失敗要「留在那裡」**，不是清掉：那條顏色正是給「還沒切回來的
-    人」看的——工作列上一眼就知道這趟不是乾淨完成，不必先切回視窗才發現。
-    下一趟 `_start()` 會把它蓋掉，關掉視窗也就沒了。
-
-    ⚠️ **`ERROR`／`PAUSED` 要先有長度才看得到顏色**：那兩個狀態只換色、不動
-    數值，前一刻若停在 0% 就等於畫了一條看不見的紅線。所以先推到滿格再換色。"""
-    if not sys.platform.startswith("win"):
-        return
-    try:
-        tb = _taskbar()
-        hwnd = window_handle(root)
-        if tb is None or not hwnd:
-            return
-        flag = {"warn": TBPF_PAUSED, "error": TBPF_ERROR}.get(
-            state, TBPF_NOPROGRESS)
-        if flag != TBPF_NOPROGRESS:
-            _com_call(tb, _VT_SETPROGRESSVALUE, ctypes.c_void_p,
-                      ctypes.c_ulonglong, ctypes.c_ulonglong)(tb, hwnd, 1, 1)
-        _com_call(tb, _VT_SETPROGRESSSTATE, ctypes.c_void_p, ctypes.c_int)(
-            tb, hwnd, flag)
-    except Exception:
-        pass
-
-
-def flash_taskbar(root: tk.Misc) -> None:
-    """閃工作列按鈕，直到使用者把視窗切回前景。
-
-    ⚠️ **視窗已經在前景就什麼都不做**：人就坐在這個畫面前面，結果列已經把話
-    講完了，再閃一次只是噪音（而且前景視窗閃自己在 Windows 上根本看不出來）。
-    """
-    if not sys.platform.startswith("win"):
-        return
-    try:
-        hwnd = window_handle(root)
-        if not hwnd:
-            return
-        user32 = ctypes.windll.user32
-        user32.GetForegroundWindow.restype = ctypes.c_void_p
-        if user32.GetForegroundWindow() == hwnd:
-            return
-        info = _FLASHWINFO(ctypes.sizeof(_FLASHWINFO), hwnd,
-                           FLASHW_TRAY | FLASHW_TIMERNOFG, 0, 0)
-        user32.FlashWindowEx(ctypes.byref(info))
-    except Exception:
-        pass
 
 
 # --------------------------------------------------------------------------- #
@@ -539,76 +289,30 @@ def flash_taskbar(root: tk.Misc) -> None:
 # 沒有前身，是自己開一份 layout 掛上去的。
 #
 # **圖從哪來**：`assets/skin/`（`tools/make_skin.py` 的產物，形狀與內距的唯一真值
-# 在那支，顏色則在 `pdf2ppt/palette.py`）。⚠️ **資產不在就當場畫**（使用者 2026-08-26 指示）：那支
+# 在那支，顏色則在 `winkit.palette`）。⚠️ **資產不在就當場畫**（使用者 2026-08-26 指示）：那支
 # 工具是可以直接 import 的，缺圖時就地畫一份在記憶體裡用，畫不出來（連 Pillow
 # 都沒有）才整個放棄。所以三種情況都活得下去——有資產、只有原始碼、兩者皆無。
 # ⚠️ **不要用 Pillow 的 ImageTk**：它要再多一個 C 擴充模組才 import 得起來，而
 # Tk 8.6 的 `PhotoImage` 本來就吃 base64 的 PNG（含 alpha）。走 base64 也順手
 # 避開了「專案放在非 ASCII 路徑時 `-file` 讀不到」的那一類麻煩。
 
-SKIN_DIR = PROJECT_DIR / "assets" / "skin"
-
-# 資產的縮放檔與這台機器的實際縮放要**幾乎相等**才用得上（見 `_from_assets`）。
-SKIN_SCALE_TOL = 0.01
-
 # `sprites.json` 的 schema 版本，要與 `tools/make_skin.py` 的 `SCHEMA_VERSION` 同號
-# （`tests/test_gui_helpers.py` 兩邊對釘）。⚠️ **不從 make_skin import**：資產這條路
-# 的重點就是不必有 Pillow，為了一個整數把相依拉進來等於把這條路廢掉。
+# （`tests/test_gui_helpers.py` 兩邊對釘）。⚠️ **不從 make_skin import**：讀資產那條
+# 路的重點就是不必有 Pillow，為了一個整數把相依拉進來等於把這條路廢掉。
+#
+# ⚠️ **理由是「舊資產配新程式」是可達的**：使用者換電腦的方式是複製專案資料夾，只
+# 覆蓋 `.py` 而留著舊的 `pdf2ppt/assets/skin/` 完全做得到。舊檔的每一個 key 都還在，
+# 不擋的話載入器會**成功**回傳、`source` 還報 `assets`，把不相容的元件定義裝上去
+# ——沒有例外、沒有 log，而那支資產一致性測試只比「資產＝現在的產生器」，看不到別人
+# 機器上的舊資產。
+#
+# ⚠️ **版號是這支程式自己的，不是共用包的**（2026-08-28）：兩個下游今天的資產格式
+# 真的不同（姊妹專案的膠囊內距是純量、這邊是 `[左, 0, 右, 0]` 四元組），而這個號碼
+# 的用途正是讓**這一支**的舊資產失效。共用包只負責在讀資產時比對它（`spec.SKIN_SCHEMA`
+# 沒宣告就不比）。
+#
+# 2 = 2026-08-27 膠囊化：`border` 從 int 變成 `[左, 上, 右, 下]` 四元組。
 SKIN_SCHEMA = 2
-
-# 「當場畫」的結果要快取到哪（使用者 2026-08-27 指示）。⚠️ **不可以寫回專案資料夾**
-# ——那條規則、`LOCALAPPDATA` 的取法與取不到時的退路 2026-08-27 全部收進
-# `pdf2ppt/paths.py` 的 `appdata_root()`，**不要在這裡複述一份**（複述一次就是多一份
-# 會漂的副本）。這裡只留覆寫用的環境變數：皮膚快取的測試靠它把落地導進 tmp。
-SKIN_CACHE_ENV = "NOTEBOOKLM_PDF2PPT_SKIN_CACHE"
-
-
-def skin_cache_root() -> Path:
-    """快取的根目錄：`appdata_root()` 底下的 `skin`。
-
-    ⚠️ **落地位置本身不在這裡**（資料夾名、`LOCALAPPDATA` 的取法、取不到時退回
-    哪裡）：那三件事在 `pdf2ppt/paths.py`，它是三個姊妹專案共用的底層工具，本檔
-    只補上「我們把皮膚放在它底下的哪一格」。⚠️ 2026-08-27 收攏之前這裡自己拼
-    `%LOCALAPPDATA%`，而取不到時的最後一段退路是 `"."` ——**當前工作目錄**，從捷徑
-    進來時那正好就是專案資料夾，等於違反「不可以寫回專案資料夾」那一條。
-    """
-    override = os.environ.get(SKIN_CACHE_ENV)
-    if override:
-        return Path(override)
-    return appdata_root() / "skin"
-
-
-def skin_cache_key() -> str:
-    """快取的指紋：**畫出來的像素只要可能不一樣，這個字串就要不一樣。**
-
-    影響像素的有三樣：schema 版號、`tools/make_skin.py`（形狀、內距、sprite 佈局）
-    與 `pdf2ppt/palette.py`（顏色）。⚠️ **直接雜湊那兩支的原始碼**，不要自己列一份
-    「有哪些常數會影響輸出」的清單——那份清單一定會漏（`SQ_N`、`SQ_H_*`、`SQ_PAD`、
-    `pill()` 的畫法、`pack()` 的排列…），而漏掉的那一項就是「改了程式、畫面沒變」
-    這種找不到成因的災情。多雜湊一點的代價只是**改過那兩支之後第一次啟動重畫一次**。
-    """
-    h = hashlib.sha256()
-    h.update(str(SKIN_SCHEMA).encode())
-    for rel in ("tools/make_skin.py", "pdf2ppt/palette.py"):
-        h.update((PROJECT_DIR / rel).read_bytes())
-    return h.hexdigest()[:16]
-
-
-def import_make_skin():
-    """import `tools/make_skin.py`（產生器與 GUI 不同層，要先把 `tools/` 放進路徑）。
-
-    ⚠️ **只有「當場畫」那條路會用到**：讀資產不需要產生器、也不需要 Pillow。
-    ⚠️ `finally` 裡的 `sys.path.pop(0)` 不可省，也不可改成 `remove()`——插在最前面
-    就從最前面拿掉，才不會在重複呼叫時愈積愈長、或誤刪別人放的同名路徑。
-    ⚠️ 測試也走這一支（`tests/test_gui_helpers.py`），這樣「資產＝產生器」那支
-    測試驗到的才是**真正會出貨的**匯入路徑，而不是它自己另一份抄本。
-    """
-    sys.path.insert(0, str(PROJECT_DIR / "tools"))
-    try:
-        import make_skin
-    finally:
-        sys.path.pop(0)
-    return make_skin
 
 # 把 sv_ttk layout 裡的背景元件換成我們的。第二欄是**要從哪個樣式抄 layout**
 # ——主要動作鈕的兩張皮都是從 `Accent.TButton` 複製出來的（`Run.…` 與 `Stop.…`
@@ -656,337 +360,98 @@ SKIN_FRAMES = (
 )
 
 
-class SquircleSkin:
-    """把 ttk 互動控制項的背景換成 squircle 圖片。
-
-    ⚠️ **只在 sv_ttk 載得起來時才安裝**：這裡是把 sv_ttk 的 layout 複製一份、
-    只換掉背景元件的名字，換不到 layout（原生 vista 佈景的結構不一樣）就整個
-    放棄，讓畫面留在原本的長相——外觀不值得賠上「開得起來」。
-    """
-
-    def __init__(self, root: tk.Misc, scale: float, mode: str) -> None:
-        self.root, self.scale, self.mode = root, scale, mode
-        self.st = ttk.Style(root)
-        self.source = ""           # "assets"／"drawn"：哪一條路成的，驗收時要分得出來
-        self._keep: list = []      # ⚠️ Tk 不持有 PhotoImage 的參考，放掉就變空白
-        # 收合鈕的三角形。跟底板同一張 sprite sheet，但**不是** ttk 元件——GUI
-        # 直接拿去當按鈕的 image（見 App._set_chevron）
-        self.chev: dict[str, tk.PhotoImage] = {}
-
-    # ---- 安裝 ----
-    def install(self) -> bool:
-        # 三條路，由快到慢：出貨的資產 → 這台機器上畫過並存起來的 → 當場畫。
-        # ⚠️ 順序不可調換：出貨的那份是**逐像素驗過**的（`tests/test_gui_helpers.py`），
-        # 快取只是同一支產生器在這台機器上跑出來的結果。
-        spec = (self._from_assets(SKIN_DIR)
-                or self._from_cache()
-                or self._drawn())
-        if spec is None:
-            return False
-        elems, fg = spec
-        try:
-            for name, e in elems.items():
-                states = e["states"]
-                args = [str(states[0][1])] + [(s, str(i)) for s, i in states[1:]]
-                self.st.element_create(
-                    name, "image", *args,
-                    border=e["border"], padding=e["padding"],
-                    sticky=e["sticky"], width=e["width"], height=e["height"])
-            # ⚠️ **先把來源 layout 全部抓下來，再統一寫回去。** 邊抄邊寫的話
-            # 後面那幾條會抄到**已經換過**的版本：`Adv.TButton` 從 `TButton` 抄
-            # 時，`Button.button` 早就被前一圈改名成 `Sq.button` 了，於是替換表
-            # 對不上任何一個元件名——兩顆收合鈕安靜地留在一般按鈕的灰底皮上，
-            # 沒有例外、也沒有錯誤訊息（2026-08-26 截圖才看出來）。
-            src_layouts = [(style, self.st.layout(src or style), table)
-                           for style, src, table in SKIN_SWAPS]
-            for style, layout, table in src_layouts:
-                self.st.layout(style, self._swap(layout, table))
-            # 卡片與日誌槽：自己開一個**只有底板**的 layout。⚠️ 卡片的內距不在
-            # 這裡——它是版面的尺規（CARD_PAD，要跟著顯示縮放走），由 Frame 自己
-            # 的 padding 給
-            for style, elem, _own in SKIN_FRAMES:
-                self.st.layout(style, [(elem, {"sticky": "nswe"})])
-            self.st.configure("Horizontal.TProgressbar",
-                              thickness=elems["Sq.trough"]["height"])
-            for style in (RUN_STYLE, STOP_STYLE):
-                self.st.map(style, foreground=[("disabled", fg["run_off"]),
-                                               ("!disabled", fg["on_accent"])])
-        except Exception:
-            # 佈景結構跟預期不一樣（換了 sv_ttk 版本、Tcl 版本不合）：畫面留在
-            # 原本的長相就好，不要讓外觀把整支程式帶下水
-            return False
-        return True
-
-    def _swap(self, layout, table: dict):
-        """複製一份 layout，把背景元件換成我們的（其餘結構原封不動）。"""
-        out = []
-        for elem, opts in layout:
-            opts = dict(opts)
-            if "children" in opts:
-                opts["children"] = self._swap(opts["children"], table)
-            out.append((table.get(elem, elem), opts))
-        return out
-
-    def _photo(self, **kw) -> tk.PhotoImage:
-        ph = tk.PhotoImage(master=self.root, **kw)
-        self._keep.append(ph)
-        return ph
-
-    # ---- 來源一：打包好的資產（快取走同一支）----
-    def _from_assets(self, root: Path):
-        """讀一個**資產目錄**（`assets/skin/` 或使用者家目錄下的快取）。
-
-        ⚠️ 任何一步不對就回 None 交給下一條路，不要丟例外。
-        ⚠️ **快取刻意做成同一種格式、共用這一支讀取器**：兩份格式就是兩份會漂的
-        程式，而漂掉的症狀（元件定義對不上）是靜默的。快取那邊的 `sprites.json`
-        只裝一個 variant、`scales` 只有一格，其餘欄位一模一樣。
-        """
-        try:
-            meta = json.loads((root / "sprites.json").read_text("utf-8"))
-            # ⚠️ **schema 對不上就當作沒有資產**：舊 `sprites.json` 的每個 key 都還
-            # 在，不擋的話會**成功**載入、`source` 還報 `assets`，把不相容的元件定義
-            # 裝上去（膠囊化把 `border` 從 int 改成四元組就是這種變更）。使用者換電腦
-            # 是複製專案資料夾，只覆蓋 `.py` 而留著舊資產完全做得到。
-            if meta.get("version") != SKIN_SCHEMA:
-                return None
-            # 資產是固定像素、顯示縮放不是，挑最接近的那一檔。
-            # ⚠️ **只有「幾乎精確」才收**（2026-08-27 晚補）：膠囊化之後底板的高度就是
-            # 元件的高度，而樣式內距與點數字型走的是**真實 DPI**——貼齊到隔壁那一檔
-            # 等於讓元件比底板高，下半個圓被裁掉。實測 250% 貼 2.0x 檔時 Run 83 對
-            # 底板 80、Adv 94 對 90、輸入框 65 對 60，300% 更差到 +18。Windows 在高
-            # DPI 面板上本來就給 225／250／300%，自訂縮放更是任意值。
-            # ⚠️ 對不上就回 None 交給 `_drawn()`——**那條路用的是實際縮放倍率**，
-            # 任何 DPI 都畫得對（見它的 docstring）。改版前四邊九宮格有 1px 中段可以
-            # 重複貼，縮放對不上完全無害，所以這個把關是膠囊化才需要的。
-            best = min(meta["scales"], key=lambda s: abs(s - self.scale))
-            if abs(best - self.scale) > SKIN_SCALE_TOL:
-                return None
-            var = meta["variants"][f"{self.mode}@{best:g}"]
-            # ⚠️ **整張 sheet 刻意不走 `_photo()`、不進 `_keep`**：切完之後就沒有
-            # 人用它了，留著等於讓解碼後的整張點陣常駐一輩子（@2x 那張 282×2416，
-            # 解碼後 2.73MB；十組裡只會載一組，但那一份是白留的）。個別 sprite 是
-            # `copy` 出來的**獨立** PhotoImage、不參照它，所以 sheet 只是個普通區域
-            # 變數，函式結束就回收——**不必寫 `del`**（那會讀起來像洩漏防護，害下一個
-            # 在中間插 `return` 的人以為自己在處理一個 2.73MB 的不變量）。
-            sheet = tk.PhotoImage(
-                master=self.root,
-                data=base64.b64encode((root / var["file"]).read_bytes()))
-            # ⚠️ **同一塊 rect 只裁一次**：`pack()` 去重之後每個 variant 有三個
-            # key 指到同一塊區域（`accent-dis`／`stop-dis`、兩張低調皮的 `rest`／
-            # `dis`），逐 key 裁等於多做三次 blit，又把三張一模一樣的 PhotoImage
-            # 永久留在 `_keep` 裡（@2x 約 252KB）。對 `elems`／`chev` 完全透明——
-            # 那兩邊都只是查 `cut`。
-            cut: dict[str, tk.PhotoImage] = {}
-            same: dict[tuple, tk.PhotoImage] = {}
-            for key, (x, y, w, h) in var["sprites"].items():
-                if (x, y, w, h) in same:
-                    cut[key] = same[(x, y, w, h)]
-                    continue
-                sub = self._photo(width=w, height=h)
-                # ⚠️ `-compositingrule set` 不可省：預設是 overlay，會把來源
-                # **疊**上去而不是覆蓋，半透明的角落會被疊成不透明
-                self.root.tk.call(sub, "copy", sheet, "-from", x, y,
-                                  x + w, y + h, "-compositingrule", "set")
-                cut[key] = same[(x, y, w, h)] = sub
-            elems = {name: dict(e, states=[(s, cut[k]) for s, k in e["states"]])
-                     for name, e in var["elements"].items()}
-            self.chev = {"right": cut["chev-right"], "down": cut["chev-down"]}
-        except Exception:
-            return None
-        self.source = "assets" if root == SKIN_DIR else "cache"
-        return elems, var["fg"]
-
-    # ---- 來源一點五：這台機器上畫過的快取 ----
-    def _cache_entry(self) -> Path:
-        """這一組（指紋 × 亮暗 × 縮放）的快取資料夾。
-
-        ⚠️ **一組一個資料夾、各自帶一份 `sprites.json`**，不是共用一份總表：
-        共用的話每加一種縮放都要 read-modify-write 那份總表，而兩個視窗同時開起來
-        （或轉檔中又開一個）就會互相蓋掉——那正是這一輪在講的那種災情。
-        ⚠️ 縮放用 `.3f` 而不是 `%g`：`winfo_fpixels` 回的是浮點數（見
-        `SKIN_SCALE_TOL`），檔名要能穩定重現同一個字串。
-        """
-        return (skin_cache_root() / skin_cache_key()
-                / f"{self.mode}@{self.scale:.3f}")
-
-    def _from_cache(self):
-        """讀快取。⚠️ 讀不到、壞了、指紋不對都只是回 None，一路交給當場畫。"""
-        try:
-            entry = self._cache_entry()
-        except Exception:
-            return None            # 連指紋都算不出來（tools/ 不在）：當作沒有快取
-        return self._from_assets(entry) if entry.is_dir() else None
-
-    def _save_cache(self, make_skin, imgs, elems) -> None:
-        """把剛畫好的那一組存成一個**與出貨資產同格式**的快取資料夾。
-
-        ⚠️ **整支包在自己的 try 裡、失敗完全不作聲**：快取是純加速，家目錄唯讀、
-        磁碟滿、防毒擋寫入都不該讓畫面掉皮膚——這一支的呼叫端已經拿到圖了。
-
-        ⚠️ **`sprites.json` 最後寫、而且要原子換上**：讀取器是以它為入口的，先寫
-        它就會出現「總表指到一張還沒寫完的 PNG」那個窗口。⚠️ 同理 PNG 也走
-        `os.replace`，不要就地開檔寫——半截的 PNG 會被下一次啟動讀進來（`_from_assets`
-        雖然接得住，但那是把一次可以避免的失敗留給例外處理）。
-        """
-        try:
-            entry = self._cache_entry()
-            entry.mkdir(parents=True, exist_ok=True)
-            sheet, rects = make_skin.pack(imgs)
-            name = f"skin-{self.mode}@{self.scale:.3f}x.png"
-            # ⚠️ 暫存檔名要帶 pid：兩個視窗同時開起來、又剛好是同一個縮放時，
-            # 共用一個 `.part` 會讓 A 把 B 寫到一半的內容 `replace` 成正本（讀取器
-            # 接得住——壞掉的 JSON 回 None 交給當場畫——但那是本來就避得掉的一次
-            # 浪費）。同一個理由寫在執行紀錄的檔名上（見 `open_run_log`）。
-            tmp = entry / f"{name}.{os.getpid()}.part"
-            # ⚠️ `format="PNG"` 不可省：暫存檔的副檔名是 `.part`，Pillow 認不出來
-            # 就丟 `ValueError`——而這一支的例外是**整支吞掉**的，症狀會是「快取永遠
-            # 是空的、每次啟動照樣重畫」，沒有任何訊息（2026-08-27 第一版就是這樣）。
-            sheet.save(tmp, format="PNG", optimize=True)
-            os.replace(tmp, entry / name)
-            meta = {
-                "version": SKIN_SCHEMA,
-                # ⚠️ 只有一格：讀取器照 `SKIN_SCALE_TOL` 比對，對不上就回 None，
-                # 所以快取不必也不該假裝自己蓋得住別的縮放
-                "scales": [self.scale],
-                "variants": {f"{self.mode}@{self.scale:g}": {
-                    "file": name,
-                    "fg": {"on_accent": make_skin.SKINS[self.mode]["on_accent"],
-                           "run_off": make_skin.SKINS[self.mode]["run_off_fg"]},
-                    "sprites": rects,
-                    "elements": elems,
-                }},
-            }
-            tmp = entry / f"sprites.json.{os.getpid()}.part"
-            tmp.write_text(json.dumps(meta, ensure_ascii=False, sort_keys=True),
-                           encoding="utf-8")
-            os.replace(tmp, entry / "sprites.json")
-            self._prune_cache()
-        except Exception:
-            pass
-
-    def _prune_cache(self) -> None:
-        """把**別的指紋**那幾個資料夾整個刪掉。
-
-        ⚠️ 這是快取有沒有上限的唯一一道門：指紋跟著 `make_skin.py`／`palette.py`
-        走，改一次就換一個目錄名，不清的話每次改皮膚都在使用者的家目錄裡多留一份
-        再也不會被讀到的舊圖。同一個指紋底下的那幾組（亮/暗 × 這台機器的縮放）是
-        有界的，留著。
-        """
-        keep = skin_cache_key()
-        for d in skin_cache_root().iterdir():
-            if d.is_dir() and d.name != keep:
-                shutil.rmtree(d, ignore_errors=True)
-
-    # ---- 來源二：當場畫 ----
-    def _drawn(self):
-        """資產不在（或壞了）就 import 產生器現畫一份。
-
-        ⚠️ 這裡用的是**實際的**縮放倍率，不必貼齊資產那五檔——當場畫本來就沒有
-        「只有幾種尺寸」的限制。
-
-        ⚠️ 畫完**順手存進快取**（使用者 2026-08-27 指示「以後遇到，產生一次，第一次
-        慢一點沒關係」）：實測 300% 下這一趟要 105ms，而讀資產只要 20ms。存的時機在
-        轉成 `PhotoImage` **之前**——那時手上還是 PIL 影像，正好是 `pack()` 吃的東西。
-        """
-        try:
-            make_skin = import_make_skin()
-            imgs, elems = make_skin.build_variant(self.mode, self.scale)
-            self._save_cache(make_skin, imgs, elems)
-            cut = {}
-            for key, im in imgs.items():
-                buf = io.BytesIO()
-                im.save(buf, "PNG")
-                cut[key] = self._photo(data=base64.b64encode(buf.getvalue()))
-            elems = {name: dict(e, states=[(s, cut[k]) for s, k in e["states"]])
-                     for name, e in elems.items()}
-            fg = {"on_accent": make_skin.SKINS[self.mode]["on_accent"],
-                  "run_off": make_skin.SKINS[self.mode]["run_off_fg"]}
-            self.chev = {"right": cut["chev-right"], "down": cut["chev-down"]}
-        except Exception:
-            return None
-        self.source = "drawn"
-        return elems, fg
-
-
-# ⚠️ **膠囊那幾顆的內距只有這一份。** 左右一律照這裡；上下分兩欄——`pin` 是膠囊
-# 底板裝得起來時用的（高度由底板釘死，內距只要讓內容矮於圖高就好），`plain` 是膠囊化
-# 之前的值，皮膚裝不起來時要還原回去（見 `_set_pill_padding`）。
+# 每一顆按鈕的**唯一一份**規格：配哪張膠囊底板、字級、粗細、內距。
 #
-# ⚠️ **為什麼是一張表兩欄、不是兩張表**：兩張表等於把六個**水平**值抄第二遍，而
-# 水平值與膠囊無關（`CTA_STYLE` 的 `px(8)` 修的是 sv_ttk 寫死像素、不跟 DPI 走的老
-# 問題），改一邊漏一邊完全不會被抓到——皮膚裝不起來那條路 `_measure_pills` 直接
-# skip，沒有任何測試看得到。2026-08-27 晚一度真的抄成兩份，這張表就是收掉它。
+# ⚠️ **字型原本會在三個地方各寫一次**：真的設上去的那份、收底板自帶內距的那份、
+# 量行高反推樣式內距的那份。三份漂開的症狀是高 DPI 下那顆的膠囊被削平——不報錯、
+# `reqheight` 也看不出來，只有截圖看得到。收成一份之後三處都讀這裡。
+# ⚠️ **底板也綁在同一列**：`Sq.button` 與 `Sq.cta` 今天同高，但那是 `pill()` 給的
+# 巧合、不是保證；量錯板子那道收口就會靜默地算錯。
 #
-# ⚠️ 每一格的理由寫在 `apply_ui_style` 裡對應的那段註解，不要只看數字。
-PILL_PADDING = (
-    # (樣式, 左右, 上下[有底板], 上下[沒底板])
-    (RUN_STYLE, 20, 4, 7),
-    (ADV_STYLE, SP_SM, 7, SP_MD - 2),
-    ("Small.TButton", 10, 1, 3),
-    (SUBTLE_STYLE, 10, 1, 3),
-    # 這兩個膠囊化之前都沒明寫內距、吃 sv_ttk 的 `8 2 8 3`
-    (CTA_STYLE, 8, 1, 3),
-    ("TButton", 8, 1, 3),
-)
+# ⚠️ **上下內距分兩欄**：`vpad` 是膠囊底板裝得起來時用的（高度由底板釘死，內距只要
+# 讓內容矮於圖高就好），`vpad_bare` 是膠囊化之前的值，**皮膚裝不起來時要還原回去**。
+# 不還原的話，內距是砍過的、卻沒有底板補回高度：實測 100% 下五個樣式全部塌成 27px
+# （改版前是 39／45／31／30／31），150% 下收合鈕少 28px，而且主要動作鈕、區段標題
+# 鈕、次要小鈕的高度階層被抹平成同一個數。
+# ⚠️ **一張表兩欄、不是兩張表**：兩張表等於把六個**水平**值抄第二遍，而水平值與膠囊
+# 無關（`CTA_STYLE` 的 8 修的是 sv_ttk 寫死像素、不跟 DPI 走的老問題），改一邊漏一邊
+# 完全不會被抓到——皮膚裝不起來那條路 `_measure_pills` 直接 skip，沒有任何測試看得到。
+#
+# 逐格的理由：
+#   `RUN_STYLE` 11pt 粗體＋(20, 4)：字級與水平內距對齊姊妹專案 MP4-2-SRT（使用者
+#     2026-08-26「按鈕都請依照 MP4-2-SRT 樣式」），比舊值 12pt／(22, 9) 收斂一點。
+#     ⚠️ `STOP_STYLE` 同值：它靠樣式名的後綴繼承得到，列在這裡是為了讓那道收口也量
+#     得到**它自己那張**底板（`Sq.stop`）。
+#   `ADV_STYLE` 左右 8（＝版面尺規的 `SP_SM`）：2026-08-27 加回來的（使用者：「三角形
+#     太靠近邊界，要多留一點空白」）。先前為了讓**底板左緣**落在卡片內距上而給了 0，
+#     底板確實對齊了，但底板靜止時是看不見的（低調皮＝卡片色），畫面上真正讀得到的
+#     是三角形，而它離卡片邊只剩底板自帶的 4px。⚠️ 內距不會動到底板的位置，所以那條
+#     「六個直接子元件左緣都是 24」仍然成立——量的是元件邊緣，這裡加的是元件**裡面**
+#     的留白。⚠️ 這兩個數字是**照抄**版面尺規的 `SP_SM`／`SP_MD - 2`：尺規住在版面
+#     那一層（它是「這一支長什麼樣」），這裡不能反過來 import，改尺規要記得回來看。
+#   `CTA_STYLE` 與基底 `TButton` 的 8：2026-08-27 起**明寫**。不寫就是吃 sv_ttk 的
+#     `8 2 8 3`，而那個垂直值會把內容撐到只剩 0 實體像素的餘裕（@100%），下一版佈景
+#     或換台機器就把膠囊底板的下緣裁掉。⚠️ 水平取 `px(8)` ＝ **sv_ttk 那個 8，但跟著
+#     DPI 走**——照抄成固定 8 的話 200% 下只有一半該有的寬度（那是 sv_ttk 自己的漏，
+#     它整組 padding 都是寫死像素）。寫成 10 試過，這顆會寬 14px，沒有理由動它。
+#     ⚠️ **基底也要補齊**：`Sq.button` 這張膠囊底板掛在 `TButton` 的 layout 上，只要
+#     有人加一顆不帶 `style=` 的 `ttk.Button`，那顆鈕的下半個圓就會被裁掉。
+BUTTONS = {
+    RUN_STYLE: Button("Sq.accent", 11, "bold", 20, 4, 7),
+    STOP_STYLE: Button("Sq.stop", 11, "bold", 20, 4, 7),
+    ADV_STYLE: Button("Sq.subtle", 10, "normal", SP_SM, 7, SP_MD - 2),
+    SUBTLE_STYLE: Button("Sq.subtlesm", 10, "normal", 10, 1, 3),
+    "Small.TButton": Button("Sq.button", 10, "normal", 10, 1, 3),
+    CTA_STYLE: Button("Sq.cta", 10, "normal", 8, 1, 3),
+    "TButton": Button("Sq.button", 10, "normal", 8, 1, 3),
+}
+
+# 這支程式有哪幾種按鈕皮是**強調色**的（文字要跟著底板翻白、停用時翻灰）。
+# ⚠️ 名單住在這裡而不是共用包裡：另一支程式可能只有一顆、也可能一顆都沒有。
+ACCENT_STYLES = (RUN_STYLE, STOP_STYLE)
 
 
-def _set_pill_padding(st: ttk.Style, px, *, pinned: bool) -> None:
-    """套用 `PILL_PADDING`。`pinned` ＝ 膠囊底板裝得起來嗎。
+def configure_styles(st: ttk.Style, fam: str, pal: dict, px) -> None:
+    """**這支程式多出來的那幾種樣式**（共用包 `winkit.skin.apply` 會回頭呼叫）。
 
-    ⚠️ **垂直內距是底板的配套，不是獨立的設計選擇。** 砍到 4／7／1 的前提是
-    「按鈕沒有因此變矮，高度改由底板釘死」——而底板只有 `SquircleSkin.install()`
-    成功時才存在。sv_ttk 載不起來會在更前面就 return（那條路沒動過內距，安全），但
-    **sv_ttk 載得起來、皮膚卻裝不起來**是另一條：資產與 Pillow 都沒有、`sprites.json`
-    壞掉、換了 ttk 版本讓 `element_create`／`layout` 丟例外。`SquircleSkin` 的
-    docstring 把「只有原始碼」與「兩者皆無」列為支援狀態，所以這是會出貨的路。
+    ⚠️ 共用包已經設好了兩支程式共有的那一批（說明文字、副標、卡片、卡片上的小標與
+    提示、線框鈕的三色、主要動作鈕的字型與內距）。這裡只補**這一支才有的**——它們正
+    是「這支程式長什麼樣」，不該讓另一支跟著長出來。
 
-    ⚠️ 不還原的話，內距是砍過的、卻沒有底板補回高度：實測 100% 下五個樣式全部
-    塌成 27px（改版前是 39／45／31／30／31），150% 下收合鈕少 28px，而且主要動作鈕、
-    區段標題鈕、次要小鈕的高度階層被抹平成同一個數。那違反 `apply_ui_style` 自己的
-    承諾——「裝不起來就回 None，畫面留在原本的長相」。
+    ⚠️ **不要在這裡碰 `padding`**：膠囊按鈕的垂直內距是共用包**量行高反推**出來的
+    安全邊界（見 `BUTTONS`），事後蓋掉就是「下半個圓被削平」——不報錯、`reqheight`
+    也看不出來，只有截圖看得到。
     """
-    for style, h, v_pin, v_plain in PILL_PADDING:
-        st.configure(style, padding=(px(h), px(v_pin if pinned else v_plain)))
+    # 轉檔選項／詳細訊息的收合鈕：整條寬 ＋ 靠左，讀起來像區段標題而不是一顆浮在
+    # 半空中的按鈕。⚠️ 它是**卡片自己的標題列**，走低調皮（見 ADV_STYLE）。
+    st.configure(ADV_STYLE, anchor="w")
+    # 卡片裡的提示字。⚠️ **字級要明寫 10pt**：共用包給的是 9pt（那是姊妹專案的排版），
+    # 而這邊的提示與檔名同一級——共用的是**顏色**（設計系統），不是字級（版面）。
+    st.configure("CardHint.Card.TLabel", font=(fam, 10))
+    # 結果列：卡片上唯一一行粗體的狀態字
+    st.configure("CardStatus.Card.TLabel", font=(fam, 10, "bold"))
+    # 核取方塊跟 Label 一樣是實色底的（那個「底」是文字那半邊，方塊本身是圖片），
+    # 坐在白卡上不指定就是四塊淺灰矩形。⚠️ layout 照後綴繼承，所以這一支照樣拿得到
+    # 換過皮的 `Sq.check`
+    st.configure("Card.TCheckbutton", background=pal["card"])
 
 
 def apply_ui_style(root: tk.Misc,
-                   scale: float) -> tuple[str, dict, SquircleSkin | None]:
+                   scale: float) -> tuple[str, dict, "wskin.SquircleSkin | None"]:
     """設定字型與佈景，回傳 (字型家族名, 調色盤, squircle 皮膚)。
 
-    字型走 **Tk 的具名字型**（TkDefaultFont…）：所有 ttk 控制項預設就吃這幾個，
-    改一次全部跟著換，不必逐個 widget 設 font。⚠️ 連 TkFixedFont 也換掉 ——
-    日誌區原本是 Consolas（等寬），使用者 2026-08-25 要求「全部的字體」都用
-    Microsoft JhengHei UI。
+    ⚠️ **機制在共用包 `winkit.skin.apply`**（2026-08-28）：字型、Sun Valley 佈景、
+    四條皮膚來源、膠囊內距的兩道收口、快取指紋——那些是**兩支程式都該一樣**的東西。
+    這一層只負責把**這支程式的規格**交出去，而規格就是本模組自己（`SKIN_SWAPS`、
+    `SKIN_FRAMES`、`BUTTONS`、`ACCENT_STYLES`、`configure_styles`…），所以直接把模組
+    交過去、不必再開一個只為了轉手的資料類別。
 
-    ⚠️ **沒有 sv_ttk 也必須開得起來**：這支是使用者的主要入口，為了外觀讓它
-    開不了完全不划算。缺套件就留在系統原生佈景（vista），只換字型。
-    squircle 皮膚同一條原則——裝不起來就回 None，畫面留在原本的長相。
+    ⚠️ **沒有 sv_ttk 也必須開得起來**：這支是使用者的主要入口，為了外觀讓它開不了
+    完全不划算。缺套件就留在系統原生佈景（vista），只換字型；squircle 皮膚同一條原則
+    ——裝不起來就回 None，畫面留在原本的長相（那時 `BUTTONS` 的 `vpad_bare` 會把砍
+    過的垂直內距還原回去，見那張表）。
     """
-    def px(n: float) -> int:
-        return max(1, int(round(n * scale)))
-
-    fam = ui_font_family(root)
-    for name, size in (("TkDefaultFont", 10), ("TkTextFont", 10),
-                       ("TkMenuFont", 10), ("TkHeadingFont", 10),
-                       ("TkIconFont", 10), ("TkTooltipFont", 9),
-                       ("TkCaptionFont", 10), ("TkSmallCaptionFont", 9),
-                       ("TkFixedFont", 10)):
-        try:
-            tkfont.nametofont(name, root).configure(family=fam, size=size)
-        except tk.TclError:
-            pass
-
-    mode = preferred_theme_mode()
-    pal = dict(PALETTES[mode])
-    st = ttk.Style(root)
-    try:
-        import sv_ttk
-        sv_ttk.set_theme(mode, root)
-    except Exception:
-        # 佈景載不起來（沒跑過 uv sync、Tcl 版本不合）：字型已經換好了，
-        # 版面照舊，只是回到 Windows 原生長相
-        pal["page"] = st.lookup("TFrame", "background") or pal["page"]
-        return fam, pal, None
+    return wskin.apply(root, scale, sys.modules[__name__])
 
     # ⚠️ **切完佈景要自己補一發 <<ThemeChanged>>**：sv-ttk 的顏色不是寫在佈景
     # 定義裡，而是掛在那個事件上的 configure_colors 設的，而 Tk 8.6.15 在
@@ -1102,7 +567,7 @@ def apply_ui_style(root: tk.Misc,
     # 只換背景色、layout 照 ttk 原本的
     st.configure("CardBody.TFrame", background=pal["card"])
     if mode == "dark":
-        use_dark_titlebar(root)
+        winui.use_dark_titlebar(root)
     # ⚠️ 一定要在 sv_ttk 切完佈景**之後**：image element 是建在「當下這個
     # 佈景」裡的，`ttk::style theme use` 一換就整批不見了。
     _set_pill_padding(st, px, pinned=True)
@@ -1133,6 +598,12 @@ CANCELLED_RC = 4
 # （「安裝／設定不對」），uv 與 Python 都不會回這個值。
 SELF_REPORTED_RC = 78
 
+# 收場 → 工作列旗標。⚠️ **這張表住在畫面這一層,不在共用包裡**（2026-08-28 接
+# `winkit.winui` 時它的簽章就是這樣定的）：「哪一種收場配哪個旗標」是這支程式的
+# 決定，而共用包只管「怎麼跟 Windows 講話」。⚠️ 沒列到的收場一律 `NOPROGRESS`
+# ——`ok` 與「停止」都走這條（乾淨完成不該在工作列上留痕跡）。
+TASKBAR_FLAG = {"warn": winui.TBPF_PAUSED, "error": winui.TBPF_ERROR}
+
 # 日誌視窗保留的最大行數：GUI 是長時間開著的行程，不設上限的話一整個工作階段
 # 的輸出會一直累積，每次 insert 都要重繪愈來愈大的緩衝區
 LOG_MAX_LINES = 4000
@@ -1151,10 +622,13 @@ LOG_MAX_LINES = 4000
 #   * **寫檔失敗一律靜靜關掉**，不重試也不拋：紀錄檔不該有辦法讓 GUI 掛掉。
 # 差別在於這裡不經過 logging（整個專案都沒用 logging，輸出是 print 到
 # stdout/stderr），所以由 _append 這個唯一的顯示漏斗順手寫一份。
-LOG_DIR_NAME = "logs"
-LOG_KEEP_DAYS = 30
-# 目錄覆寫（測試／沙箱用）：不設就寫進本檔所在資料夾底下的 logs 目錄
-LOG_DIR_ENV = "NOTEBOOKLM_PDF2PPT_LOG_DIR"
+# ⚠️ **落點、輪替與版本號走共用包 `winkit.filelog`**（2026-08-28）：紀錄檔要寫進
+# 專案底下的 `logs\`（隨專案走、可以整包刪）、目錄覆寫用的環境變數（`log_dir_env()`
+# ＝ `<brand.ENV_PREFIX>_LOG_DIR`，組出來的名字與收攏前一字不差）、保留幾天、以及
+# 「直接讀 `.git` 而不是叫 git 指令」那一段——兩支程式都該一樣。
+# ⚠️ **這裡留下來的是「一次執行一個檔」的檔名（要帶 pid）與檔頭的內容**：共用包那支
+# `new_paths()` 不帶 pid（姊妹專案一次只會有一個行程），而這邊雙擊兩次「啟動.vbs」
+# 就有兩個行程在同一秒走到這裡（見 `open_run_log`）。
 # 沒有換行的內容累積到這個長度就先落地：下載模型的進度條可能很久才換行，
 # 不設上限的話出事那一刻的內容還躺在緩衝區裡
 LOG_MAX_PENDING = 4096
@@ -1186,61 +660,6 @@ _WARN_PREFIX = "WARNING: "
 _LOADING_PREFIX = "Loading OCR engine"
 
 
-def log_dir() -> Path:
-    """執行紀錄要落在哪個資料夾。
-
-    釘在**本檔所在的資料夾**（PROJECT_DIR）、不是 cwd：「啟動.vbs」就在旁邊，
-    出事時要找的人是雙擊它的那一個，而 cwd 從捷徑進來時不保證是這裡。"""
-    override = os.environ.get(LOG_DIR_ENV)
-    if override:
-        return Path(override)
-    return PROJECT_DIR / LOG_DIR_NAME
-
-
-def purge_old_logs(keep_days: int = LOG_KEEP_DAYS) -> None:
-    """清掉太舊的紀錄檔。⚠️ **要在開新檔之前做**，否則剛建好的這一份會被自己
-    的規則掃到（在系統時鐘往回調過的機器上真的會發生）。"""
-    cutoff = time.time() - keep_days * 86400
-    try:
-        old = [q for q in log_dir().glob("*.log") if q.stat().st_mtime < cutoff]
-    except OSError:
-        return
-    for q in old:
-        try:
-            q.unlink()
-        except OSError:
-            pass
-
-
-def _git_sha() -> str:
-    """短 commit sha；取不到回空字串。
-
-    直接讀 `.git`、**不叫 `git` 指令**：啟動路徑不該多開一個行程，而使用者拿到
-    的可能是複製過去的資料夾（這個專案的交付方式就是複製整個資料夾），機器上
-    不見得有 git。"""
-    git = PROJECT_DIR / ".git"
-    try:
-        head = (git / "HEAD").read_text(encoding="utf-8").strip()
-    except OSError:
-        return ""
-    if not head.startswith("ref: "):
-        return head[:7]          # detached HEAD：HEAD 本身就是 sha
-    ref = head[5:].strip()
-    try:
-        return (git / ref).read_text(encoding="utf-8").strip()[:7]
-    except OSError:
-        pass
-    try:                          # 鬆散檔不在，查打包過的 ref
-        packed = (git / "packed-refs").read_text(encoding="utf-8")
-    except OSError:
-        return ""
-    for line in packed.splitlines():
-        sha, _, name = line.partition(" ")
-        if name.strip() == ref:
-            return sha[:7]
-    return ""
-
-
 def code_version() -> str:
     """跑出這份紀錄的是哪一版的碼。**取不到就明說，不要假裝有。**
 
@@ -1254,7 +673,13 @@ def code_version() -> str:
         ver = m.group(1) if m else ""
     except OSError:
         pass
-    sha = _git_sha()
+    # ⚠️ sha 走共用包（`winkit.filelog.code_version`）：那 25 行「HEAD → ref →
+    # packed-refs」是**直接讀 `.git`、不叫 git 指令**（啟動路徑不該多開一個行程，而
+    # 使用者拿到的可能是複製過去的資料夾、機器上不見得有 git）。抄第二份就是抄一份
+    # 會漂的解析器。⚠️ 它取不到時回的是一句**說明**（「(不在 git 工作區)」）而不是空字串，所以
+    # 下面那個 `or` 只在完全沒有 `pyproject.toml` 時才走得到，而那時檔頭上會出現一組
+    # 疊在一起的括號——刻意留著，說得出原因比排版整齊重要。
+    sha = filelog.code_version()
     if ver and sha:
         return f"{ver} ({sha})"
     return ver or sha or "(取不到)"
@@ -1282,11 +707,11 @@ def open_run_log() -> tuple[Path | None, "io.TextIOBase | None"]:
     ⚠️ **失敗一律回 (None, None)、不拋例外**：磁碟唯讀、防毒攔截、資料夾被同步
     工具鎖住都會走到這裡，而「留不了底」絕不能升級成「打不開程式」。留不了底時
     唯一的落點是 _boot_stderr（從終端機跑就看得到），所以它更不能擋住啟動。"""
-    purge_old_logs()
+    filelog.purge_old()
     # 檔名帶 pid：雙擊兩次「啟動.vbs」會有兩個行程在同一秒走到這裡，而兩邊都是
     # open("a") —— 同一個檔被兩份輸出交錯寫進去，正好是最難讀懂的那種紀錄，而
     # 出事時要讀的就是它
-    path = (log_dir()
+    path = (filelog.log_dir()
             / f"{datetime.datetime.now():%Y-%m-%d_%H%M%S}-{os.getpid()}.log")
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -1676,7 +1101,7 @@ class App(tk.Tk):
         # 它的另一半（`APP_DESC`），兩句刻意不同、理由寫在那邊。
         sub = ttk.Label(
             root, text=APP_SUB,
-            style="Sub.Muted.TLabel", wraplength=p(780), justify="left",
+            style=SUB_STYLE, wraplength=p(780), justify="left",
         )
         sub.pack(anchor="w", pady=(0, p(CARD_GAP)))
 
@@ -2007,10 +1432,12 @@ class App(tk.Tk):
         ⚠️ 圖片與文字之間的縫**畫在圖片裡**（`make_skin.SQ_CHEV_GAP`）：ttk 的
         `compound` 沒有間距選項，靠這個補。
         """
-        chev = self.skin.chev if self.skin else None
-        if chev:
-            btn.config(image=chev["down" if shown else "right"],
-                       compound="left", text=label)
+        # ⚠️ 三角形**不是 ttk 元件**，是直接拿來當按鈕 `image` 的圖片，所以它走
+        # 共用包的 `images`（切好的全部底板）而不是 `elems`。少了那兩張就退回文字。
+        imgs = self.skin.images if self.skin else {}
+        chev = imgs.get("chev-down" if shown else "chev-right")
+        if chev is not None:
+            btn.config(image=chev, compound="left", text=label)
         else:
             btn.config(text=(CHEV_HIDE if shown else CHEV_SHOW) + label)
 
@@ -2402,7 +1829,7 @@ class App(tk.Tk):
         # 工作列跟著視窗裡那條走（見 taskbar_progress）。⚠️ 這裡要**主動設一次**
         # 而不是等第一頁：載入引擎那段可能要幾十秒，切走的人在那之前需要看到
         # 「它已經開始了」。上一趟若留著黃／紅，這一下也一併蓋掉。
-        taskbar_progress(self, 0, 0)
+        winui.taskbar_progress(self, 0, 0)
         # 執行模式：收起選項區、把日誌打開（見 _set_advanced 上面那段說明）
         self._set_advanced(False, fit=False)
         self._set_log_shown(True)
@@ -2525,7 +1952,7 @@ class App(tk.Tk):
             self._determinate = True
         self.progress.config(maximum=total, value=done)
         self._pages_done, self._pages_total = done, total
-        taskbar_progress(self, done, total)   # 切走的人看的是這一條
+        winui.taskbar_progress(self, done, total)   # 切走的人看的是這一條
         # ⚠️ **只報頁數，不報剩餘時間**（使用者 2026-08-25 指示刪掉）。頁數是
         # 量到的事實，剩餘時間是外推出來的猜測——而這裡的每頁耗時差異很大
         # （一行進旋轉救援就要跑七次 OCR），猜出來的數字會自己跳來跳去。
@@ -2574,9 +2001,10 @@ class App(tk.Tk):
         finally:
             # 工作列：先定色，再決定要不要叫人。⚠️ 兩件事都要在 `_finish` 裡做完
             # ——這是整趟轉檔唯一保證會走到的收尾點（停止與失敗也走這裡）。
-            taskbar_finish(self, outcome)
+            winui.taskbar_finish(self, TASKBAR_FLAG.get(
+                outcome, winui.TBPF_NOPROGRESS))
             if notify:
-                flash_taskbar(self)      # 已經在前景的話它自己會不做事
+                winui.flash_taskbar(self)   # 已經在前景的話它自己會不做事
             # ⚠️ **順序有意義**：`_refresh_input_state()` 要趁 `running` 還是 True
             # 時呼叫。它結尾會把狀態字寫成「就緒」，而那一步是用 `not self.running`
             # 擋住的——先把旗標放掉再呼叫，剛剛寫上去的「完成 ✓」／「已停止」／
@@ -2788,9 +2216,9 @@ class App(tk.Tk):
 
 def main() -> int:
     # ⚠️ 一定要在建 App（= 建 Tk）之前：Tk 只在啟動時問一次 DPI
-    enable_dpi_awareness()
+    winui.enable_dpi_awareness()
     # ⚠️ 同樣要在建 Tk 之前：視窗一建出來就已經被工作列歸隊了
-    set_app_user_model_id()
+    winui.set_app_user_model_id()
     # 沒有 pdf2ppt 套件就別開窗：介面上每一個控制項都只是在為那一次呼叫收集
     # 參數，缺了它整支程式沒有任何一件事做得成（使用者 2026-08-25 指示）。
     # 結束碼分兩種：訊息框跳出來了就回 SELF_REPORTED_RC（啟動端安靜收工，

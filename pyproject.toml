@@ -32,10 +32,21 @@ dependencies = [
     # MIT。⚠️ 少了它 GUI 照樣開得起來（enable_file_drop 回 False，提示文字
     # 改口只講「瀏覽…」），命令列完全用不到它。
     "tkinterdnd2>=0.4",
+    # 兩支 Windows 桌面 AP 的共用層（路徑、色票、Windows 整合、皮膚、捷徑、
+    # 紀錄檔）。⚠️ **走相對路徑相依**（見下面的 `[tool.uv.sources]`）：使用者換
+    # 電腦是複製整個 `C:\SOURCE5\`，那條就成立。⚠️ **相對路徑相依是看不見的**
+    # ——哪天只把這一個資料夾傳給別人，`uv sync` 會失敗，而錯誤訊息是 uv 的路徑
+    # 錯誤，說不出「你少複製了隔壁那個資料夾」。「啟動.vbs」的守門清單因此多列
+    # 了一行（見那支的 `NEEDED`）。
+    "winkit",
 ]
 
 [dependency-groups]
 dev = ["pytest>=8.0"]
+
+# ⚠️ **editable**：共用包就在隔壁資料夾，debug 時直接改它、不必重裝。
+[tool.uv.sources]
+winkit = { path = "../winkit", editable = true }
 
 [tool.uv]
 # 這個 repo 不做成套件安裝：進入點是根目錄的 `pdf2ppt.py` 與 `pdf2ppt_gui_2.py`

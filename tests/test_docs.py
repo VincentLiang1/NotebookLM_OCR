@@ -32,6 +32,8 @@ import importlib
 import re
 from pathlib import Path
 
+import winkit
+
 from pdf2ppt import brand
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -72,9 +74,15 @@ SYMBOL_DOCS = {**RULE_DOCS,
 
 # ⚠️ `tools.make_icon` 也在名單裡：圖示的門檻（HALO、SMALL_MAX）跟管線的門檻
 # 一樣是校準結果、一樣寫進了 docs/dev，少了它那些數字就沒人守。
+# ⚠️ **共用包 `winkit` 也在名單裡**（2026-08-28 接上時補的）：皮膚、路徑、Windows
+# 整合那幾支整批搬過去之後，`docs/dev/` 引用的門檻（`SKIN_SCALE_TOL`、`SQ_N`…）
+# 有一半住在那裡。少了它們，那些數字就從「被釘住」變成「沒有人守」——而症狀是
+# 文件寫著一個早就改掉的值，讀的人照著錯的值推理。
 MODULES = ["pdf2ppt.style", "pdf2ppt.blocks", "pdf2ppt.builder",
            "pdf2ppt.ocr", "pdf2ppt.cli", "pdf2ppt.models", "pdf2ppt.render",
            "tools.make_icon", "tools.make_skin",
+           "winkit.skin", "winkit.skingen", "winkit.paths", "winkit.palette",
+           "winkit.winui",
            # GUI 也在裡面：它的 SELF_REPORTED_RC 是與「啟動.vbs」講好的暗號，
            # CLAUDE.md 引用了那個數字。import 它只會定義常數與類別（Tk 是
            # App() 才建的），不會開視窗。
@@ -187,7 +195,12 @@ def test_documented_symbols_exist_in_the_code():
     # 那句指路照樣帶不到人——`_sq_points` 就是這樣才被發現沒人守。
     src = "\n".join(p.read_text(encoding="utf-8")
                     for p in (*(ROOT / "pdf2ppt").glob("*.py"),
-                              *(ROOT / "tools").glob("*.py")))
+                              *(ROOT / "tools").glob("*.py"),
+                              # ⚠️ **共用包也要掃**（2026-08-28）：皮膚載入器與它的
+                              # 幾何整批搬進 `winkit` 之後，`docs/dev/` 那幾條指路
+                              # 指的是那邊的函式。把它排除掉的話那些指路就沒人守，
+                              # 而「指路帶不到人」正是把規則寫下來的整個用意所在。
+                              *Path(winkit.__file__).parent.glob("*.py")))
     src += "\n" + GUI_PY
     problems = []
     cited = set()

@@ -22,7 +22,7 @@ Const MAX_MSG = 900
 Const RC_SELF_REPORTED = 78
 Const APP_TITLE = "NotebookLM PDF → PPT"
 
-Dim sh, fso, here, q, target, capPath, cmd, rc, out, msg, projFile, missing
+Dim sh, fso, here, q, target, capPath, cmd, rc, out, msg, projFile, kitFile, missing
 
 Set sh  = CreateObject("WScript.Shell")
 Set fso = CreateObject("Scripting.FileSystemObject")
@@ -56,10 +56,22 @@ End If
 If Not fso.FileExists(target) Then
     missing = missing & vbCrLf & "　　" & fso.GetFileName(target)
 End If
+' 【共用包】winkit 住在隔壁資料夾，靠 pyproject.toml 的 [tool.uv.sources] 以相對
+' 路徑相依進來（2026-08-28 接上）。那種相依【看不見】：只把這一個資料夾傳給別人
+' 時 uv sync 會失敗，而它吐的是 uv 自己的路徑錯誤，說不出「你少複製了隔壁那個
+' 資料夾」。使用者換電腦是複製整個 C:\SOURCE5\，那時兩個都在；會缺的是「只複製
+' 了這一個」的情況。
+' 【注意】這一行顯示的是【相對路徑】不是檔名：它跟專案自己那個同名，只印檔名的
+' 話訊息框上會並排兩個一模一樣的 pyproject.toml，使用者分不出少的是哪一個。
+kitFile = fso.BuildPath(here, "..\winkit\pyproject.toml")
+If Not fso.FileExists(kitFile) Then
+    missing = missing & vbCrLf & "　　..\winkit\pyproject.toml"
+End If
 If Len(missing) > 0 Then
     MsgBox "這個資料夾裡少了必要的檔案：" & vbCrLf & missing & vbCrLf & vbCrLf & _
            here & vbCrLf & vbCrLf & _
-           "請把整個專案資料夾完整複製過來，再執行一次「安裝.bat」。", _
+           "請把整個專案資料夾完整複製過來，再執行一次「安裝.bat」。" & vbCrLf & _
+           "（上面若列出 ..\winkit，那是隔壁的共用資料夾，要跟專案一起複製。）", _
            vbCritical, APP_TITLE
     WScript.Quit 1
 End If

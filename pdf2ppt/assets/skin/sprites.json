@@ -350,10 +350,6 @@
      "width": 9
     }
    },
-   "fg": {
-    "on_accent": "#ffffff",
-    "run_off": "#7c7c80"
-   },
    "file": "skin-dark@1x.png",
    "sprites": {
     "accent-dis": [
@@ -922,10 +918,6 @@
      "sticky": "nswe",
      "width": 11
     }
-   },
-   "fg": {
-    "on_accent": "#ffffff",
-    "run_off": "#7c7c80"
    },
    "file": "skin-dark@1.25x.png",
    "sprites": {
@@ -1496,10 +1488,6 @@
      "width": 11
     }
    },
-   "fg": {
-    "on_accent": "#ffffff",
-    "run_off": "#7c7c80"
-   },
    "file": "skin-dark@1.5x.png",
    "sprites": {
     "accent-dis": [
@@ -2068,10 +2056,6 @@
      "sticky": "nswe",
      "width": 13
     }
-   },
-   "fg": {
-    "on_accent": "#ffffff",
-    "run_off": "#7c7c80"
    },
    "file": "skin-dark@1.75x.png",
    "sprites": {
@@ -2642,10 +2626,6 @@
      "width": 15
     }
    },
-   "fg": {
-    "on_accent": "#ffffff",
-    "run_off": "#7c7c80"
-   },
    "file": "skin-dark@2x.png",
    "sprites": {
     "accent-dis": [
@@ -3214,10 +3194,6 @@
      "sticky": "nswe",
      "width": 9
     }
-   },
-   "fg": {
-    "on_accent": "#ffffff",
-    "run_off": "#8e8e93"
    },
    "file": "skin-light@1x.png",
    "sprites": {
@@ -3788,10 +3764,6 @@
      "width": 11
     }
    },
-   "fg": {
-    "on_accent": "#ffffff",
-    "run_off": "#8e8e93"
-   },
    "file": "skin-light@1.25x.png",
    "sprites": {
     "accent-dis": [
@@ -4360,10 +4332,6 @@
      "sticky": "nswe",
      "width": 11
     }
-   },
-   "fg": {
-    "on_accent": "#ffffff",
-    "run_off": "#8e8e93"
    },
    "file": "skin-light@1.5x.png",
    "sprites": {
@@ -4934,10 +4902,6 @@
      "width": 13
     }
    },
-   "fg": {
-    "on_accent": "#ffffff",
-    "run_off": "#8e8e93"
-   },
    "file": "skin-light@1.75x.png",
    "sprites": {
     "accent-dis": [
@@ -5506,10 +5470,6 @@
      "sticky": "nswe",
      "width": 15
     }
-   },
-   "fg": {
-    "on_accent": "#ffffff",
-    "run_off": "#8e8e93"
    },
    "file": "skin-light@2x.png",
    "sprites": {
