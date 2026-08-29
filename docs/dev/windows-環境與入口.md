@@ -1138,6 +1138,8 @@ self._actions.columnconfigure(0, minsize=rail)       # 開始轉檔
 
 新增 `tests/test_gui_helpers.py::test_this_apps_own_styles_actually_take_effect`：**建一次 Tk、跑一次 `apply_ui_style()`、問 `Style.lookup()` 最後生效的是什麼**，逐一比對值。⚠️ **這一支問的是「值」不是「有沒有寫」**——掃原始碼的測試對這一類錯誤完全無效。表裡除了這支程式自己的兩個，也一起釘住共用包該設好的那批（`CardHint`／`Card.TLabel`／`Page.TFrame`／`CardBody.TFrame`），這樣哪天共用包的回呼斷掉、或 `configure_styles` 被搬到錯的地方，也會一起紅。突變三條（底色不設、字色改用 `ink`、整條刪掉）實跑 3/3 RED。
 
+⚠️ **反面那一支也要有**（2026-08-29 稍晚補的，來自 meeting-scribe 那個 session 跑完同一套稽核之後的回報）：上面那支問「設了的有沒有生效」，還缺「**設了的有沒有人用**」。加上 `test_no_style_is_configured_for_a_widget_that_no_longer_exists` 當場就抓到一個——`CardHint.Card.TLabel` 的字級覆寫：同一天把框底下那一行說明收進輸入框、輸出改成唯讀 `Entry` 之後，用它的 widget 一個都不剩，而那行 `configure` 留著。⚠️ **殘骸不會壞掉任何東西**（所以沒有徵狀），壞的是**它讓下一個人以為那個樣式歸這支程式管**——而它的顏色其實是共用包設的。突變兩條（把那行加回來、widget 忘了指名 `style=`）實跑 2/2 RED。
+
 修好之後量到的：筆畫核心 **(56,62,69)** ＝ `#383e45` 一模一樣，對框底 **9.50:1**——與色碼算的一致，也順帶證實了 meeting-scribe 那個「核心 = 色碼、沒有 gamma」的結論在這邊同樣成立。
 
 ⚠️ **`muted` 壓深那件事沒有白做**：修好之後那句提示字**才真的**用 `muted`，而舊值 `#3d434b` 坐在 `field` 上算出來就是 8.78:1，過不了門檻。決定是對的，只是當天它還沒有真的作用在畫面上。

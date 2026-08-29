@@ -842,3 +842,42 @@ def test_the_window_only_shows_up_once_it_is_finished():
     assert init.count("self.deiconify()") == 1, "deiconify() 只該有一次"
     assert init.rindex("self._fit_window()") > init.index("self.deiconify()"), \
         "最後一次 _fit_window() 要在 deiconify() 之後（工作區鉗制要 map 了才量得到）"
+
+
+def test_no_style_is_configured_for_a_widget_that_no_longer_exists():
+    """`configure_styles()` 設過的樣式，都要真的有 widget 指名在用。
+
+    ⚠️ 這是上一支的**反面**：那一支問「設了的有沒有生效」，這一支問「設了的有沒有人
+    用」。兩面都要，因為它們擋的是不同的錯：前者擋「寫了卻沒作用」，後者擋**殘骸**。
+
+    2026-08-29 抓到一個：`CardHint.Card.TLabel` 的字級覆寫。那天把框底下那一行說明收進
+    輸入框、輸出改成唯讀 `Entry` 之後，用它的 widget 一個都不剩，而那行 `configure` 留
+    著沒清。⚠️ **殘骸不會壞掉任何東西**——所以沒有任何徵狀——壞的是它讓下一個人以為
+    那個樣式歸這支程式管（而它的顏色其實是共用包設的）。
+
+    ⚠️ 這一支只管 `configure_styles()`：共用包設的那批是**兩支程式共有**的，這裡沒有
+    widget 在用不代表那邊也沒有。
+    """
+    src = Path(G.__file__).read_text(encoding="utf-8")
+    body = src[src.index("def configure_styles"):src.index("def apply_ui_style")]
+    consts = dict(re.findall(r'^([A-Z_]+)\s*=\s*"([^"]+)"', src, re.M))
+    declared = set()
+    for name in re.findall(r'st\.(?:configure|map)\(\s*"([^"]+)"', body):
+        declared.add(name)
+    for const in re.findall(r'st\.(?:configure|map)\(\s*([A-Z_]+)\s*,', body):
+        declared.add(consts.get(const, const))
+
+    used = set(re.findall(r'style="([^"]+)"', src))
+    used |= {consts[c] for c in re.findall(r"style=([A-Z_]+)\b", src) if c in consts}
+    # 那幾張表裡出現的樣式名也算「有人用」（皮膚換裝、按鈕內距是照表跑的）
+    for table in ("SKIN_SWAPS", "SKIN_FRAMES", "BUTTONS", "ACCENT_STYLES"):
+        m = re.search(rf"^{table}\s*[:=].*?^\)", src, re.S | re.M)
+        if m:
+            used |= set(re.findall(r'"([A-Za-z][\w.]*\.T\w+)"', m.group(0)))
+            used |= {consts[c] for c in re.findall(r"\b([A-Z_]+)\b", m.group(0))
+                     if c in consts}
+
+    orphans = sorted(declared - used)
+    assert not orphans, (
+        "這些樣式設了卻沒有任何 widget 在用（殘骸，或是 widget 忘了指定 style=）：\n  "
+        + "\n  ".join(orphans))
