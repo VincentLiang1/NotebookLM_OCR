@@ -44,7 +44,10 @@ docs/dev/windows-環境與入口.md 5.1。
 收合按鈕**之上**（使用者 2026-08-25 指示）。⚠️ 收合鈕就是那張卡片自己的標題列，
 展開的內容長在**同一張卡片裡**（使用者 2026-08-26 指示）。⚠️ 「檔案」與「進度與
 動作」本來是兩張卡片，2026-08-27 併成一張：兩者之間 68px 的空白橫帶切開的是同一
-條主線的兩半（使用者圈了那條帶說「去掉」）。
+條主線的兩半（使用者圈了那條帶說「去掉」）。⚠️ 卡片一的**最左邊是一條三顆同寬鈕
+的直欄**（瀏覽…／變更…／開始轉檔，2026-08-29 使用者指示把挑選鈕搬到左邊，理由是
+「那是最常用的功能，視覺上是從螢幕的左上看到右邊」）：欄寬由 _pin_rail() 照主鈕
+量出來釘死，右邊那一欄（輸入框、提示、輸出說明、進度條）吃掉剩下的寬。
 
 ⚠️ 卡片是 2026-08-26 加的（使用者「參考 MP4-2-SRT UI 的圓角、卡片、顏色」）：
 底色分三階 page → card → field（唯一真值在共用包 winkit.palette），圓角底板由
@@ -1071,32 +1074,30 @@ class App(tk.Tk):
         except tk.TclError:
             return self.px(150)
 
-    def _status_pad(self, text: str) -> int:
-        """狀態字右邊要留多少，才會與上面那顆鈕**同一條中線**。
+    def _pin_rail(self) -> None:
+        """把最左那一欄釘成「主鈕的自然寬 ＋ 它與內容欄之間那道縫」。
 
-        ⚠️ **對齊的是鈕的中線，不是卡片的右緣**（使用者 2026-08-27 先後圈了「就緒」
-        與「等待選檔」兩次）。「瀏覽…／變更…」那一欄貼著卡片內距、右緣與狀態欄的
-        右緣同一條線，但**鈕的字被鈕自己的內距推進來**，所以狀態字一貼右緣看起來就
-        比上面那兩顆偏右。量出來（100% 縮放）：卡片內容右緣 801、鈕的外框 737..801、
-        中線 **769**；貼右緣時「就緒」的字心在 788（偏右 19）、「等待選檔」在 775。
+        ⚠️ **左緣那三顆鈕要同寬**（使用者 2026-08-29 選定的 B 案）：挑選鈕搬到左邊
+        之後，左緣由上而下是「瀏覽…／變更…／開始轉檔」，而前兩顆照文字的自然寬只有
+        98 實體 px、主鈕 190——左緣對齊、右緣參差三階，讀起來像沒對齊的階梯（那正是
+        使用者看設計稿時圈出來的顧慮：「左邊會變成兩個小按鈕，一個大按鈕」）。釘住欄
+        寬之後它們是一條 190px 的直欄，**層次改由顏色承擔**：主鈕是畫面上唯一有底色
+        的東西，不必再靠寬度去說它比較重要。
 
-        算式：鈕欄寬的一半 − 這一行字的一半。⚠️ **要逐字串重算，不能給一個固定的
-        內距**——固定內距等於對齊「右緣」，字愈長中心就愈往左跑（上一版給了 `SP_LG`，
-        兩個字的「就緒」對得很準、四個字的「等待選檔」就差了 10px，使用者當場又圈了
-        一次）。
+        ⚠️ **寬度要用量的**（`winfo_reqwidth()`，不必等視窗 map）：主鈕的寬度是
+        「▶ 開始轉檔」那幾個字加它自己的內距算出來的，寫死一個 190 下次換字、換
+        字級或換 DPI 就漂。⚠️ **加的那一段必須是 `SP_MD`**——三顆鈕的右內距給的都
+        是它，「欄寬 ＝ 鈕寬 ＋ SP_MD」時右緣才會落在同一條線上。
 
-        ⚠️ **`max(0, …)` 那一夾是規則的一部分，不是防呆**：最長的狀態字「載入 OCR
-        引擎…」有 98px，以 769 為心會伸到 818、**超出卡片右緣 17px**——中線放不下的
-        字串只能靠右貼齊，而它們本來就是轉檔中才出現、旁邊有進度條佔著版面。所以
-        這條規則的完整說法是「**放得下就與鈕同中線，放不下就靠右貼齊**」。
+        ⚠️ **兩個容器都要釘**：那兩顆挑選鈕在卡片自己的 grid 上，主鈕在動作區那張
+        `CardBody` 的 grid 上（兩邊的欄位定義本來就不同，見 `_build_ui` 裡合併卡片
+        那一段）。只釘一邊的話另一邊照自然寬走，右緣差的就是這道 `SP_MD`。
 
-        ⚠️ 鈕欄的寬度要用**量的**（`winfo_reqwidth`，不必等視窗 map）：那一欄的寬度
-        是「瀏覽…」與「變更…」裡**較寬的那一顆**決定的，寫死一個 64 下次換字就漂。"""
-        try:
-            half = max(b.winfo_reqwidth() for b in self._rail_btns) // 2
-            return max(0, half - self._status_font().measure(text) // 2)
-        except (tk.TclError, AttributeError):
-            return 0
+        ⚠️ 這一欄**不給 `weight`**：多出來的寬度全歸內容那一欄（column 1）。給了
+        的話視窗一拉寬，三顆鈕會跟著長成半個卡片寬。"""
+        rail = self.run_btn.winfo_reqwidth() + self.px(SP_MD)
+        self.main_card.columnconfigure(0, minsize=rail)
+        self._actions.columnconfigure(0, minsize=rail)
 
     def px(self, n: float) -> int:
         """把「以 96dpi 為單位寫的像素」換成這台機器上的實體像素。
@@ -1182,32 +1183,41 @@ class App(tk.Tk):
                                           padding=p(CARD_PAD))
         card.pack(fill="x", **pad)
 
-        # ⚠️ 標籤在**上**、輸入框整條寬。舊版是「輸入 PDF：」與輸入框左右對擠在
-        # 同一列，於是第 0 欄的寬度由那五個字決定、輸入框被推掉一截，而它正是這
-        # 個畫面上唯一必填的東西。
+        # ⚠️ 標籤在**上**、輸入框吃掉右邊剩下的寬。舊版是「輸入 PDF：」與輸入框
+        # 左右對擠在同一列，於是第 0 欄的寬度由那五個字決定、輸入框被推掉一截，
+        # 而它正是這個畫面上唯一必填的東西。
         ttk.Label(card, text="輸入 PDF", style="CardTitle.Card.TLabel").grid(
             row=0, column=0, columnspan=2, sticky="w")
         # 轉檔中要鎖起來的控制項都收進這一份清單（見 _set_inputs_enabled）。
         # ⚠️ 用**明列**、不要走訪 children：那樣會連「輸入 PDF」小標與提示文字
         # 一起變灰，而那兩行正是轉檔中最該讀得清楚的東西
         self._inputs: list[ttk.Widget] = []
-        self.in_entry = ttk.Entry(card, textvariable=self.in_path)
-        self.in_entry.grid(row=1, column=0, sticky="ew", pady=(p(SP_MD), 0))
-        # ⚠️ 這一欄的兩顆鈕（瀏覽…／變更…）都要 `sticky="ew"`：同一欄裡一顆
-        # `w`、一顆 `w` 時欄寬由較寬的決定，另一顆的右緣就會短一截、看起來沒對齊
+        # ⚠️ **挑選那兩顆鈕在最左（`column 0`）、內容那一欄吃右邊剩下的寬**
+        # （使用者 2026-08-29 指示，與姊妹專案 MP4-2-SRT 同日的改法同一條理由：
+        # 「那是最常用的功能，以視覺來說使用者通常都是從螢幕的左上看到右邊」）。
+        # ⚠️ **`weight` 要給內容那一欄（column 1）**：給錯欄的話兩顆鈕會被拉成半
+        # 個卡片寬、輸入框縮到剛好裝得下路徑——按鈕反而成了這張卡片的主體。
+        # ⚠️ 這一欄的兩顆鈕（瀏覽…／變更…）都要 `sticky="ew"`：一顆 `w`、一顆
+        # `ew` 時欄寬由較寬的決定，另一顆的右緣就會短一截、看起來沒對齊。欄寬本身
+        # 由 `_pin_rail()` 釘成與「開始轉檔」同寬（三顆鈕成一條直欄，見那支）。
         browse = ttk.Button(card, text="瀏覽…", style=CTA_STYLE,
                             command=self._pick_input)
-        browse.grid(row=1, column=1, sticky="ew", padx=(p(SP_SM), 0),
+        browse.grid(row=1, column=0, sticky="ew", padx=(0, p(SP_MD)),
                     pady=(p(SP_MD), 0))
+        self.in_entry = ttk.Entry(card, textvariable=self.in_path)
+        self.in_entry.grid(row=1, column=1, sticky="ew", pady=(p(SP_MD), 0))
         self._inputs += [self.in_entry, browse]
 
         # 提示與錯誤共用這一行，而且**一直都在**（只換文字不換有無），填錯路徑
         # 時版面才不會上下跳。⚠️ 路徑不對要在這裡當場說：舊版是照樣讓人按下
         # 「開始轉檔」，按了才跳一個對話框——用擋的比用告知的好
+        # ⚠️ **提示行跟著內容欄縮排**（`column=1`，不再 `columnspan`）：留在最左
+        # 的話它與下面那行「輸出：…」就成了兩種左緣，而兩行講的是同一件事的兩半。
+        # ⚠️ `wraplength` 跟著內容欄縮：鈕搬到左邊之後這一欄少了一整條 rail，
+        # 給得比欄寬大等於「永遠不折行」——長路徑的錯誤訊息會反過來把視窗撐開。
         self.hint = ttk.Label(card, style="CardHint.Card.TLabel", anchor="w",
-                              wraplength=p(700), justify="left")
-        self.hint.grid(row=2, column=0, columnspan=2, sticky="w",
-                       pady=(p(SP_SM), 0))
+                              wraplength=p(540), justify="left")
+        self.hint.grid(row=2, column=1, sticky="w", pady=(p(SP_SM), 0))
 
         # 輸出：99% 的情況就是輸入檔同名的 .pptx，程式自己帶得出來。做成第二個
         # 一模一樣的空輸入欄，只會讓第一眼變成「兩個空格子，我該填哪個」——
@@ -1218,19 +1228,16 @@ class App(tk.Tk):
         # 輸入那一列決定，路徑就會被推到離冒號很遠的地方。
         # ⚠️ 與上面隔 SP_XL（不是 SP_MD）：輸入與輸出是卡片裡的**兩件事**，靠這
         # 一道比較寬的縫分群，就不必再畫一條分隔線進來加重量。
-        ttk.Label(card, textvariable=self.out_show,
-                  style="CardHint.Card.TLabel", anchor="w",
-                  wraplength=p(700)).grid(
-            row=3, column=0, sticky="ew", pady=(p(SP_XL), 0))
         change = ttk.Button(card, text="變更…", style="Small.TButton",
                             command=self._pick_output)
-        change.grid(row=3, column=1, sticky="ew", padx=(p(SP_SM), 0),
+        change.grid(row=3, column=0, sticky="ew", padx=(0, p(SP_MD)),
                     pady=(p(SP_XL), 0))
+        ttk.Label(card, textvariable=self.out_show,
+                  style="CardHint.Card.TLabel", anchor="w",
+                  wraplength=p(540)).grid(
+            row=3, column=1, sticky="ew", pady=(p(SP_XL), 0))
         self._inputs.append(change)
-        # ⚠️ 這兩顆是**右側那一欄**的全部成員，欄寬由較寬的那一顆決定——狀態字要
-        # 對齊它們的中線，所以留著給 `_status_pad()` 量（見那支的說明）
-        self._rail_btns = (browse, change)
-        card.columnconfigure(0, weight=1)
+        card.columnconfigure(1, weight=1)
 
         # 選項一個都不露出來（日常轉檔一項都不必動）。色塊那一項曾經留在這裡
         # 做 A/B，量完之後收進了選項區。
@@ -1252,15 +1259,18 @@ class App(tk.Tk):
         # 地方，結果列不必再自己找一條縫擠進版面。
         # ⚠️ 與上面隔 SP_XL，跟「輸入 ↔ 輸出」那道縫同寬：卡片裡分群一律走這一
         # 個數字（見 SP_* 的說明），不要為了「動作比較重要」另外湊一個新的間距。
-        actions = ttk.Frame(card, style="CardBody.TFrame")
+        actions = self._actions = ttk.Frame(card, style="CardBody.TFrame")
         actions.grid(row=4, column=0, columnspan=2, sticky="ew",
                      pady=(p(SP_XL), 0))
         # 主要動作鈕：畫面上唯一吃滿彩色的東西（Apple 藍，停止時換成深紅）。
         # 字級與內距在 apply_ui_style，圓角底板由 SquircleSkin 畫；沒裝成皮膚
         # 就是佈景自己的 Accent 藍底圓角鈕。
+        # ⚠️ **`sticky="ew"` 而不是 `"w"`**：它與上面那兩顆鈕是同一條直欄（見
+        # `_pin_rail`），而「■ 停止轉檔」比「▶ 開始轉檔」窄 5px——照自然寬擺的話，
+        # 按下去的那一刻整條欄的右緣會抽動一下。撐滿欄寬之後兩個狀態同寬。
         self.run_btn = ttk.Button(actions, text=RUN_TEXT, style=RUN_STYLE,
                                   command=self._on_run_clicked)
-        self.run_btn.grid(row=0, column=0, sticky="w")
+        self.run_btn.grid(row=0, column=0, sticky="ew", padx=(0, p(SP_MD)))
         # ⚠️ 開場一定是 indeterminate：載入引擎（首次還要下載約 90MB 模型）那段
         # 根本沒有頁數可報，畫一條會動的假進度是騙人的。收到第一行
         # `page N (n/total)` 才換成 determinate（見 _scan_line）。
@@ -1272,25 +1282,31 @@ class App(tk.Tk):
         # 的東西**版面完全不動**（欄 1 的 weight 讓空間原地留白）。這正是它可以
         # 「沒在跑就不顯示」的前提：換成 pack_forget 或整列重排，按鈕與狀態字
         # 就會在按下去的瞬間跳位。
+        # ⚠️ **左邊不留內距**：主鈕那一欄已經帶著它與內容欄之間那道 `SP_MD` 的縫
+        # （見 `_pin_rail`），進度條的左緣因此正好落在輸入框、提示、輸出說明的同
+        # 一條線上。再給一份左內距的話，唯一會動的東西反而是唯一沒對齊的那個。
         self.progress = ttk.Progressbar(actions, mode="determinate", value=0)
-        self.progress.grid(row=0, column=1, sticky="ew", padx=p(SP_LG))
+        self.progress.grid(row=0, column=1, sticky="ew", padx=(0, p(SP_LG)))
         self.progress.grid_remove()
         # ⚠️ 樣式要是 `.Card.TLabel` 那一支：顏色是 _set_status 動態換的，但
         # **底色**得跟著卡片，否則它是一塊灰矩形浮在白卡上
         self.status = ttk.Label(actions, style="CardStatus.Card.TLabel",
                                 anchor="e")
-        # ⚠️ **狀態字與上面那顆鈕同一條中線**（內距逐字串算，見 `_status_pad`）。
-        # 貼齊卡片右緣是不夠的：鈕的**外框**貼著卡片內距沒錯，但鈕的**字**被鈕自己
-        # 的內距推進來，所以狀態字一貼右緣讀起來就比上面兩顆偏右。
+        # ⚠️ **貼齊卡片右緣就好，不要再算內距**（2026-08-29，挑選鈕搬到左邊之後）。
+        # 舊版是逐字串算右內距，好跟右上那兩顆鈕**同一條中線**——那條規則的對象是
+        # 「上面那顆鈕」，而現在那一欄裡什麼都沒有了。留著的話狀態字會照著一顆不
+        # 存在的鈕往左縮一截，看起來就是「沒有貼齊、也沒有對齊誰」。沿革與那次
+        # 逐字串量測見 docs/dev/windows-環境與入口.md §5.10 十二。
         self.status.grid(row=0, column=2, sticky="e")
         self._set_status("就緒", self.pal["ok"])
         actions.columnconfigure(1, weight=1)
         # 右欄只保留狀態字**真正量得到**的最大寬度，剩下的全歸進度條。
         # ⚠️ 這一格仍然要釘住（`minsize`）：不釘的話欄寬會跟著字串長短變，
         # 進度條的右端就會在「就緒」與「載入 OCR 引擎…」之間左右抽動。
-        # ⚠️ **不必為了內距再加寬**：內距是 `max(0, 半個鈕寬 − 半行字)` 夾出來的，
-        # 最寬的那個狀態字內距正好是 0，所以「字 ＋ 內距」的上限仍然是 `_status_width()`。
         actions.columnconfigure(2, minsize=self._status_width() + p(SP_XS))
+        # ⚠️ 要等 `run_btn` 存在才量得到（它在這張卡片的最後一列，卻決定最左那
+        # 一欄的寬度），所以釘欄寬這件事排在整張卡片建完之後。
+        self._pin_rail()
 
         # ---- 結果列（動作卡片的第二列，跑完才出現）----
         # ⚠️ 取代舊版的「完成」對話框（`askyesno("要開啟所在資料夾嗎？")`）。
@@ -1325,10 +1341,13 @@ class App(tk.Tk):
         # 起來是兩塊東西，而它們講的是同一件事。
         # ⚠️ **內距左右是 CARD_PAD、上下是 SP_MD，兩邊刻意不同**（2026-08-26 晚，
         # 使用者圈了三張卡片的左邊那圈白說寬度不一致、要以 MP4-2-SRT 為準）：
-        #   左右 24 —— 卡片裡**每一個直接子元件的左緣都落在同一條線上**（輸入框、
-        #     開始轉檔鈕、收合鈕的底板、展開的選項區、日誌槽），量出來全是 24。⚠️ 對齊
-        #     是**元件邊緣**不是文字：卡片一裡「輸入 PDF」那行字（24）與輸入框裡的
-        #     字（約 31）本來就不同，因為後者還隔著底板自己的內距。
+        #   左右 24 —— 卡片裡**每一個直接子元件的左緣都落在同一條線上**（瀏覽…／
+        #     變更…那一欄、開始轉檔鈕、小標、收合鈕的底板、展開的選項區、日誌槽），
+        #     量出來全是 24。⚠️ 對齊是**元件邊緣**不是文字：卡片一裡「輸入 PDF」那行
+        #     字（24）與輸入框裡的字（約 31）本來就不同，因為後者還隔著底板自己的內距。
+        #     ⚠️ **2026-08-29 起卡片一的輸入框、提示與輸出說明不在這條線上**：挑選鈕
+        #     搬到最左之後它們縮排了一整條 rail（見 `_pin_rail`），三行自己對齊自己的
+        #     那一條線。左緣 24 那條講的是**卡片的直接子元件**，而它們現在坐在第 1 欄。
         #   上下 12 —— 標題列自己也有內距，兩份疊起來才是文字距卡片頂的距離，給 12
         #     之後與另外兩張卡片的 24 幾乎同一條線。⚠️ 這裡原本寫「12+10＝22」，
         #     那個 10 是收合鈕當時的垂直內距；2026-08-27 膠囊化之後標題列的高度改由
@@ -1851,10 +1870,10 @@ class App(tk.Tk):
         self._append("\n[停止] 已要求停止；目前這一頁跑完就會收工，不會產生檔案。\n")
 
     def _set_status(self, text: str, color: str) -> None:
-        """換狀態字。⚠️ **內距要跟著換**：對齊的是上面那顆鈕的中線，而那要看這一行
-        字有多寬（`_status_pad`）——只 `config(text=…)` 的話，字一長中心就往左跑。"""
+        """換狀態字。⚠️ **只換文字與顏色**：2026-08-29 挑選鈕搬到左邊之後，這一欄
+        右邊已經沒有鈕可以對齊，狀態字改成貼卡片右緣（`sticky="e"` 就夠了）——舊版
+        在這裡逐字串重算右內距，理由與那次量測見 `_pin_rail` 與 docs/dev §5.10 十二。"""
         self.status.config(text=text, foreground=color)
-        self.status.grid_configure(padx=(0, self._status_pad(text)))
 
     def _start(self) -> None:
         # 專案位置不必在這裡再驗一次：main() 在開窗之前就擋掉了不合格的資料夾

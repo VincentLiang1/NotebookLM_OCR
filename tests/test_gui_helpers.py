@@ -11,6 +11,8 @@
 ⚠️ **檔尾那三支膠囊測試是例外**：要量 requested size 就得真的建一個 Tk root，不過
 一律 `withdraw()`，畫面上不會有視窗閃出來；開不了 Tk 的機器會 skip 而不是紅。
 """
+import re
+
 import pytest
 
 import pdf2ppt_gui_2 as G
@@ -472,3 +474,80 @@ def test_pill_plates_are_sliced_horizontally_only():
                 bad.append(f"{key} / {name}：左＋右 {border[0] + border[2]} "
                            f">= 圖寬 {sw}，ttk 會卡死")
     assert not bad, "膠囊底板的幾何壞了：\n  " + "\n  ".join(bad)
+
+
+# 卡片一最左邊那一條直欄（瀏覽…／變更…／開始轉檔，2026-08-29）。⚠️ **掃的是原始碼
+# 不是行為**：欄位換回去之後每個函式都還是對的、測試照樣全綠，版面只有真的開一次
+# 視窗才看得到（驗收數字見 docs/dev/windows-環境與入口.md §5.15）。
+def _build_ui_src() -> str:
+    src = Path(G.__file__).read_text(encoding="utf-8")
+    return src[src.index("    def _build_ui"):src.index("    def _set_chevron")]
+
+
+def test_the_pick_buttons_sit_in_the_left_rail():
+    """挑選那兩顆鈕在**最左**（`column=0`），輸入框與說明文字在右邊那一欄。
+
+    使用者 2026-08-29 指定的順序（「那是最常用的功能，以視覺來說使用者通常都是從
+    螢幕的左上看到右邊」），推翻 2026-08-27 併卡片那一版的左右。
+
+    ⚠️ **這一條連 `weight` 一起釘**：兩件事分開就會出兩種不同的畫面——欄位對調而
+    `weight` 留在 column 0 的話，兩顆鈕會被拉成半個卡片寬、輸入框縮到剛好裝得下
+    路徑，按鈕反而成了這張卡片的主體。
+    """
+    build = _build_ui_src()
+    for name, row in (("browse", 1), ("change", 3)):
+        assert f"{name}.grid(row={row}, column=0, sticky=\"ew\"" in build, \
+            f"{name} 不在最左那一欄——使用者指定挑選鈕在左"
+    assert "self.in_entry.grid(row=1, column=1," in build, \
+        "輸入框要在挑選鈕的右邊"
+    assert "self.hint.grid(row=2, column=1," in build, \
+        "提示行要跟著內容欄縮排，否則與下面「輸出：…」成了兩種左緣"
+    # ⚠️ 要擋掉字首才比得對：`adv_card.columnconfigure(0, weight=1)` 是收合卡片的，
+    # 那一張整條寬、本來就該有 weight——用 `in` 比對會把它讀成卡片一的設定。
+    assert re.search(r"(?<![\w.])card\.columnconfigure\(1, weight=1\)", build), \
+        "吃寬的要是內容那一欄"
+    assert not re.search(r"(?<![\w.])card\.columnconfigure\(0, weight=1\)", build), \
+        "挑選鈕那一欄不可以有 weight：寬度由 _pin_rail() 釘死"
+
+
+def test_the_left_rail_is_as_wide_as_the_main_button():
+    """左欄的寬度是**量**主鈕來的，而且兩個容器都要釘。
+
+    三顆鈕（瀏覽…／變更…／開始轉檔）分屬兩個 grid——前兩顆在卡片自己的第 0 欄、
+    主鈕在動作區那張 `CardBody` 的第 0 欄。只釘一邊的話另一邊照自然寬走，右緣差的
+    就是那道 `SP_MD`；寬度寫死一個數字則是下次換字、換字級或換 DPI 就漂。
+    ⚠️ 主鈕還要 `sticky="ew"`：「■ 停止轉檔」比「▶ 開始轉檔」窄，照自然寬擺的話
+    按下去的那一刻整條欄的右緣會抽動一下。
+    """
+    src = Path(G.__file__).read_text(encoding="utf-8")
+    pin = src[src.index("    def _pin_rail"):src.index("    def px(")]
+    assert "self.run_btn.winfo_reqwidth() + self.px(SP_MD)" in pin, \
+        "左欄寬度要用量的（主鈕的 reqwidth ＋ 它與內容欄那道縫）"
+    assert "self.main_card.columnconfigure(0, minsize=rail)" in pin, \
+        "卡片那兩顆挑選鈕的欄沒釘住"
+    assert "self._actions.columnconfigure(0, minsize=rail)" in pin, \
+        "動作區那顆主鈕的欄沒釘住"
+    build = _build_ui_src()
+    assert "self._pin_rail()" in build, "_build_ui 建完卡片之後要釘一次欄寬"
+    assert "self.run_btn.grid(row=0, column=0, sticky=\"ew\"" in build, \
+        "主鈕要撐滿左欄，否則開始／停止切換時右緣會抽動"
+
+
+def test_the_status_line_no_longer_aims_at_a_button_that_is_gone():
+    """狀態字改成貼卡片右緣：右上那一欄已經沒有鈕可以對齊了（2026-08-29）。
+
+    舊版逐字串算右內距，好與「瀏覽…／變更…」同一條中線（沿革見 docs/dev §5.10
+    十二）。鈕搬到左邊之後那條規則的對象不存在，留著的話狀態字會照著一顆不存在的
+    鈕往左縮一截。⚠️ 這種壞法**沒有徵狀**：畫面照樣畫得出來，只是誰都沒對齊。
+    """
+    src = Path(G.__file__).read_text(encoding="utf-8")
+    assert "_status_pad" not in src, \
+        "殘骸：對齊右上那顆鈕的內距算式，鈕已經搬到左邊了"
+    assert "_rail_btns" not in src, \
+        "殘骸：那兩顆鈕只被 _status_pad 用來量欄寬"
+    set_status = src[src.index("    def _set_status"):src.index("    def _start")]
+    assert "grid_configure" not in set_status, \
+        "_set_status 只換文字與顏色；內距那半已經拿掉了"
+    # 欄寬仍要釘住，否則進度條右端會跟著狀態字長短抽動（那條規則沒有被推翻）
+    assert "minsize=self._status_width()" in _build_ui_src(), \
+        "狀態字那一欄的 minsize 不見了：進度條右端會在不同狀態字之間抽動"
