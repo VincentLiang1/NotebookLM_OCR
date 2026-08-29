@@ -176,7 +176,7 @@ uv run python pdf2ppt_gui_2.py         # 圖形介面（或雙擊「啟動.vbs�
 
 驗證步驟（**為什麼這樣驗**見 `docs/spec/10-驗收準則與測試策略.md`；**照著打就能跑的指令、語料路徑與清掃 glob** 見 `docs/dev/verification.md`）：
 
-1. `uv run pytest` — 文件與程式碼的一致性（常數值、指路、CLI 旗標三方一致、否決索引）。**這一支只驗機器驗得到的**，語意的真值仍然只有步驟 3。
+1. `uv run pytest` — 文件與程式碼的一致性（常數值、指路、CLI 旗標三方一致、否決索引）。**這一支只驗機器驗得到的**，語意的真值仍然只有步驟 3。⚠️ **順手看 `skipped` 的數字，本機應該是 0**——skip 的形式是綠的、那一輪其實沒在守（2026-08-29 有一支 8 次跳掉 6 次都沒被發現；那幾支的 skip 是刻意的降級，所以判準是「這台機器上不該有」而不是改成硬性 fail）。
 2. **五份 deck 全跑、逐行對照 `--debug` 的 JSON**：改動前先跑一輪存成基準，改完再跑一輪，比對每一行的 `text`／`font_pt`／`bold`／`bg_rgb`／`text_rgb`／`est_pt`。**預期是零差異**——有差異的每一行都要能說出為什麼，說不出來就是回歸。
 3. **視覺驗證（樣式的唯一真值）**：用 PowerPoint COM 把投影片匯出成 PNG，與 `pymupdf` 的頁面渲染圖上下並排比對。
 4. `uv run python tools/compare_pptx.py generated.pptx reference.pptx` — 文字召回率比對。⚠️ **參考檔絕不可拿來校準樣式**：它的粗體／字級旗標是從我們自己更早的輸出繼承來的，我們漏判的粗體在它裡面同樣是錯的（來歷見 `docs/dev/collaboration.md` §5）。只在使用者提供參考檔時做。

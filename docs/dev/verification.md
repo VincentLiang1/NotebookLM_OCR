@@ -10,7 +10,9 @@
 uv run pytest
 ```
 
-兩支：`tests/test_docs.py`（文件與程式碼的一致性）與 `tests/test_docs_index.py`（指路不得斷掉、`CLAUDE.md` 字元上限）。
+兩支：`tests/test_docs.py`（文件與程式碼的一致性）與 `tests/test_docs_index.py`（指路不得斷掉、`CLAUDE.md` 字元上限）。另有 `tests/test_gui_helpers.py`（GUI 的純函式、皮膚資產、版面欄位）與 `tests/test_paths.py`。
+
+⚠️ **要看 `skipped` 的數字，在這台機器上應該是 0。** skip 的形式是**綠的**——那一輪其實沒在守，而摘要行不會有任何警告。2026-08-29 真的發生過：量狀態字寬度那支排在三支膠囊測試後面，而那批每個縮放檔建一次 Tk root 又 destroy 一次，之後再 `tk.Tk()` 會丟 `Can't find a usable init.tcl`／`invalid command name "tcl_findLibrary"`，**8 次裡跳掉 6 次**。⚠️ 那幾支的 skip **是刻意的降級**（沒有 Tk、沒有 sv_ttk 的機器上要 skip 而不是紅），所以不能改成硬性 fail——判準是「**這台開發機上不該有任何 skip**」，看到就去追，不要當成正常。⚠️ 追的時候要看 skip 訊息帶的原始錯誤（`-rs`）：沒有原因的 skip 連追都追不了。姊妹專案 meeting-scribe 那邊是另一種守法（`tests/` 底下一個 Tk root 都不建，全套維持 0 skipped）——那條路這邊走不了，皮膚與膠囊的高度只有真的建一個 root 才量得到。
 
 `tests/test_docs.py` 內部分兩份文件集合：
 
