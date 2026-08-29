@@ -525,13 +525,12 @@ def _measure_pills(scale: float, pin_height: bool = True) -> dict:
 
     styles = _pill_styles()
     var = _skin_meta()["variants"][f"{winui.preferred_theme_mode(PALETTES)}@{scale:g}"]
-    try:
-        root = tk.Tk()
-    except tk.TclError as exc:                    # 沒有顯示裝置
-        pytest.skip(f"這台機器開不了 Tk：{exc}")
+    # ⚠️ 走 `_fresh_tk()`（帶重試）：這一支每個縮放檔建一次 root 又 destroy 一次，
+    # 是全檔最容易踩到「間歇性建不起來」的地方——2026-08-29 實測 14 輪中 1 輪在這裡
+    # skip（`Can't find a usable tk.tcl`），而 skip 的形式是綠的。
+    root = _fresh_tk()
     orig = wskin.SquircleSkin._from_assets
     try:
-        root.withdraw()
         root.tk.call("tk", "scaling", scale * 96.0 / 72.0)
         if not pin_height:
             # ⚠️ 簽章要跟著共用包那一支 `_from_assets(self, root, tag, *, exact)`
@@ -549,7 +548,18 @@ def _measure_pills(scale: float, pin_height: bool = True) -> dict:
         finally:
             wskin.SquircleSkin._from_assets = orig
         if skin is None:
-            pytest.skip("這台機器裝不上 squircle 皮膚（多半是沒有 sv_ttk）")
+            # ⚠️ **原因不要用猜的**：這一行原本寫「多半是沒有 sv_ttk」，而 2026-08-29
+            # 實測到它會在**有** sv_ttk 的機器上間歇跳過（12 輪 2 次），於是那句猜測
+            # 反而讓人以為是環境問題、不去追。⚠️ skip 的形式是綠的（見
+            # `docs/dev/verification.md` 第 1 節：本機應該是 0），所以訊息要帶得出
+            # 「到底是哪一條路沒走通」。
+            import importlib.util
+
+            has_sv = importlib.util.find_spec("sv_ttk") is not None
+            pytest.skip(
+                f"裝不上 squircle 皮膚（scale={scale:g}，pin_height={pin_height}）："
+                f"sv_ttk {'在' if has_sv else '不在'}、`SquircleSkin.install()` 四條路"
+                "全部回 None。⚠️ sv_ttk 在的話這就**不是**環境問題，要去追。")
         frame = ttk.Frame(root)
         out = {}
         for style, elem in styles.items():
@@ -909,3 +919,23 @@ def test_each_run_resets_the_spinner_period_not_just_the_mode():
     assert G.SPIN_STEPS == 100, (
         f"動畫走一趟的步數改了（現在 {G.SPIN_STEPS}）——100 步 ≈ 5 秒是量過的：\n"
         "  太少 → 在兩端之間狂跳、讀成閃爍；太多 → 慢到看不出在動")
+
+
+def test_a_run_that_fails_validation_still_clears_the_last_run_from_the_screen():
+    """參數驗證失敗時，上一趟的結果列也要先清掉。
+
+    `_build_argv()` 會提早 `return`（跳一個警告框）。⚠️ 那條路**走得到**：按鈕雖然擋著
+    「路徑不存在」，但那是**選檔當下**驗的——檔案在外面被搬走或刪掉時，按鈕還亮著。
+
+    清畫面若寫在把關**後面**，畫面就會同時掛著上一趟的「✓ 轉檔完成」與這一趟的錯誤，
+    ⚠️ 而且結果列那兩顆鈕還亮著，按下去開的是**上一趟**的檔案。姊妹專案 meeting-scribe
+    2026-08-29 踩到同一個形狀（第二趟給不存在的路徑時，畫面留著第一趟的「完成。」與亮
+    著的資料夾鈕），兩邊都是「**跑第二趟才看得到**」那一類（見 `docs/dev/verification.md`
+    第 2b 節）。
+    """
+    src = Path(G.__file__).read_text(encoding="utf-8")
+    start = src[src.index("    def _start(self)"):src.index("    def _run_conversion")]
+    assert "self.result_row.grid_remove()" in start, "_start() 沒有清掉上一趟的結果列"
+    assert start.index("self.result_row.grid_remove()") < start.index("self._build_argv()"), \
+        ("清結果列要排在 `_build_argv()` 之前——它會提早 return，"
+         "而那時畫面上會留著上一趟的完成訊息與兩顆開得了上一趟檔案的鈕")

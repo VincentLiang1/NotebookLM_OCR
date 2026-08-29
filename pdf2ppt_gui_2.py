@@ -1893,6 +1893,15 @@ class App(tk.Tk):
         # （fail_no_project），視窗存在本身就代表 PROJECT_DIR 是好的。
         if self.running:
             return
+        # ⚠️ **先清掉上一趟的結果，再驗參數**（2026-08-29）：底下那道 `_build_argv()`
+        # 會提早 `return`——按鈕雖然擋著「路徑不存在」，但那是**選檔當下**驗的，檔案在
+        # 外面被搬走或刪掉時按鈕還亮著。清畫面若寫在它後面，畫面就會同時掛著上一趟的
+        # 「✓ 轉檔完成」與這一趟的錯誤對話框，⚠️ 而且結果列那兩顆鈕還亮著——按下去開
+        # 的是**上一趟**的檔案。姊妹專案 meeting-scribe 2026-08-29 踩到同一個形狀（它是
+        # 第二趟給不存在的路徑時，畫面留著第一趟的「完成。」與亮著的資料夾鈕）。
+        # ⚠️ **工作列刻意留在後面**：提早 return 時它反映的仍是上一趟的真實結果（綠或
+        # 紅），那是對的；把它先設成「進行中」反而是在報一件沒有發生的事。
+        self.result_row.grid_remove()
         try:
             argv = self._build_argv()
         # ⚠️ `tk.TclError` 也要攔，即使現在的欄位都是 StringVar／BooleanVar：
@@ -1910,8 +1919,6 @@ class App(tk.Tk):
         self.run_btn.config(text=STOP_TEXT, style=STOP_STYLE)
         self.run_btn.state(["!disabled"])
         self._set_status("準備中…", self.pal["warn"])
-        # 上一趟的結果留在畫面上會被當成這一趟的
-        self.result_row.grid_remove()
         self._scan_buf = ""
         self._pages_done = self._pages_total = 0
         self._last_warning = ""

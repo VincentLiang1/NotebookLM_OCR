@@ -12,7 +12,9 @@ uv run pytest
 
 兩支：`tests/test_docs.py`（文件與程式碼的一致性）與 `tests/test_docs_index.py`（指路不得斷掉、`CLAUDE.md` 字元上限）。另有 `tests/test_gui_helpers.py`（GUI 的純函式、皮膚資產、版面欄位）與 `tests/test_paths.py`。
 
-⚠️ **要看 `skipped` 的數字，在這台機器上應該是 0。** skip 的形式是**綠的**——那一輪其實沒在守，而摘要行不會有任何警告。2026-08-29 真的發生過：量狀態字寬度那支排在三支膠囊測試後面，而那批每個縮放檔建一次 Tk root 又 destroy 一次，之後再 `tk.Tk()` 會丟 `Can't find a usable init.tcl`／`invalid command name "tcl_findLibrary"`，**8 次裡跳掉 6 次**（把那支搬到膠囊那批之前就好了——⚠️ **但不是根治**：之後連跑 42 輪乾淨，中間仍在「突變腳本剛跑完」那一輪出現過一次，抓不到訊息；所以這條規則是**每次都要看**，不是修過一次就沒事）。⚠️ 那幾支的 skip **是刻意的降級**（沒有 Tk、沒有 sv_ttk 的機器上要 skip 而不是紅），所以不能改成硬性 fail——判準是「**這台開發機上不該有任何 skip**」，看到就去追，不要當成正常。⚠️ 追的時候要看 skip 訊息帶的原始錯誤（`-rs`）：沒有原因的 skip 連追都追不了。姊妹專案 meeting-scribe 那邊是另一種守法（`tests/` 底下一個 Tk root 都不建，全套維持 0 skipped）——那條路這邊走不了，皮膚與膠囊的高度只有真的建一個 root 才量得到。
+⚠️ **要看 `skipped` 的數字，在這台機器上應該是 0。** skip 的形式是**綠的**——那一輪其實沒在守，而摘要行不會有任何警告。2026-08-29 真的發生過：量狀態字寬度那支排在三支膠囊測試後面，而那批每個縮放檔建一次 Tk root 又 destroy 一次，之後再 `tk.Tk()` 會丟 `Can't find a usable init.tcl`／`invalid command name "tcl_findLibrary"`，**8 次裡跳掉 6 次**（把那支搬到膠囊那批之前只解決了一半——⚠️ **同一天稍晚又抓到兩次**，這次靠訊息定位到真正的根因：**每一處 `tk.Tk()` 都會間歇性建不起來**（`Can't find a usable init.tcl`／`tk.tcl`／`invalid command name "tcl_findLibrary"`），而 `_measure_pills` 那一處沒有重試。兩處統一走帶重試的 `_fresh_tk()` 之後，連跑 **20 輪 0 skip**。）
+
+⚠️ **skip 訊息不可以把原因寫死成猜測。** 同一輪還修掉一個：膠囊測試的 skip 原本寫「這台機器裝不上 squircle 皮膚（**多半是沒有 sv_ttk**）」，而它在**有** sv_ttk 的機器上照樣間歇跳過——那句猜測讓人以為是環境問題、不去追。訊息要帶得出「哪一條路沒走通、環境到底有沒有那個套件」。⚠️ 那幾支的 skip **是刻意的降級**（沒有 Tk、沒有 sv_ttk 的機器上要 skip 而不是紅），所以不能改成硬性 fail——判準是「**這台開發機上不該有任何 skip**」，看到就去追，不要當成正常。⚠️ 追的時候要看 skip 訊息帶的原始錯誤（`-rs`）：沒有原因的 skip 連追都追不了。姊妹專案 meeting-scribe 那邊是另一種守法（`tests/` 底下一個 Tk root 都不建，全套維持 0 skipped）——那條路這邊走不了，皮膚與膠囊的高度只有真的建一個 root 才量得到。
 
 `tests/test_docs.py` 內部分兩份文件集合：
 
