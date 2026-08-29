@@ -500,8 +500,9 @@ def test_the_pick_buttons_sit_in_the_left_rail():
             f"{name} 不在最左那一欄——使用者指定挑選鈕在左"
     assert "self.in_entry.grid(row=1, column=1," in build, \
         "輸入框要在挑選鈕的右邊"
-    assert "self.hint.grid(row=2, column=1," in build, \
-        "提示行要跟著內容欄縮排，否則與下面「輸出：…」成了兩種左緣"
+    # ⚠️ 2026-08-29 起框底下沒有那一行說明了（提示字收進框裡），改釘輸出框那一格
+    assert "self.out_entry.grid(row=3, column=1," in build, \
+        "輸出框要在挑選鈕的右邊，與輸入框等長"
     # ⚠️ 要擋掉字首才比得對：`adv_card.columnconfigure(0, weight=1)` 是收合卡片的，
     # 那一張整條寬、本來就該有 weight——用 `in` 比對會把它讀成卡片一的設定。
     assert re.search(r"(?<![\w.])card\.columnconfigure\(1, weight=1\)", build), \
@@ -551,3 +552,156 @@ def test_the_status_line_no_longer_aims_at_a_button_that_is_gone():
     # 欄寬仍要釘住，否則進度條右端會跟著狀態字長短抽動（那條規則沒有被推翻）
     assert "minsize=self._status_width()" in _build_ui_src(), \
         "狀態字那一欄的 minsize 不見了：進度條右端會在不同狀態字之間抽動"
+
+
+# 提示字收進輸入框、輸出也做成一個框（2026-08-29，見 docs/dev §5.16）。
+def test_the_hint_line_is_gone_and_its_words_have_somewhere_to_go():
+    """框底下那一行說明整個拿掉了，而它原本講的四件事都要有新的落點。
+
+    ⚠️ 這一條守的是**「擋掉時必須說原因」**那條硬規則：拿掉一個顯示區塊很容易，
+    連同它承載的訊息一起悄悄拿掉也一樣容易——而症狀是「拖了檔進來卻什麼都沒發生」。
+    四句話的去處：還沒選 → 框裡的提示字；找不到／不是 PDF → 狀態字；
+    被擋下來的操作（轉檔中換檔、拖進來不是 PDF）→ `_flash_status`。
+    """
+    src = Path(G.__file__).read_text(encoding="utf-8")
+    assert "_set_hint" not in src and "self.hint" not in src, \
+        "殘骸：那一行說明已經收進輸入框了"
+    assert "def _flash_status" in src, \
+        "被擋下來的操作要有地方說原因（拖放與 Ctrl+V 各自擋掉並說原因）"
+    dropped = src[src.index("    def _on_files_dropped"):src.index("    def _on_paste_path")]
+    assert dropped.count("_flash_status") == 2, \
+        "拖放被擋的兩種情況（轉檔中換檔、不是 PDF）都要說原因"
+
+
+def test_the_placeholder_is_a_label_on_top_not_a_value_in_the_field():
+    """框裡那句提示是**疊上去的標籤**，不是塞進輸入欄的值。
+
+    ⚠️ 塞值的做法（Tk 沒有原生 placeholder，網路上多半這樣教）在這支程式裡是會
+    出事的：`_build_argv()` 讀的就是 `in_path`，那句提示會被當成使用者選的路徑送進
+    命令列，而且**要按下轉檔才發作**。
+    ⚠️ 順帶釘住拖放目標：那塊標籤蓋在輸入框上，沒把它一起註冊的話，「拖到那句話
+    上面」沒反應而拖到旁邊可以——而那句話寫的正是「或把 PDF 直接拖進這個視窗」。
+    """
+    src = Path(G.__file__).read_text(encoding="utf-8")
+    build = src[src.index("    def _build_ui"):src.index("    def _set_chevron")]
+    assert "self.placeholder = ttk.Label(self.in_entry" in build, \
+        "提示字要是一塊疊在輸入框上的標籤"
+    assert "self.placeholder.place(" in build, "疊上去要用 place()"
+    assert "self._dnd_targets = (root, card, self.in_entry, self.placeholder)" in src, \
+        "提示字那塊標籤也要是拖放目標，否則拖到它上面沒反應"
+
+
+def test_the_output_box_is_read_only_and_locks_with_the_rest():
+    """輸出那一格是**唯讀**的框，而且轉檔中跟著鎖。
+
+    ⚠️ 做成一個跟輸入框一樣長的框是使用者 2026-08-29 要的對稱，但「主畫面只問一
+    件事」那條（docs/spec/09 §9.6.1）沒有被推翻——唯讀就是它現在的守法：看起來對稱、
+    但點下去不會有游標，要改仍然按「變更…」。
+    ⚠️ 兩個 widget 的 `pady` 要用同一個值：只換一個的話那一列的高度由較大的決定，
+    看起來就是鈕沒對齊框。
+    """
+    src = Path(G.__file__).read_text(encoding="utf-8")
+    build = src[src.index("    def _build_ui"):src.index("    def _set_chevron")]
+    assert 'self.out_entry = ttk.Entry(card, textvariable=self.out_show,\n' \
+           '                                   state="readonly")' in build, \
+        "輸出那一格要是唯讀的 Entry"
+    assert "self._inputs += [change, self.out_entry]" in build, \
+        "輸出框要跟著一起鎖（轉檔中改它對這一趟沒有作用）"
+    for who in ("change.grid(row=3, column=0", "self.out_entry.grid(row=3, column=1"):
+        seg = build[build.index(who):]
+        assert "pady=(p(SP_MD), 0)" in seg[:seg.index("\n\n")], \
+            f"{who} 的 pady 不是 SP_MD——兩個要一起換"
+
+
+def test_a_broken_input_path_never_shows_a_ready_looking_output_name():
+    """路徑打錯時，輸出那一格不可以顯示從它推出來的檔名（2026-08-29 修）。
+
+    `_effective_out()` 在輸出欄留空時會拿輸入路徑推一個同名的 .pptx——那是給
+    `_build_argv` 與結果列用的（那時輸入一定成立），顯示這一路照抄就會在路徑打錯時
+    寫出「輸出：某某.pptx（與來源同資料夾）」，而旁邊的按鈕是灰的、狀態字寫著
+    「找不到檔案」。⚠️ 判斷要**共用同一支**（`_valid_input`），各寫一份就會再漂開。
+    """
+    src = Path(G.__file__).read_text(encoding="utf-8")
+    assert "def _valid_input" in src, "驗證輸入的那一道判斷要抽成一支給兩邊共用"
+    show = src[src.index("    def _refresh_out_show"):src.index("    def _set_inputs_enabled")]
+    assert "self._valid_input()" in show, \
+        "輸出顯示要先問輸入成不成立，不然打錯路徑也會推出一個檔名"
+    state = src[src.index("    def _refresh_input_state"):src.index("    def _set_placeholder")]
+    assert "self._valid_input()" in state, "能不能按也走同一支判斷"
+
+
+
+def _status_words(src: str) -> set:
+    """程式裡會被寫進狀態字那一格的每一句話。
+
+    ⚠️ **要走 AST，不能用正則抓 `_set_status("…")`**：第一版就是那樣寫的，而
+    `_refresh_input_state` 是先把話存進一個變數再傳出去（`bad = "這不是 PDF 檔"`），
+    正則看不見——故障注入時把那句改成更長的字串，測試照樣全綠。所以這裡收三種寫法：
+    直接給字面值、給同一個函式裡指派過的變數、以及三元式的兩邊。
+    """
+    import ast
+
+    def strings(node):
+        """節點底下的字串字面值。⚠️ **f-string 整個跳過**：`f"{n}/{total} 頁"` 那種
+        句子的寬度取決於當下的數字，驗不了——名單裡改放它**最寬的長相**
+        （`888/888 頁`、`失敗（代碼 78）`）當樣本。不跳過的話收到的是
+        `' 頁'`、`'/'`、`'失敗（代碼 '` 這些碎片，然後整支測試變成雜訊。"""
+        if isinstance(node, ast.JoinedStr):
+            return set()
+        out = set()
+        for child in ast.iter_child_nodes(node):
+            out |= strings(child)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str) and node.value:
+            out.add(node.value)
+        return out
+
+    words = set()
+    for fn in [n for n in ast.walk(ast.parse(src)) if isinstance(n, ast.FunctionDef)]:
+        assigned = {}
+        for node in ast.walk(fn):
+            if isinstance(node, ast.Assign):
+                got = strings(node.value)
+                for t in node.targets:
+                    if isinstance(t, ast.Name) and got:
+                        assigned.setdefault(t.id, set()).update(got)
+        for node in ast.walk(fn):
+            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and node.func.attr in ("_set_status", "_flash_status")
+                    and node.args):
+                first = node.args[0]
+                words |= (assigned.get(first.id, set())
+                          if isinstance(first, ast.Name) else strings(first))
+    return words
+
+def test_status_words_that_would_stretch_their_column_are_caught():
+    """每一句狀態字都要進 `STATUS_SAMPLES`，而且不可以比最寬的那句還寬。
+
+    右欄的 `minsize` 是量這份名單來的。漏了一句的症狀是：那一句一出現就把欄位撐開、
+    進度條當場縮一截（而它只在特定狀態下出現，平常看不到）。
+    ⚠️ 2026-08-29 把輸入的毛病改講在這一格時，第一版寫的「拖進來的不是 PDF：<檔名>」
+    是 189px，比最寬的「載入 OCR 引擎…」還寬 40px——改成「只收 PDF 檔」才收得住。
+    """
+    said = _status_words(Path(G.__file__).read_text(encoding="utf-8"))
+    missing = sorted(w for w in said if w not in G.STATUS_SAMPLES)
+    assert not missing, f"這些狀態字沒進 STATUS_SAMPLES：{missing}"
+    # ⚠️ Tk 一律在函式裡 import（與檔尾那幾支膠囊測試同一個作法）：這個檔其餘的
+    # 測試都不必開 Tk，import 提到頂上會讓「開不了 Tk 的機器」整支檔一起紅
+    import tkinter as tk
+    from tkinter import font as tkfont
+    try:
+        root = tk.Tk()
+    except tk.TclError:
+        pytest.skip("這台機器開不了 Tk")
+    try:
+        root.withdraw()
+        # 字型家族要拿真正在用的那一個（狀態字是 10pt 粗體，見 apply_ui_style）
+        fam = G.apply_ui_style(root, root.winfo_fpixels("1i") / 96.0)[0]
+        f = tkfont.Font(root, font=(fam, 10, "bold"))
+        widths = {t: f.measure(t) for t in G.STATUS_SAMPLES}
+    finally:
+        root.destroy()
+    cap = max(widths.values())
+    # 名單自己就是上限的來源,所以這裡驗的是「新加的那幾句沒有變成新的上限」
+    late = ("找不到檔案", "這不是 PDF 檔", "只收 PDF 檔", "轉檔中不能換檔")
+    over = [f"{t}={widths[t]}" for t in late if widths[t] > cap]
+    assert not over, f"這幾句會把狀態欄撐開（上限 {cap}）：{over}"

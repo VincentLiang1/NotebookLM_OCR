@@ -132,6 +132,19 @@ APP_ICON = paths.assets_dir() / "icon.ico"
 # 與「區段標題貼著它管的內容」、SP_XL＝卡片內要分成兩件事時的那一道縫。
 SP_XS, SP_SM, SP_MD, SP_LG, SP_XL = 4, 8, 12, 16, 24
 
+# 輸入框裡那句提示的左內距（2026-08-29）。⚠️ **這個數字不在間距尺規上，也不該改寫
+# 成 `SP_SM`**（它現在剛好也是 8，那是巧合）：它要對齊的是**框裡文字的起點**，而那個
+# 起點是膠囊底板的圓角加上 ttk 自己的內距決定的，不是版面的縫——尺規哪天改了，這個
+# 數字不該跟著改。⚠️ **量出來的**：把**同一串字**分別當提示字與框內文字各畫一次、
+# 逐欄掃第一個非底色像素（拿不同的字比會被字形本身的左空隙騙到：中文字有、拉丁字母
+# 幾乎沒有）。150% 縮放下量到 9 會偏右 1px，8 剛好對齊；提示字與路徑差幾 px 的話，
+# 打第一個字的瞬間那句話會跳一下。
+FIELD_TEXT_PAD = 8
+
+# 被擋下來的操作（轉檔中換檔、拖進來的不是 PDF）那句原因，在狀態字上停多久。
+# ⚠️ 讀得完就好、不要更久：它借用的是**正事在用的那一格**（轉檔中那裡寫的是頁數）。
+FLASH_MS = 3500
+
 # 卡片的三個尺規（2026-08-26 卡片化時加的，與姊妹專案 MP4-2-SRT 同源）。⚠️ 那邊
 # 的使用者在截圖上圈了卡片邊到內部元件之間那圈白，逐像素掃出 42px、換算回邏輯
 # 像素約 27——所以 `CARD_PAD` 走既有尺規的 SP_XL(24)，**第一版寫 16，他當場說
@@ -219,7 +232,13 @@ STATUS_SAMPLES = ("等待選檔", "就緒", "準備中…", "載入 OCR 引擎�
                   # 遠小於此），寬度取最寬的數字字形
                   "888/888 頁",
                   "完成 ✓", "完成（有降級）", "已停止", "停止中…",
-                  "失敗（代碼 78）")
+                  "失敗（代碼 78）",
+                  # 2026-08-29 起輸入的毛病也講在這一格（框底下那一行說明收進框裡
+                  # 了）。⚠️ 這四句都是**量過**才定的用詞：最寬的「載入 OCR 引擎…」
+                  # 是 149px，超過就會把欄位撐開、進度條當場縮一截。原本的
+                  # 「拖進來的不是 PDF：<檔名>」有 189px，改成「只收 PDF 檔」——
+                  # 檔名不必再講一次，使用者剛剛才拖了它。
+                  "找不到檔案", "這不是 PDF 檔", "只收 PDF 檔", "轉檔中不能換檔")
 
 # --------------------------------------------------------------------------- #
 #  外觀（字型、DPI、佈景）
@@ -430,6 +449,9 @@ def configure_styles(st: ttk.Style, fam: str, pal: dict, px) -> None:
     # 卡片裡的提示字。⚠️ **字級要明寫 10pt**：共用包給的是 9pt（那是姊妹專案的排版），
     # 而這邊的提示與檔名同一級——共用的是**顏色**（設計系統），不是字級（版面）。
     st.configure("CardHint.Card.TLabel", font=(fam, 10))
+    # 坐在**輸入框裡**的那句提示（2026-08-29）。⚠️ 字級要跟框裡的文字同一級：
+    # 它站的位置就是路徑將來要出現的位置，差一級會在打第一個字的瞬間看出來。
+    st.configure("FieldHint.TLabel", font=(fam, 10))
     # 結果列：卡片上唯一一行粗體的狀態字
     st.configure("CardStatus.Card.TLabel", font=(fam, 10, "bold"))
     # 核取方塊跟 Label 一樣是實色底的（那個「底」是文字那半邊，方塊本身是圖片），
@@ -559,6 +581,17 @@ def apply_ui_style(root: tk.Misc,
     # 卡片裡的小標（「輸入 PDF」）：Fluent 的 BodyStrong，不是另一級字級
     st.configure("CardTitle.Card.TLabel", font=(fam, 10, "bold"))
     st.configure("CardHint.Card.TLabel", foreground=pal["muted"])
+    # ⚠️ 這一支的底色是**輸入框**的底（`field`）不是卡片的底：它是一塊疊在框上的
+    # 標籤（見 `_build_ui` 的提示字），底色對不上就是框裡浮著一塊淺色矩形。
+    # ⚠️ **對比度要另外量一次，而這一格量出來是 8.78:1（淺色）／11.90:1（深色）**——
+    # 淺色那一邊**低於本專案給說明文字訂的 9:1**。成因不是有人把顏色調淡了，而是
+    # `muted` 當初是照「坐在 page(#f5f5f7) 上 ≥9」校準的（共用包 2026-08-28），而
+    # `field`(#f0f0f3) 是更深的第三階底色——同一個字色坐上去必然掉一點。要補到 9 只有
+    # 一條路：把共用包的 `muted` 再壓深一階，而那會連姊妹專案的每一句說明文字一起變。
+    # ⚠️ **不要在這裡改用別的顏色矇混過去**：色票裡對 `field` 過得了 9:1 的只有 `ink`
+    # 與 `log_fg`，兩個都是正文黑——提示字用正文黑，空框會看起來像「已經填好了」。
+    st.configure("FieldHint.TLabel", background=pal["field"],
+                 foreground=pal["muted"])
     st.configure("CardStatus.Card.TLabel", font=(fam, 10, "bold"))
     # 核取方塊跟 Label 一樣是實色底的（那個「底」是文字那半邊，方塊本身是圖片），
     # 坐在白卡上不指定就是四塊淺灰矩形。⚠️ layout 照後綴繼承，所以這一支照樣
@@ -989,6 +1022,9 @@ class App(tk.Tk):
         self._pages_done = 0
         self._pages_total = 0
         self._determinate = False
+        # 狀態字換過幾次。⚠️ 只有 `_flash_status` 讀它——那一支要分辨「這 3.5 秒
+        # 裡沒有人講過話」與「正事已經把狀態字換掉了」，序號是最省事的判準。
+        self._status_seq = 0
         # 這一趟的降級頁碼（cli 最後一行的 WARNING）。⚠️ 要留到結果列上：舊版
         # 靠使用者自己去看日誌最後一行，而完成對話框正好蓋在那一行上面
         self._last_warning = ""
@@ -1211,32 +1247,47 @@ class App(tk.Tk):
         # 提示與錯誤共用這一行，而且**一直都在**（只換文字不換有無），填錯路徑
         # 時版面才不會上下跳。⚠️ 路徑不對要在這裡當場說：舊版是照樣讓人按下
         # 「開始轉檔」，按了才跳一個對話框——用擋的比用告知的好
-        # ⚠️ **提示行跟著內容欄縮排**（`column=1`，不再 `columnspan`）：留在最左
-        # 的話它與下面那行「輸出：…」就成了兩種左緣，而兩行講的是同一件事的兩半。
-        # ⚠️ `wraplength` 跟著內容欄縮：鈕搬到左邊之後這一欄少了一整條 rail，
-        # 給得比欄寬大等於「永遠不折行」——長路徑的錯誤訊息會反過來把視窗撐開。
-        self.hint = ttk.Label(card, style="CardHint.Card.TLabel", anchor="w",
-                              wraplength=p(540), justify="left")
-        self.hint.grid(row=2, column=1, sticky="w", pady=(p(SP_SM), 0))
+        # ⚠️ **提示字坐在輸入框裡**（使用者 2026-08-29：「想將提示使用者的說明文字
+        # 請先選擇要轉檔的PDF…放入灰色的輸入框，省掉一行高度」）。它取代了原本框底下
+        # 那一行說明——那一行**永遠都在**（只換文字不換有無），為的是填錯路徑時版面
+        # 不要上下跳；收進框裡之後那個理由消失了，因為它根本不再佔一列。
+        # ⚠️ **是一塊疊上去的標籤，不是塞進欄位的值**：塞值的話它會被 `_build_argv`
+        # 當成使用者選的路徑送進命令列，而那種錯只會在**按下轉檔之後**才發作。
+        # ⚠️ 它蓋住輸入框的一角，所以**拖放目標要連它一起註冊**（見 `_bind_events`
+        # 的 `_dnd_targets`）：最直覺的落點就是這句話上面，而 tkdnd 認的是滑鼠底下
+        # 那個 widget——漏掉它的症狀是「拖到提示字上沒反應，拖到旁邊就可以」。
+        # ⚠️ 點在它身上要把焦點轉給輸入框，否則這塊標籤等於在框上挖了一個洞。
+        self.placeholder = ttk.Label(self.in_entry, style="FieldHint.TLabel",
+                                     anchor="w")
+        self.placeholder.bind("<Button-1>", lambda e: self.in_entry.focus_set())
+        # 左內距要對齊框裡的文字：框自己的內距是膠囊底板給的（`SQ_PAD`），量出來
+        # 與這個值相同——⚠️ 對不齊的話，打第一個字的瞬間提示字會「跳」一下。
+        self.placeholder.place(x=p(FIELD_TEXT_PAD), rely=0.5, anchor="w")
 
-        # 輸出：99% 的情況就是輸入檔同名的 .pptx，程式自己帶得出來。做成第二個
-        # 一模一樣的空輸入欄，只會讓第一眼變成「兩個空格子，我該填哪個」——
-        # 降成一行說明加一顆小鈕，主畫面就只剩一件事要做。
+        # 輸出：99% 的情況就是輸入檔同名的 .pptx，程式自己帶得出來。
         # ⚠️ 真值仍然是 out_path（_effective_out／_build_argv 讀的是它），
-        # out_show 只是縮短過的顯示字串。
-        # ⚠️ 「輸出：」與路徑是**同一個標籤**：分成兩格的話，第 0 欄的寬度由
-        # 輸入那一列決定，路徑就會被推到離冒號很遠的地方。
-        # ⚠️ 與上面隔 SP_XL（不是 SP_MD）：輸入與輸出是卡片裡的**兩件事**，靠這
-        # 一道比較寬的縫分群，就不必再畫一條分隔線進來加重量。
+        # out_show 只是縮短過的顯示字串，而且「輸出：」與檔名是**同一個字串**
+        # （分成兩格的話，第 0 欄的寬度由輸入那一列決定，檔名會被推到離冒號很遠）。
+        # ⚠️ **做成一個等長的框，但它是唯讀的**（使用者 2026-08-29：「下面一個輸入，
+        # 也做出等長的灰色框，這樣較對稱」）。看起來像第二個輸入欄卻不是——這一格
+        # 原本刻意降成一行說明，理由是「兩個一模一樣的空格子，我該填哪個」（2026-08-25
+        # 拍板，見 docs/spec/09 §9.6.1），而**唯讀**正是那條理由現在的守法：點得進去、
+        # 選得到字、改不了，要改仍然按左邊的「變更…」。⚠️ 它也在 `_inputs` 裡，轉檔中
+        # 跟著變淡（`.state()` 動的是 disabled 那一格，readonly 留著，見 _set_inputs_enabled）。
+        # ⚠️ 空的時候框裡寫的是「（選好 PDF 之後自動命名）」，不是空白：一個什麼都沒有
+        # 的第二個框，看起來就是「還有一格沒填」。
+        # ⚠️ 與上面隔 **SP_MD**（不是 SP_XL）：2026-08-26 那道比較寬的縫是給「輸入與
+        # 輸出是兩件事」的，而它們現在長得一模一樣、讀起來就是同一組控制項（使用者
+        # 2026-08-29 在兩個間距的模擬圖之間選了 12）。⚠️ 兩個 widget 的 pady 要一起
+        # 換：只換一個的話那一列的高度由較大的那個決定，看起來就是鈕沒對齊框。
         change = ttk.Button(card, text="變更…", style="Small.TButton",
                             command=self._pick_output)
         change.grid(row=3, column=0, sticky="ew", padx=(0, p(SP_MD)),
-                    pady=(p(SP_XL), 0))
-        ttk.Label(card, textvariable=self.out_show,
-                  style="CardHint.Card.TLabel", anchor="w",
-                  wraplength=p(540)).grid(
-            row=3, column=1, sticky="ew", pady=(p(SP_XL), 0))
-        self._inputs.append(change)
+                    pady=(p(SP_MD), 0))
+        self.out_entry = ttk.Entry(card, textvariable=self.out_show,
+                                   state="readonly")
+        self.out_entry.grid(row=3, column=1, sticky="ew", pady=(p(SP_MD), 0))
+        self._inputs += [change, self.out_entry]
         card.columnconfigure(1, weight=1)
 
         # 選項一個都不露出來（日常轉檔一項都不必動）。色塊那一項曾經留在這裡
@@ -1481,7 +1532,10 @@ class App(tk.Tk):
         # 拖放：接得上就把提示換成拖放版（_refresh_input_state 讀這個旗標）。
         # ⚠️ 這裡只做**便宜的那一半**（import，0.6ms）：把 tkdnd 真的載起來要
         # 44–85ms，而那是**視窗出現之後**才用得到的東西，延到 _late_file_drop
-        self._dnd_targets = (root, card, self.in_entry)
+        # ⚠️ **提示字那塊標籤也要算一個拖放目標**：它蓋在輸入框上，而 tkdnd 認的是
+        # 滑鼠底下那個 widget——漏掉它的症狀是「拖到那句話上面沒反應、拖到旁邊就可以」，
+        # 而那句話正好就寫著「或把 PDF 直接拖進這個視窗」。
+        self._dnd_targets = (root, card, self.in_entry, self.placeholder)
         self.dnd_ok = file_drop_available()
         # 貼上路徑。⚠️ 綁在視窗上，所以輸入欄自己的貼上也會叫到這裡——焦點
         # 在任何輸入類控制項上時要原封不動放行，否則使用者在頁碼欄貼一段文字
@@ -1661,8 +1715,7 @@ class App(tk.Tk):
         if self.running:
             # 灰掉的欄位擋不住拖放（它不經過控制項）。⚠️ 不可以靜靜地什麼都不做：
             # 那看起來就是拖放壞了，而使用者會一直重拖
-            self._set_hint("轉檔中不能換檔案 —— 要換請先按「■ 停止轉檔」。",
-                           err=True)
+            self._flash_status("轉檔中不能換檔")
             return
         try:
             paths = [q for q in self.tk.splitlist(event.data) if q]
@@ -1672,7 +1725,8 @@ class App(tk.Tk):
         if not pdfs:
             if paths:
                 # 拖了東西進來卻沒有 PDF：不要無聲無息，那看起來就像拖放壞了
-                self._set_hint(f"拖進來的不是 PDF：{Path(paths[0]).name}", err=True)
+                # ⚠️ 檔名不必再講一次：他剛剛才拖了它，而狀態字只有 149px
+                self._flash_status("只收 PDF 檔")
             return
         self.in_path.set(pdfs[0])
 
@@ -1699,42 +1753,86 @@ class App(tk.Tk):
         return None
 
     # ---- 輸入狀態：提示、輸出檔名、按鈕能不能按 ----
-    def _set_hint(self, text: str, err: bool = False) -> None:
-        self.hint.config(text=text,
-                         foreground=self.pal["err"] if err else self.pal["muted"])
+    def _valid_input(self) -> str | None:
+        """輸入欄裡那條路徑，指得到一個真的檔案就回傳它，否則 None。
+
+        ⚠️ **兩個地方要用同一道判斷**：能不能按「開始轉檔」（`_refresh_input_state`）
+        與輸出那一格要不要顯示檔名（`_refresh_out_show`）。各寫一份的下場是它們會漂
+        開——2026-08-29 之前就是這樣：路徑打錯時按鈕已經灰掉了，輸出那一格卻照樣
+        從那條**不存在的**路徑推出一個 .pptx 檔名，看起來像「一切就緒」。"""
+        raw = self.in_path.get().strip().strip('"')
+        if not raw:
+            return None
+        try:
+            return raw if Path(raw).expanduser().is_file() else None
+        except OSError:
+            return None
 
     def _refresh_input_state(self) -> None:
         """輸入路徑變了：驗證、帶出輸出檔名、決定「開始轉檔」能不能按。
 
         ⚠️ **用擋的、不要用告知的**：舊版無論欄位是空的還是路徑不存在都讓人
         按得下去，按了才跳一個對話框說「請先選擇輸入 PDF 檔」。錯誤在按下去
-        之前就已經看得出來，就不該等到按下去才講。"""
+        之前就已經看得出來，就不該等到按下去才講。
+
+        ⚠️ **話講在哪裡，2026-08-29 換過一次**（提示字收進輸入框、那一行說明沒了）：
+        「還沒選」講在**框裡**（提示字），「選了但有毛病」講在**狀態字**那一格。
+        ⚠️ 錯誤訊息**不必再重複那條路徑**——它就在旁邊的框裡，而狀態字那一格只有
+        149px（見 STATUS_SAMPLES）。
+        ⚠️ 舊版還有第四句「已選好檔案，按開始轉檔即可（也可以直接按 Enter）」，
+        使用者 2026-08-29 選擇讓它消失：前半句由狀態字的「就緒」和那顆藍鈕說了，
+        而 Enter 這個捷徑改成不明講（照樣能按）。"""
         raw = self.in_path.get().strip().strip('"')
-        drop = "，或把 PDF 直接拖進這個視窗" if getattr(self, "dnd_ok", False) else ""
-        ok = False
-        if not raw:
-            self._set_hint(f"請先選擇要轉檔的 PDF{drop}。")
+        src = self._valid_input()
+        ok = src is not None
+        # 提示字只在「框是空的」時候出現——框裡一有東西，那句話就沒有位置了
+        self._set_placeholder(not raw)
+        if ok and not raw.lower().endswith(".pdf"):
+            # 擋不到但要說：副檔名不對通常是選錯檔，而 OCR 一跑就是好幾分鐘
+            bad = "這不是 PDF 檔"
         else:
-            try:
-                ok = Path(raw).expanduser().is_file()
-            except OSError:
-                ok = False
-            if not ok:
-                self._set_hint(f"找不到這個檔案：{raw}", err=True)
-            elif not raw.lower().endswith(".pdf"):
-                # 擋不到但要說：副檔名不對通常是選錯檔，而 OCR 一跑就是好幾分鐘
-                self._set_hint("這個檔看起來不是 PDF，轉檔可能會失敗。")
-                ok = True
-            else:
-                # 選好了就不必再講拖放：那句提示是給「還沒有檔案」的人看的
-                self._set_hint("已選好檔案，按「開始轉檔」即可（也可以直接按 Enter）。")
-        self._sync_auto_out(raw if ok else "")
+            bad = "" if ok or not raw else "找不到檔案"
+        self._sync_auto_out(src or "")
         self._refresh_run_button()
         # 狀態字要跟按鈕講同一件事：沒有檔案時按鈕是灰的，右邊卻寫著綠色的
         # 「就緒」，兩者互相打臉。⚠️ 轉檔中／剛跑完的狀態不可以被蓋掉
         if not self.running:
-            self._set_status("就緒" if ok else "等待選檔",
-                             self.pal["ok"] if ok else self.pal["muted"])
+            if bad:
+                self._set_status(bad, self.pal["err" if not ok else "warn"])
+            else:
+                self._set_status("就緒" if ok else "等待選檔",
+                                 self.pal["ok"] if ok else self.pal["muted"])
+
+    def _set_placeholder(self, show: bool) -> None:
+        """框裡那句提示：只在輸入欄是空的時候看得見。
+
+        ⚠️ 文字要**每次重算**，不能在建介面時寫死一次：拖放那半句話取決於
+        `dnd_ok`，而它是視窗出來之後才知道的（tkdnd 載得起來才算數，見
+        `_late_file_drop`）——寫死的話，接上拖放的機器永遠看不到那半句。"""
+        if show:
+            drop = "，或把 PDF 直接拖進這個視窗" if getattr(self, "dnd_ok", False) else ""
+            self.placeholder.config(text=f"請先選擇要轉檔的 PDF{drop}")
+            self.placeholder.place(x=self.px(FIELD_TEXT_PAD), rely=0.5,
+                                   anchor="w")
+        else:
+            self.placeholder.place_forget()
+
+    def _flash_status(self, text: str) -> None:
+        """把一句「這件事現在做不到」的原因，暫時亮在狀態字那一格。
+
+        用在**被擋下來的操作**上（轉檔中換檔、拖進來的不是 PDF）：那些動作不會
+        改變任何狀態，所以沒有別的地方會講話——⚠️ 而「靜靜地什麼都不做，看起來
+        就是功能壞了」是這個專案的硬規則之一（拖放與 Ctrl+V 各自擋掉並說原因）。
+
+        ⚠️ **還原要看序號、不能無條件還原**：這段時間裡狀態字可能已經被正事更新過
+        （轉檔中每頁都會換一次），無條件還原就會把「第 5 / 15 頁」倒退回按下去時
+        記的那一句。`_set_status` 每次都會把序號加一，序號變了就代表有人講過話了。"""
+        prev = (self.status.cget("text"), str(self.status.cget("foreground")))
+        self._set_status(text, self.pal["err"])
+        seq = self._status_seq
+        self.after(FLASH_MS,
+                   lambda: self._set_status(*prev) if self._status_seq == seq
+                   else None)
 
     def _sync_auto_out(self, src: str) -> None:
         """輸入檔換了就跟著換輸出檔。
@@ -1749,7 +1847,17 @@ class App(tk.Tk):
         self.out_path.set(self._auto_out)
 
     def _refresh_out_show(self) -> None:
-        out = self._effective_out()
+        """輸出那一格要顯示什麼。
+
+        ⚠️ **輸入不成立時不可以顯示推導出來的檔名**（2026-08-29 修）：`_effective_out()`
+        在輸出欄留空時會拿輸入路徑去推一個同名的 .pptx——那是給 `_build_argv` 與結果列
+        用的（那時輸入一定成立，按鈕擋著），但顯示這一路會在**路徑打錯**時照樣推出一個
+        檔名。症狀：按鈕已經灰掉、狀態字寫著「找不到檔案」，底下那一格卻寫著「輸出：
+        某某.pptx（與來源同資料夾）」，讀起來像一切就緒。⚠️ 把輸出做成一個框之後更明顯，
+        使用者當場圈了出來。⚠️ 使用者**自己指定過**輸出路徑時照樣顯示（那一格是他填的，
+        跟輸入成不成立無關）。"""
+        out = (self._effective_out()
+               if self._valid_input() or self.out_path.get().strip() else None)
         if out is None:
             self.out_show.set("輸出：（選好 PDF 之後自動命名）")
             return
@@ -1873,6 +1981,7 @@ class App(tk.Tk):
         """換狀態字。⚠️ **只換文字與顏色**：2026-08-29 挑選鈕搬到左邊之後，這一欄
         右邊已經沒有鈕可以對齊，狀態字改成貼卡片右緣（`sticky="e"` 就夠了）——舊版
         在這裡逐字串重算右內距，理由與那次量測見 `_pin_rail` 與 docs/dev §5.10 十二。"""
+        self._status_seq += 1
         self.status.config(text=text, foreground=color)
 
     def _start(self) -> None:
