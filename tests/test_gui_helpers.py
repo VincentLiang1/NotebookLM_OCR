@@ -741,8 +741,44 @@ def test_the_window_still_paints_a_backdrop_and_does_it_after_withdraw():
     """
     src = Path(G.__file__).read_text(encoding="utf-8")
     init = src[src.index("    def __init__(self) -> None:\n        super().__init__()"):
-               src.index("    def _status_font")]
+               src.index("    def _apply_window_icon")]   # ⚠️ 收斂到 __init__ 自己
     assert "winui.set_backdrop(" in init, \
         "App.__init__ 不再給 window class 底色：最小化再還原會露出一片黑"
     assert init.index("self.withdraw()") < init.index("winui.set_backdrop("), \
         "set_backdrop() 會 update_idletasks()，排在 withdraw() 之前會把空視窗貼上螢幕"
+
+
+def test_the_window_only_shows_up_once_it_is_finished():
+    """啟動那四步的**順序**：量高度 → 擺位置 → 現身 → 鉗工作區。
+
+    §5.13 那條「不要先閃一個小畫面」的全部就是這個順序。⚠️ 排錯了**不會當掉**，
+    使用者看到的是「先出現一個 460 高的空視窗、再跳成 549」或「先出現在 A、再跳到
+    B」那兩幀，而 `PrintWindow` 抓的是最終狀態、**永遠看不出來**（同 §5.14 那條：
+    截圖驗收抓不到中間狀態）。
+
+    四件事：`withdraw()` 要排在第一個會 `update_idletasks()` 的東西之前
+    （`apply_ui_style()` 要送 `<<ThemeChanged>>`），`place_window()` 夾在第一次
+    `_fit_window()` 與 `deiconify()` 之間（更早會拿還沒定案的高度去算、更晚就是
+    「先出現在 A 再跳到 B」），`deiconify()` 只有一次，而最後一次 `_fit_window()`
+    在它之後（標題列高度與實際落點要 map 之後才量得到）。
+
+    ⚠️ 這一支刻意用**字串位置**、不用 `ast.walk`：後者是廣度優先、不是原始碼順序，
+    巢狀呼叫（`winui.place_window(self, self.px(WIN_W), …)` 裡的 `self.px`）會被排到
+    後面去，於是「誰在誰前面」得到的是錯的答案。要用 AST 就得自己按
+    `(lineno, col_offset)` 排——姊妹專案 meeting-scribe 2026-08-29 踩過這一格。
+    """
+    src = Path(G.__file__).read_text(encoding="utf-8")
+    init = src[src.index("    def __init__(self) -> None:\n        super().__init__()"):
+               src.index("    def _apply_window_icon")]   # ⚠️ 收斂到 __init__ 自己
+    # ⚠️ 套佈景那一步要比對「賦值＋呼叫」的形狀：`__init__` 開頭的註解裡就寫著
+    # 「`apply_ui_style()` 要送 `<<ThemeChanged>>`」，只比對函式名會抓到那句話，
+    # 於是測試在**正確的**程式碼上就紅（第一版正是這樣，說 600 != 234）
+    steps = ("self.withdraw()", "= apply_ui_style(", "self._fit_window()",
+             "winui.place_window(", "self.deiconify()")
+    at = [init.index(s) for s in steps]
+    assert at == sorted(at), (
+        "啟動那幾步的順序錯了（正確是 withdraw → 套佈景 → 量高度 → 擺位置 → 現身）："
+        + "、".join(f"{s}@{i}" for s, i in sorted(zip(steps, at), key=lambda x: x[1])))
+    assert init.count("self.deiconify()") == 1, "deiconify() 只該有一次"
+    assert init.rindex("self._fit_window()") > init.index("self.deiconify()"), \
+        "最後一次 _fit_window() 要在 deiconify() 之後（工作區鉗制要 map 了才量得到）"
