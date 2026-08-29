@@ -427,12 +427,21 @@ def test_status_words_that_would_stretch_their_column_are_caught():
     # 測試都不必開 Tk，import 提到頂上會讓「開不了 Tk 的機器」整支檔一起紅
     import tkinter as tk
     from tkinter import font as tkfont
-    try:
-        root = tk.Tk()
-    except tk.TclError as e:
-        # ⚠️ 原因要寫進 skip 訊息:一支「有時候會跳過」的測試等於有時候沒在守,
-        # 而沒有原因的 skip 連追都追不了
-        pytest.skip(f"這台機器開不了 Tk：{e}")
+    # ⚠️ **建不起來要重試,不要一次就 skip**：`tk.Tk()` 在這台機器上會**間歇性**丟
+    # `Can't find a usable init.tcl`／`invalid command name "tcl_findLibrary"`（跑完
+    # `check_downstreams` 那種大量建毀 Tk 的工作之後特別容易中）。⚠️ skip 的形式是
+    # **綠的**——靠運氣的那一輪根本沒在守，而摘要行不會有任何警告。
+    # ⚠️ 真的沒有 Tk 的機器照樣 skip（三次都失敗），這一段只是不讓它靠運氣。
+    root, last = None, None
+    for _ in range(3):
+        try:
+            root = tk.Tk()
+            break
+        except tk.TclError as e:
+            last = e
+    if root is None:
+        # ⚠️ 原因要寫進 skip 訊息：沒有原因的 skip 連追都追不了
+        pytest.skip(f"這台機器開不了 Tk（試了 3 次）：{last}")
     try:
         root.withdraw()
         # 字型家族要拿真正在用的那一個（狀態字是 10pt 粗體，見 apply_ui_style）
