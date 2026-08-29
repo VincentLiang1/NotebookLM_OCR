@@ -141,6 +141,21 @@ SP_XS, SP_SM, SP_MD, SP_LG, SP_XL = 4, 8, 12, 16, 24
 # 打第一個字的瞬間那句話會跳一下。
 FIELD_TEXT_PAD = 8
 
+# 不定長度那條（還算不出頁數時）**走一趟要幾步**。
+#
+# ⚠️ **`maximum` 在 indeterminate 下不是「總量」，是動畫的週期**：`start()` 每 50ms 把
+# `value` 加 1（與 `maximum` 無關），所以 `maximum` 決定的是滑塊**幾步走完全程**——
+#   100 步 ≈ 5 秒一趟 → 平滑（ttk 的預設值也是 100）
+#   4 步  = 0.2 秒一趟 → 在兩端之間狂跳，讀成閃爍
+# ⚠️ **一定要明寫，不可以靠 ttk 的預設值**（2026-08-29 使用者回報：「轉第二次時狀態列
+# 就會左右左跳動…那個藍點」）：上一趟的 `_scan_line` 會把 `maximum` 設成**總頁數**，而
+# 那個值會留到下一趟——第一趟吃到預設的 100（正常），第二趟吃到的是 4 或 15，滑塊於是
+# 用四步走完全程。⚠️ 這是**只有連跑兩趟才看得到**的一類：單趟怎麼測都是對的。
+# ⚠️ **它與頁數共用同一個 `maximum` 欄位，但那是兩個不同的量**：頁數是「進度的解析
+# 度」（愈細愈好），這一份是「動畫多快」（愈細愈慢）——姊妹專案 MP4-2-SRT 2026-08-28
+# 因為把兩者合成一個常數而做壞過一次，那邊的常數同名（`SPIN_STEPS`）。
+SPIN_STEPS = 100
+
 # 被擋下來的操作（轉檔中換檔、拖進來的不是 PDF）那句原因，在狀態字上停多久。
 # ⚠️ 讀得完就好、不要更久：它借用的是**正事在用的那一格**（轉檔中那裡寫的是頁數）。
 FLASH_MS = 3500
@@ -1903,7 +1918,9 @@ class App(tk.Tk):
         self._determinate = False
         self._set_inputs_enabled(False)    # 轉檔中改了也沒用（argv 已經送出去了）
         self.progress.grid()               # 沒在跑就不顯示（見 _build_ui）
-        self.progress.config(mode="indeterminate", value=0)
+        # ⚠️ `maximum` 要一起重設（見 SPIN_STEPS）：上一趟的頁數還留在裡面，而
+        # indeterminate 下它是動畫的週期——不設的話第二趟的滑塊會用四五步走完全程。
+        self.progress.config(mode="indeterminate", maximum=SPIN_STEPS, value=0)
         # 不定長度進度條不帶任何資訊，12ms（83Hz）只是白白讓主執行緒重繪；
         # 用 ttk 的預設節奏即可
         self.progress.start()

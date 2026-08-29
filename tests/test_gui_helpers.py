@@ -881,3 +881,31 @@ def test_no_style_is_configured_for_a_widget_that_no_longer_exists():
     assert not orphans, (
         "這些樣式設了卻沒有任何 widget 在用（殘骸，或是 widget 忘了指定 style=）：\n  "
         + "\n  ".join(orphans))
+
+
+def test_each_run_resets_the_spinner_period_not_just_the_mode():
+    """每一趟開始都要把 `maximum` 設回動畫的週期，不能只換 `mode`。
+
+    ⚠️ **`maximum` 在 indeterminate 下不是「總量」，是動畫的週期**（滑塊幾步走完全程），
+    而 `_scan_line` 會把同一個欄位設成**總頁數**。只重設 `mode` 與 `value` 的話，第二趟
+    的滑塊會用四五步走完全程——使用者 2026-08-29 回報：「轉第二次時狀態列就會左右左
+    跳動…那個藍點」。
+
+    ⚠️ **這一類只有連跑兩趟才看得到**：單趟怎麼測都是對的（第一趟吃到 ttk 的預設值
+    100，正好就是要的值）。實測前後：壞的那版第二趟是 `12/4 → 20/4 → …`（四步一趟），
+    修好之後是 `6/100 → 16/100 → …`（≈5 秒一趟）。
+
+    ⚠️ 週期**不可以**沿用頁數那個刻度：那一份是「進度的解析度」（愈細愈好），這一份是
+    「動畫多快」（愈細愈慢）——姊妹專案 MP4-2-SRT 2026-08-28 就是把兩者合成一個常數而
+    做壞過一次。
+    """
+    src = Path(G.__file__).read_text(encoding="utf-8")
+    start = src[src.index("    def _start(self)"):src.index("    def _run_conversion")]
+    line = [l for l in start.splitlines() if 'mode="indeterminate"' in l]
+    assert line, "_start() 沒有把進度條切回不定長度"
+    assert "maximum=SPIN_STEPS" in line[0], (
+        "切回不定長度時要一起重設 `maximum`（上一趟的頁數還留在裡面）：\n  "
+        + line[0].strip())
+    assert G.SPIN_STEPS == 100, (
+        f"動畫走一趟的步數改了（現在 {G.SPIN_STEPS}）——100 步 ≈ 5 秒是量過的：\n"
+        "  太少 → 在兩端之間狂跳、讀成閃爍；太多 → 慢到看不出在動")
