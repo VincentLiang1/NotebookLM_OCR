@@ -412,6 +412,71 @@ def _status_words(src: str) -> set:
                           if isinstance(first, ast.Name) else strings(first))
     return words
 
+
+def _fresh_tk():
+    """建一個 withdraw 過的 Tk root；建不起來就 skip（但先重試三次）。
+
+    ⚠️ **要重試**：`tk.Tk()` 在這台機器上會**間歇性**丟 `Can't find a usable
+    init.tcl`／`invalid command name "tcl_findLibrary"`（跑完 `check_downstreams`
+    那種大量建毀 Tk 的工作之後特別容易中）。⚠️ skip 的形式是**綠的**——靠運氣的
+    那一輪根本沒在守，而摘要行不會有任何警告（`docs/dev/verification.md` 第 1 節：
+    本機應該是 0 skipped）。真的沒有 Tk 的機器照樣 skip，這裡只是不讓它靠運氣。
+    """
+    import tkinter as tk
+
+    last = None
+    for _ in range(3):
+        try:
+            root = tk.Tk()
+            root.withdraw()
+            return root
+        except tk.TclError as e:
+            last = e
+    # ⚠️ 原因要寫進 skip 訊息：沒有原因的 skip 連追都追不了
+    pytest.skip(f"這台機器開不了 Tk（試了 3 次）：{last}")
+
+
+def test_this_apps_own_styles_actually_take_effect():
+    """這支程式自己的樣式要**真的生效**——問的是 Tk，不是原始碼。
+
+    ⚠️ 2026-08-29 的災情：`apply_ui_style()` 只有一行 `return wskin.apply(...)`，而它
+    底下還留著 2026-08-28 收攏到共用包**之前**的整段舊實作（137 行死碼，沒刪）。當天
+    新加的 `FieldHint.TLabel`（輸入框裡那句提示的顏色）就加進了那段裡，於是**從未執行**。
+
+    ⚠️ **症狀完全看不出來**：ttk 照後綴繼承，那句提示安靜地沿用 `TLabel` 的預設——
+    字色 #1c1c1c（近正文黑）、底色 #fafafa（與輸入框底 #f0f0f3 差 10 階，目視分不出）。
+    不報錯、`reqheight` 不變、截圖也看不出來。⚠️ **掃原始碼的測試一樣擋不住**：那一行
+    確確實實寫在檔案裡。只有真的建一次 Tk、問它「最後生效的是什麼」才抓得到。
+
+    ⚠️ 所以這一支要問的是**值**，不是有沒有寫。新增樣式時把它加進下面那張表。
+    """
+    root = _fresh_tk()
+    try:
+        from tkinter import ttk
+
+        _fam, pal, _skin = G.apply_ui_style(root, root.winfo_fpixels("1i") / 96.0)
+        st = ttk.Style(root)
+        want = {
+            # 這支程式**多出來的**那幾種（共用包不知道它們的存在）
+            ("FieldHint.TLabel", "foreground"): pal["muted"],
+            ("FieldHint.TLabel", "background"): pal["field"],
+            # 共用包設的那批,一起釘著:哪天 `configure_styles` 被搬到錯的地方,
+            # 或共用包的回呼斷掉,這裡會一起紅
+            ("CardHint.Card.TLabel", "foreground"): pal["muted"],
+            ("Card.TLabel", "background"): pal["card"],
+            ("Page.TFrame", "background"): pal["page"],
+            ("CardBody.TFrame", "background"): pal["card"],
+        }
+        bad = [f"{style}.{opt} = {st.lookup(style, opt)}（期望 {expect}）"
+               for (style, opt), expect in want.items()
+               if str(st.lookup(style, opt)).lower() != str(expect).lower()]
+    finally:
+        root.destroy()
+    assert not bad, (
+        "這些樣式沒有真的生效——最可能的原因是設定寫在 `apply_ui_style()` 的 "
+        "`return` 後面（死碼），或沒有寫進 `configure_styles()`：\n  "
+        + "\n  ".join(bad))
+
 def test_status_words_that_would_stretch_their_column_are_caught():
     """每一句狀態字都要進 `STATUS_SAMPLES`，而且不可以比最寬的那句還寬。
 
@@ -427,21 +492,7 @@ def test_status_words_that_would_stretch_their_column_are_caught():
     # 測試都不必開 Tk，import 提到頂上會讓「開不了 Tk 的機器」整支檔一起紅
     import tkinter as tk
     from tkinter import font as tkfont
-    # ⚠️ **建不起來要重試,不要一次就 skip**：`tk.Tk()` 在這台機器上會**間歇性**丟
-    # `Can't find a usable init.tcl`／`invalid command name "tcl_findLibrary"`（跑完
-    # `check_downstreams` 那種大量建毀 Tk 的工作之後特別容易中）。⚠️ skip 的形式是
-    # **綠的**——靠運氣的那一輪根本沒在守，而摘要行不會有任何警告。
-    # ⚠️ 真的沒有 Tk 的機器照樣 skip（三次都失敗），這一段只是不讓它靠運氣。
-    root, last = None, None
-    for _ in range(3):
-        try:
-            root = tk.Tk()
-            break
-        except tk.TclError as e:
-            last = e
-    if root is None:
-        # ⚠️ 原因要寫進 skip 訊息：沒有原因的 skip 連追都追不了
-        pytest.skip(f"這台機器開不了 Tk（試了 3 次）：{last}")
+    root = _fresh_tk()
     try:
         root.withdraw()
         # 字型家族要拿真正在用的那一個（狀態字是 10pt 粗體，見 apply_ui_style）

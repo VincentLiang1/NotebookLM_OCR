@@ -442,6 +442,13 @@ def configure_styles(st: ttk.Style, fam: str, pal: dict, px) -> None:
     ⚠️ **不要在這裡碰 `padding`**：膠囊按鈕的垂直內距是共用包**量行高反推**出來的
     安全邊界（見 `BUTTONS`），事後蓋掉就是「下半個圓被削平」——不報錯、`reqheight`
     也看不出來，只有截圖看得到。
+
+    ⚠️ **這支程式自己的樣式只能加在這裡。** `apply_ui_style()` 只有一行
+    `return wskin.apply(...)`，加在它後面的東西**永遠不會執行**——2026-08-29 真的
+    發生過：那個函式底下當時還留著 2026-08-28 收攏前的整段舊實作（135 行、沒刪），
+    而新加的 `FieldHint.TLabel` 顏色就加進了那段死碼裡。⚠️ **症狀完全看不出來**：
+    樣式名照後綴繼承，於是那句提示字安靜地沿用 `TLabel` 的預設（#1c1c1c 的字配
+    #fafafa 的底），既沒報錯、截圖上也只差 10 階。那段死碼已經刪掉了。
     """
     # 轉檔選項／詳細訊息的收合鈕：整條寬 ＋ 靠左，讀起來像區段標題而不是一顆浮在
     # 半空中的按鈕。⚠️ 它是**卡片自己的標題列**，走低調皮（見 ADV_STYLE）。
@@ -451,7 +458,18 @@ def configure_styles(st: ttk.Style, fam: str, pal: dict, px) -> None:
     st.configure("CardHint.Card.TLabel", font=(fam, 10))
     # 坐在**輸入框裡**的那句提示（2026-08-29）。⚠️ 字級要跟框裡的文字同一級：
     # 它站的位置就是路徑將來要出現的位置，差一級會在打第一個字的瞬間看出來。
-    st.configure("FieldHint.TLabel", font=(fam, 10))
+    # ⚠️ **底色是輸入框的底（`field`）不是卡片的底**：它是一塊疊在框上的標籤（見
+    # `_build_ui` 的提示字），`ttk.Label` 是實色底的——對不上就是框裡浮著一塊淺色
+    # 矩形。⚠️ **這不是推論，是量到的**：這一行沒生效的那一版截圖上，框內有 8,185 個
+    # #fafafa 像素（sv_ttk 的 `TLabel` 預設）落在 x 286..756、y 175..199，正好是那塊
+    # 標籤的矩形——而它與 field(#f0f0f3) 只差 10 階，**目視分不出來**。
+    # ⚠️ **對比度要另外量一次**：`muted` 坐在這第三階底色上是 **9.50:1**（淺色）／
+    # 11.90:1（深色），兩個都過本專案的 9:1——淺色那一邊是 2026-08-29 把共用包的
+    # `muted` 壓深一階換來的（#3d434b → #383e45，使用者拍板；舊值坐上去只有 8.78）。
+    # ⚠️ **不要改用別的顏色矇混過去**：色票裡對 `field` 過得了 9:1 的只有 `ink` 與
+    # `log_fg`，兩個都是正文黑——提示字用正文黑，空框會看起來像「已經填好了」。
+    st.configure("FieldHint.TLabel", font=(fam, 10),
+                 background=pal["field"], foreground=pal["muted"])
     # 結果列：卡片上唯一一行粗體的狀態字
     st.configure("CardStatus.Card.TLabel", font=(fam, 10, "bold"))
     # 核取方塊跟 Label 一樣是實色底的（那個「底」是文字那半邊，方塊本身是圖片），
@@ -476,143 +494,6 @@ def apply_ui_style(root: tk.Misc,
     過的垂直內距還原回去，見那張表）。
     """
     return wskin.apply(root, scale, sys.modules[__name__])
-
-    # ⚠️ **切完佈景要自己補一發 <<ThemeChanged>>**：sv-ttk 的顏色不是寫在佈景
-    # 定義裡，而是掛在那個事件上的 configure_colors 設的，而 Tk 8.6.15 在
-    # `ttk::style theme use` 時**不會**把事件送到根視窗（實測：set_theme 之後
-    # `ttk::style configure .` 仍是空字串，補一發才有值）。少了這一行，ttk 控制項
-    # 會沿用母佈景 clam 的淺灰 —— 深色模式下就是一堆白底黑字的標籤散在深色視窗上。
-    # ⚠️ **要先 update_idletasks()**：視窗還沒實體化之前，`<<ThemeChanged>>` 送到
-    # 根視窗也不會觸發 class binding（實測 tail 與 now 都一樣沒作用，補了這一行
-    # 兩者才都成立）—— 而 apply_ui_style 正好跑在整支程式最早的地方。
-    root.update_idletasks()
-    root.event_generate("<<ThemeChanged>>", when="now")
-
-    # 佈景自帶的字型是 Segoe UI Variable、而且用**像素**指定（-14px）：既不是
-    # 使用者要的字型，在 DPI-aware 的 150% 下也會小一號（點數才會跟著 DPI 換算）
-    for name, size, bold in (("SunValleyCaptionFont", 9, False),
-                             ("SunValleyBodyFont", 10, False),
-                             ("SunValleyBodyStrongFont", 10, True),
-                             ("SunValleyBodyLargeFont", 12, False),
-                             ("SunValleySubtitleFont", 14, True),
-                             ("SunValleyTitleFont", 20, True)):
-        try:
-            tkfont.nametofont(name, root).configure(
-                family=fam, size=size, weight="bold" if bold else "normal")
-        except tk.TclError:
-            pass
-    st.configure(".", font=(fam, 10))
-
-    # Sun Valley 沒有涵蓋到、或本專案要加大的幾處
-    # 主要動作鈕：吃佈景的 Accent（Fluent 的藍底圓角鈕），只加大字與內距。
-    # ⚠️ 樣式名要以 .Accent.TButton 結尾才繼承得到那組圖片元件。
-    # ⚠️ 字級與內距對齊姊妹專案 MP4-2-SRT（使用者 2026-08-26「按鈕都請依照
-    # MP4-2-SRT 樣式」）：11pt／(20,7)，比舊值 12pt／(22,9) 收斂一點。⚠️ 垂直那個
-    # 2026-08-27 從 7 降到 4，**按鈕沒有因此變矮**——高度改由底板釘死（見下）。
-    # ⚠️ **垂直內距是膠囊底板的配套，不是自由參數**（2026-08-27）：底板高度由
-    # `tools/make_skin.py` 的 `SQ_H_*` 釘死，而元件高度取「內容需求」與底板高度的
-    # 較大者——垂直內距一旦讓內容撐過底板高度，Tk 就改成**裁掉底板下緣**，膠囊的
-    # 下半個圓當場被削平（不報錯，只有截圖看得出來）。動這幾個數字或字級之前，先讀
-    # `docs/dev/windows-環境與入口.md` §5.11 並重跑那裡的驗算。
-    # ⚠️ 內距的數字在 `PILL_PADDING`（上下兩欄，見那裡）。
-    st.configure(RUN_STYLE, font=(fam, 11, "bold"))
-    # 轉檔選項／詳細訊息的收合鈕：整條寬 + anchor="w"，讀起來像區段標題而不是
-    # 一顆浮在半空中的按鈕。⚠️ 它是**卡片自己的標題列**，走低調皮（見 ADV_STYLE）。
-    # ⚠️ 內距要撐得起「這是一條區段標題」：(10,6) 時它比上下的卡片都薄，看起來
-    # 像夾在兩塊板子中間的縫，而不是可以按的東西
-    # ⚠️ 左右內距 `SP_SM`、上下 `px(7)`（膠囊化時從 `SP_MD-2`＝10 降下來，見下）。左右這個值是 2026-08-27 加回來的
-    # （使用者：「三角形太靠近邊界，要多留一點空白」）：先前為了讓**底板左緣**
-    # 落在卡片內距上而給了 0，底板確實對齊了，但底板靜止時是看不見的（低調皮
-    # ＝卡片色），畫面上真正讀得到的是三角形，而它離卡片邊只剩底板自帶的 4px。
-    # ⚠️ 內距不會動到底板的位置，所以那條「六個直接子元件左緣都是 24」仍然成立
-    # ——量的是元件邊緣，這裡加的是元件**裡面**的留白。
-    # ⚠️ 垂直從 SP_MD-2（10）降到 7 是膠囊底板的配套（見上），高度仍由底板釘死。
-    st.configure(ADV_STYLE, anchor="w")
-    # 「開啟紀錄」：與收合鈕同一列、同樣坐在卡片上，所以走同一張低調皮，
-    # 只是內距比照 Small
-    # 「瀏覽…／變更…」：靜止是白底藍框，所以字也要是藍的；滑過去整顆翻藍，
-    # **文字要在同一刻翻白**（見 CTA_STYLE）。
-    # ⚠️ 內距 2026-08-27 起**明寫**：不寫就是吃 sv_ttk 的 `8 2 8 3`，而那個垂直值
-    # 會把內容撐到只剩 0 實體像素的餘裕（@100%），下一版佈景或換台機器就把膠囊底板
-    # 的下緣裁掉（見上）。⚠️ 水平取 `px(8)` ＝ **sv_ttk 那個 8，但跟著 DPI 走**
-    # ——照抄成固定 8 的話 200% 下只有一半該有的寬度（那是 sv_ttk 自己的漏，它整組
-    # padding 都是寫死像素）。寫成 `px(10)` 試過，這顆會寬 14px，沒有理由動它。
-    st.configure(CTA_STYLE, foreground=pal["cta_fg"])
-    # ⚠️ **基底 `TButton` 也要明寫**（2026-08-27 晚，被新測試抓出來的）：`Sq.button`
-    # 這張膠囊底板是掛在 `TButton` 的 layout 上，而基底自己吃的是 sv_ttk 的
-    # `8 2 8 3`——垂直 2+3 讓內容剛好等於底板高度，**餘裕 0**。現在畫面上每顆鈕都
-    # 指定了樣式（`Small.`／`Cta.`／`Adv.`／`Subtle.`／`Run.`），所以還沒踩到；但
-    # 只要有人加一顆不帶 `style=` 的 `ttk.Button`，或加一個沒覆寫內距的新樣式，
-    # 那顆鈕的下半個圓就會被裁掉。把基底補齊，這一類就不可能再發生。
-    # ⚠️ `map` 不會與 `TButton` 的合併、是整個取代，所以 `disabled` 也要自己列
-    # ——漏掉的話轉檔中被鎖起來的那兩顆會是一般的黑字，看起來還能按。
-    # ⚠️ `pressed` 要排在 `active` 前面：按住不放時兩個狀態同時成立，而 ttk 取的
-    # 是第一個對上的。
-    st.map(CTA_STYLE,
-           foreground=[("disabled", pal["run_off_fg"]),
-                       ("pressed", pal["on_accent"]),
-                       ("active", pal["on_accent"])])
-    st.configure("Muted.TLabel", foreground=pal["muted"])
-    # 視窗第一句說明（副標）：粗體（使用者 2026-08-25 晚指示）。
-    # ⚠️ 樣式名**必須以 `.Muted.TLabel` 結尾**才繼承得到說明文字的前景色——ttk
-    # 是照後綴一層層往上找的（`Sub.Muted.TLabel` → `Muted.TLabel` → `TLabel`）。
-    # 取名成 `Subtitle.TLabel` 就只會繼承到 `TLabel`，顏色會掉回預設的黑。
-    # ⚠️ 副標坐在**視窗底**上（卡片之外），所以底色要跟著 page；`ttk.Label` 是
-    # 實色底、不是透明的，不指定就吃佈景的 #fafafa，副標那一行會是一塊淺色矩形
-    st.configure("Sub.Muted.TLabel", font=(fam, 10, "bold"),
-                 background=pal["page"])
-    # 卡片之間露出來的視窗底。⚠️ 不設就是 sv_ttk 的 #fafafa，而卡片是純白——
-    # 兩者只差 5 階，卡片整個融進背景，三階層次的最上面那一階等於沒有
-    st.configure("Page.TFrame", background=pal["page"])
-    # ⚠️ **這是沒有皮膚時的後備**（退回實色的方角矩形）。有皮膚時這個值看不到
-    # ——底板是不透明的，圓角外側已經畫進圖裡了（見 SKIN_FRAMES）。
-    # ⚠️ **後備只對 `Sunken.TFrame` 真的生效**（2026-08-27 量的）：sv_ttk 自己就有
-    # 一支 `Card.TFrame`，它的 layout 是 `Card.field` 這個**圖片元件**，所以那一支
-    # 的 background 查得到卻永遠畫不出來。皮膚裝不起來時卡片吃的是 sv_ttk 那張圖
-    # （實測 #fafafa），而坐在卡片上的 `CardBody.TFrame`／`Card.TLabel` 吃的是
-    # pal["card"]（#ffffff）——差 5 階，在退路上看得出一條淡淡的色帶。這條退路本
-    # 來就只在「皮膚整個裝不起來」時才走得到，先記著，不要照舊以為它是實色的。
-    for style, _elem, own in SKIN_FRAMES:
-        st.configure(style, background=pal[own])
-    # 卡片**裡面**的文字。⚠️ 同上：`ttk.Label` 是實色底的，坐在白卡上不指定底色
-    # 就是一塊塊淺灰矩形浮在白色裡。所以卡片上的每一種文字都要繼承得到
-    # `Card.TLabel` 這一層的 background——樣式名的後綴一定要留 `.Card.TLabel`。
-    st.configure("Card.TLabel", background=pal["card"])
-    # 卡片裡的小標（「輸入 PDF」）：Fluent 的 BodyStrong，不是另一級字級
-    st.configure("CardTitle.Card.TLabel", font=(fam, 10, "bold"))
-    st.configure("CardHint.Card.TLabel", foreground=pal["muted"])
-    # ⚠️ 這一支的底色是**輸入框**的底（`field`）不是卡片的底：它是一塊疊在框上的
-    # 標籤（見 `_build_ui` 的提示字），底色對不上就是框裡浮著一塊淺色矩形。
-    # ⚠️ **對比度要另外量一次**：這一格量到 **9.50:1（淺色）／11.90:1（深色）**，兩個
-    # 都過本專案給說明文字訂的 9:1。⚠️ 淺色那一邊是 2026-08-29 **把共用包的 `muted`
-    # 壓深一階換來的**（#3d434b → #383e45，使用者拍板）：舊值是照「坐在 `page`(#f5f5f7)
-    # 上 ≥9」校準的，坐到第三階底色 `field`(#f0f0f3) 上只剩 **8.78:1**。
-    # ⚠️ **不要改用別的顏色矇混過去**：色票裡對 `field` 過得了 9:1 的只有 `ink` 與
-    # `log_fg`，兩個都是正文黑——提示字用正文黑，空框會看起來像「已經填好了」。
-    # ⚠️ 那一改**連姊妹專案的每一句說明文字一起變深**（色票是共用的設計系統，唯一真值
-    # 在 winkit.palette），所以是三個 repo 同一輪的事，不是這裡自己調得動的。
-    st.configure("FieldHint.TLabel", background=pal["field"],
-                 foreground=pal["muted"])
-    st.configure("CardStatus.Card.TLabel", font=(fam, 10, "bold"))
-    # 核取方塊跟 Label 一樣是實色底的（那個「底」是文字那半邊，方塊本身是圖片），
-    # 坐在白卡上不指定就是四塊淺灰矩形。⚠️ layout 照後綴繼承，所以這一支照樣
-    # 拿得到換過皮的 `Sq.check`
-    st.configure("Card.TCheckbutton", background=pal["card"])
-    # ⚠️ 卡片**裡面**的 Frame 要用這一支，不是 `Card.TFrame`：那一支的 layout 被
-    # 換成了一張底板圖（`Sq.card`），每用一次就多畫一張帶邊框的小卡片。這一支
-    # 只換背景色、layout 照 ttk 原本的
-    st.configure("CardBody.TFrame", background=pal["card"])
-    if mode == "dark":
-        winui.use_dark_titlebar(root)
-    # ⚠️ 一定要在 sv_ttk 切完佈景**之後**：image element 是建在「當下這個
-    # 佈景」裡的，`ttk::style theme use` 一換就整批不見了。
-    _set_pill_padding(st, px, pinned=True)
-    skin = SquircleSkin(root, scale, mode)
-    if skin.install():
-        return fam, pal, skin
-    # ⚠️ **沒有底板就沒有東西釘住高度，垂直內距要還原**（見 `_set_pill_padding`）。
-    _set_pill_padding(st, px, pinned=False)
-    return fam, pal, None
 
 
 # 轉檔結束代碼裡的這一個代表「檔案有了，但至少一頁降級」（cli.py 的
