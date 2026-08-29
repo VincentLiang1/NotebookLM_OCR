@@ -20,6 +20,13 @@ ROOT = Path(__file__).resolve().parents[1]
 CLAUDE = ROOT / "CLAUDE.md"
 DEV_DOCS = ROOT / "docs" / "dev"
 
+# `CLAUDE.md` 的字元上限:**這裡是唯一正典**。⚠️ 這個數字以前散在三個地方(這條
+# assert、那條測試的 docstring、`CLAUDE.md` 自己那句),而 2026-08-29 還查出三個
+# repo 的 `docs/dev/documentation.md` 各抄了一份**三個 repo**的值——每一份都只有
+# 自己那一格是對的,另外兩格停在放寬之前。根治的做法是「會變的值只留在它自己驗
+# 得出來的地方」:那份共用規範裡的數字全部拿掉,散文那句由下面那條測試釘著。
+CLAUDE_MD_MAX = 35_000
+
 # 不掃的目錄:產物、快取、輸出。把打包/輸出目錄掃進來只會讓每一條發現
 # 都被報兩次
 _SKIP_DIRS = {
@@ -213,6 +220,28 @@ def test_claude_md_stays_small():
     `docs/spec/` 與 `docs/dev/`,這裡只留摘要、指路,以及「**用到時才知道就
     來不及**」的那幾條。分層規範見 `docs/dev/documentation.md`。"""
     n = len(CLAUDE.read_text(encoding="utf-8"))
-    assert n < 35_000, (
+    assert n < CLAUDE_MD_MAX, (
         f"CLAUDE.md 已經 {n:,} 字元。長篇內容請搬進 docs/spec/ 或 docs/dev/ 並在這裡留指路"
+    )
+
+
+def test_claude_md_states_its_own_cap():
+    """`CLAUDE.md` 裡自稱的上限,要等於真正在守的那個。
+
+    2026-08-29 補。這條守的是同一類錯誤裡**唯一在 repo 內驗得到的那半**:改了
+    `CLAUDE_MD_MAX` 卻忘了改 `CLAUDE.md` 那句散文。⚠️ **跨 repo 的一致守不住**
+    ——每個 repo 的測試都看不到別的 repo,所以那半的解法不是加稽核,是把跨 repo
+    的數字整個消滅掉(見 `docs/dev/documentation.md` 那條通則)。
+
+    ⚠️ **要求 `CLAUDE.md` 一定要寫出數字,不是「有寫才驗」**:寫成「有字元上限,
+    測試守著」那種沒有數字的句子,這條測試會靜靜地變成 no-op——而那正是它要防的
+    失效方式(規則還在、守衛沒了,沒有任何徵狀)。"""
+    said = re.findall(r"([\d,]{5,7})\s*字元?上限", CLAUDE.read_text(encoding="utf-8"))
+    assert said, (
+        "CLAUDE.md 要寫出自己的上限數字(例:「(18,000 字元上限)」)——"
+        "這條測試靠它比對,沒有數字就等於沒有守衛"
+    )
+    wrong = sorted({s for s in said if int(s.replace(",", "")) != CLAUDE_MD_MAX})
+    assert not wrong, (
+        f"CLAUDE.md 裡寫的上限是 {wrong},而真正在守的是 {CLAUDE_MD_MAX:,}"
     )
