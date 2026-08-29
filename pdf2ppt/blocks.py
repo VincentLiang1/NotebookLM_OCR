@@ -986,6 +986,24 @@ def clamp_row_neighbors(lines: list[Line], styles: list[Style],
             sj.font_pt = si.font_pt
 
 
+# How far apart the per-line bg estimates inside one chip group may spread
+# (per channel, max-min) before the group is rejected as a bogus chain.
+# ⚠️ This guards the UNION, not the pair test: pairs are already required to be
+# <=40 apart, but transitivity chains those pairs across a whole table.
+# Measured across the corpus (spread -> what the group really is):
+#     2/2/3/4  genuine chips (Principle_8 p1's four Trap cards)
+#     15/22/22 one chip whose per-line estimates are just noisy (GPT_Blueprint
+#              p8's tan header, p13's amber callout, RL_Blueprint p10) — MERGING
+#              these is what the rule is for: measured against the render, the
+#              merged value beat the per-line one on all three.
+#     30/39/40 different fills chained together (GPT_Blueprint p9 and p13's
+#              comparison tables, Principle_8 p1's guide table) — merging these
+#              paints a color that is on none of them.
+# ⚠️ 12 was tried first and is TOO TIGHT: it also split the three noisy-but-real
+# chips above, and the corpus said the merged value had been the better one.
+CHIP_BG_SPREAD = 25
+
+
 def harmonize_chip_bg(lines: list[Line], styles: list[Style]) -> None:
     """Lines stacked on one solid-color chip should share its fill. A per-
     line bg estimate occasionally drifts (p7 'Synthesize' measured
@@ -1035,6 +1053,22 @@ def harmonize_chip_bg(lines: list[Line], styles: list[Style]) -> None:
             groups.setdefault(find(i), []).append(i)
     for g in groups.values():
         if len(g) < 2:
+            continue
+        # The pair test is LOCAL (adjacent + overlapping + <=40 apart) but the
+        # union is GLOBAL: A-B and B-C merge A with C even when A and C sit on
+        # different fills. On a table that chains a whole card into one group —
+        # Principle_8 p1 merged 9 lines spanning x 134..1797 whose own (correct)
+        # estimates were four different fills: header grey [224,223,219], cell
+        # white [249,245,235], an amber callout [254,229,197] and the card title
+        # [234,234,230]. Their median [248,234,230] is a pink that appears
+        # NOWHERE on the page, and it was painted behind all nine.
+        # So re-check the group as a whole: one chip's lines differ only by
+        # sampling noise, a chain crosses real fill boundaries. See
+        # CHIP_BG_SPREAD for the measured spreads that set the threshold.
+        cols = [styles[i].bg_rgb for i in g]
+        spread = max(max(c[k] for c in cols) - min(c[k] for c in cols)
+                     for k in range(3))
+        if spread > CHIP_BG_SPREAD:
             continue
         med = tuple(int(np.median([styles[i].bg_rgb[c] for i in g]))
                     for c in range(3))
