@@ -362,8 +362,12 @@ def _pill_styles() -> dict:
 # 那批每個縮放檔建一次 root 又 destroy 一次，之後再 `tk.Tk()` 會**間歇性**丟
 # `Can't find a usable init.tcl`／`invalid command name "tcl_findLibrary"`（單獨跑這一
 # 支 5/5 綠，跟在它們後面跑 8 次跳過 6 次；先 `gc.collect()` 試過，沒有用）。
-# ⚠️ 症狀是 **skip 不是 fail**——那一輪看起來還是綠的，其實根本沒有在守。**位置就是
-# 修法**，往下搬會重演。
+# ⚠️ 症狀是 **skip 不是 fail**——那一輪看起來還是綠的，其實根本沒有在守。位置就是修
+# 法，往下搬會重演。
+# ⚠️ **但這不是根治**：搬過來之後連跑 42 輪沒有再現，中間卻在「突變腳本剛跑完」那一輪
+# 出現過一次（10 輪 1 次），之後 30 輪又完全乾淨、抓不到訊息。所以 skip 照舊要當成訊號
+# 去追（`docs/dev/verification.md` 第 1 節：本機應該是 0），**不要因為這裡搬過位置就假設
+# 它不會再來**。
 
 
 def _status_words(src: str) -> set:
@@ -717,3 +721,28 @@ def test_a_broken_input_path_never_shows_a_ready_looking_output_name():
         "輸出顯示要先問輸入成不成立，不然打錯路徑也會推出一個檔名"
     state = src[src.index("    def _refresh_input_state"):src.index("    def _set_placeholder")]
     assert "self._valid_input()" in state, "能不能按也走同一支判斷"
+
+
+def test_the_window_still_paints_a_backdrop_and_does_it_after_withdraw():
+    """`winui.set_backdrop()` 要留在 `App.__init__` 裡，而且排在 `withdraw()` 之後。
+
+    ⚠️ **它看起來像多餘的一行**：上一行的 `self.configure(background=…)` 已經設過底色
+    了，而兩者的差別在「誰畫的」——`configure` 只管 **Tk 自己畫的**那一份，視窗最小化
+    再還原時露出來的是 **Windows 那一層**（Tk 的兩個 window class 的 `hbrBackground`
+    都是 NULL、又沒有雙緩衝），沒有它就是一片黑被內容一塊一塊填掉。
+
+    ⚠️ **平常的驗收路徑抓不到它被拿掉**：`PrintWindow` 走 DWM 的 redirection surface，
+    會把還沒畫完的部分**補齊**——截圖看起來永遠正常（`docs/dev` §5.14 那一輪是靠另一個
+    行程連拍螢幕、比對相鄰兩幀才量到的）。所以這一條只能用測試釘。
+
+    ⚠️ **順序也要釘**：`set_backdrop()` 內部會 `update_idletasks()`，排在 `withdraw()`
+    之前等於在建介面之前就把一個空視窗貼上螢幕——正是 §5.13「啟動時不要先閃一個小畫面」
+    要擋的事。
+    """
+    src = Path(G.__file__).read_text(encoding="utf-8")
+    init = src[src.index("    def __init__(self) -> None:\n        super().__init__()"):
+               src.index("    def _status_font")]
+    assert "winui.set_backdrop(" in init, \
+        "App.__init__ 不再給 window class 底色：最小化再還原會露出一片黑"
+    assert init.index("self.withdraw()") < init.index("winui.set_backdrop("), \
+        "set_backdrop() 會 update_idletasks()，排在 withdraw() 之前會把空視窗貼上螢幕"
