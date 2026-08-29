@@ -8,8 +8,10 @@
 釘著，這裡補上「認出來之後講成什麼樣子」。
 
 ⚠️ import 這支 GUI 只會定義常數與函式（Tk 是 `App()` 才建的），不會開視窗。
-⚠️ **檔尾那三支膠囊測試是例外**：要量 requested size 就得真的建一個 Tk root，不過
-一律 `withdraw()`，畫面上不會有視窗閃出來；開不了 Tk 的機器會 skip 而不是紅。
+⚠️ **有四支要真的建一個 Tk root**（三支膠囊測試量 requested size，一支量狀態字有多
+寬），不過一律 `withdraw()`，畫面上不會有視窗閃出來；開不了 Tk 的機器會 skip 而不是
+紅。⚠️ **量狀態字那一支必須排在膠囊那三支之前**，理由寫在它自己頭上——那三支反覆建
+毀 root 之後再建一個會間歇性失敗，而失敗的形式是 skip（看起來還是綠的）。
 """
 import re
 
@@ -355,6 +357,93 @@ def _pill_styles() -> dict:
     return out
 
 
+
+# ⚠️ **底下這兩支要排在「會真的建 Tk root」那批之前**（2026-08-29）：`_measure_pills`
+# 那批每個縮放檔建一次 root 又 destroy 一次，之後再 `tk.Tk()` 會**間歇性**丟
+# `Can't find a usable init.tcl`／`invalid command name "tcl_findLibrary"`（單獨跑這一
+# 支 5/5 綠，跟在它們後面跑 8 次跳過 6 次；先 `gc.collect()` 試過，沒有用）。
+# ⚠️ 症狀是 **skip 不是 fail**——那一輪看起來還是綠的，其實根本沒有在守。**位置就是
+# 修法**，往下搬會重演。
+
+
+def _status_words(src: str) -> set:
+    """程式裡會被寫進狀態字那一格的每一句話。
+
+    ⚠️ **要走 AST，不能用正則抓 `_set_status("…")`**：第一版就是那樣寫的，而
+    `_refresh_input_state` 是先把話存進一個變數再傳出去（`bad = "這不是 PDF 檔"`），
+    正則看不見——故障注入時把那句改成更長的字串，測試照樣全綠。所以這裡收三種寫法：
+    直接給字面值、給同一個函式裡指派過的變數、以及三元式的兩邊。
+    """
+    import ast
+
+    def strings(node):
+        """節點底下的字串字面值。⚠️ **f-string 整個跳過**：`f"{n}/{total} 頁"` 那種
+        句子的寬度取決於當下的數字，驗不了——名單裡改放它**最寬的長相**
+        （`888/888 頁`、`失敗（代碼 78）`）當樣本。不跳過的話收到的是
+        `' 頁'`、`'/'`、`'失敗（代碼 '` 這些碎片，然後整支測試變成雜訊。"""
+        if isinstance(node, ast.JoinedStr):
+            return set()
+        out = set()
+        for child in ast.iter_child_nodes(node):
+            out |= strings(child)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str) and node.value:
+            out.add(node.value)
+        return out
+
+    words = set()
+    for fn in [n for n in ast.walk(ast.parse(src)) if isinstance(n, ast.FunctionDef)]:
+        assigned = {}
+        for node in ast.walk(fn):
+            if isinstance(node, ast.Assign):
+                got = strings(node.value)
+                for t in node.targets:
+                    if isinstance(t, ast.Name) and got:
+                        assigned.setdefault(t.id, set()).update(got)
+        for node in ast.walk(fn):
+            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and node.func.attr in ("_set_status", "_flash_status")
+                    and node.args):
+                first = node.args[0]
+                words |= (assigned.get(first.id, set())
+                          if isinstance(first, ast.Name) else strings(first))
+    return words
+
+def test_status_words_that_would_stretch_their_column_are_caught():
+    """每一句狀態字都要進 `STATUS_SAMPLES`，而且不可以比最寬的那句還寬。
+
+    右欄的 `minsize` 是量這份名單來的。漏了一句的症狀是：那一句一出現就把欄位撐開、
+    進度條當場縮一截（而它只在特定狀態下出現，平常看不到）。
+    ⚠️ 2026-08-29 把輸入的毛病改講在這一格時，第一版寫的「拖進來的不是 PDF：<檔名>」
+    是 189px，比最寬的「載入 OCR 引擎…」還寬 40px——改成「只收 PDF 檔」才收得住。
+    """
+    said = _status_words(Path(G.__file__).read_text(encoding="utf-8"))
+    missing = sorted(w for w in said if w not in G.STATUS_SAMPLES)
+    assert not missing, f"這些狀態字沒進 STATUS_SAMPLES：{missing}"
+    # ⚠️ Tk 一律在函式裡 import（與檔尾那幾支膠囊測試同一個作法）：這個檔其餘的
+    # 測試都不必開 Tk，import 提到頂上會讓「開不了 Tk 的機器」整支檔一起紅
+    import tkinter as tk
+    from tkinter import font as tkfont
+    try:
+        root = tk.Tk()
+    except tk.TclError as e:
+        # ⚠️ 原因要寫進 skip 訊息:一支「有時候會跳過」的測試等於有時候沒在守,
+        # 而沒有原因的 skip 連追都追不了
+        pytest.skip(f"這台機器開不了 Tk：{e}")
+    try:
+        root.withdraw()
+        # 字型家族要拿真正在用的那一個（狀態字是 10pt 粗體，見 apply_ui_style）
+        fam = G.apply_ui_style(root, root.winfo_fpixels("1i") / 96.0)[0]
+        f = tkfont.Font(root, font=(fam, 10, "bold"))
+        widths = {t: f.measure(t) for t in G.STATUS_SAMPLES}
+    finally:
+        root.destroy()
+    cap = max(widths.values())
+    # 名單自己就是上限的來源,所以這裡驗的是「新加的那幾句沒有變成新的上限」
+    late = ("找不到檔案", "這不是 PDF 檔", "只收 PDF 檔", "轉檔中不能換檔")
+    over = [f"{t}={widths[t]}" for t in late if widths[t] > cap]
+    assert not over, f"這幾句會把狀態欄撐開（上限 {cap}）：{over}"
+
+
 def _measure_pills(scale: float, pin_height: bool = True) -> dict:
     """回傳 {樣式: (量到的高度, 底板圖高)}。開不了 Tk 或裝不上皮膚就 skip。
 
@@ -628,80 +717,3 @@ def test_a_broken_input_path_never_shows_a_ready_looking_output_name():
         "輸出顯示要先問輸入成不成立，不然打錯路徑也會推出一個檔名"
     state = src[src.index("    def _refresh_input_state"):src.index("    def _set_placeholder")]
     assert "self._valid_input()" in state, "能不能按也走同一支判斷"
-
-
-
-def _status_words(src: str) -> set:
-    """程式裡會被寫進狀態字那一格的每一句話。
-
-    ⚠️ **要走 AST，不能用正則抓 `_set_status("…")`**：第一版就是那樣寫的，而
-    `_refresh_input_state` 是先把話存進一個變數再傳出去（`bad = "這不是 PDF 檔"`），
-    正則看不見——故障注入時把那句改成更長的字串，測試照樣全綠。所以這裡收三種寫法：
-    直接給字面值、給同一個函式裡指派過的變數、以及三元式的兩邊。
-    """
-    import ast
-
-    def strings(node):
-        """節點底下的字串字面值。⚠️ **f-string 整個跳過**：`f"{n}/{total} 頁"` 那種
-        句子的寬度取決於當下的數字，驗不了——名單裡改放它**最寬的長相**
-        （`888/888 頁`、`失敗（代碼 78）`）當樣本。不跳過的話收到的是
-        `' 頁'`、`'/'`、`'失敗（代碼 '` 這些碎片，然後整支測試變成雜訊。"""
-        if isinstance(node, ast.JoinedStr):
-            return set()
-        out = set()
-        for child in ast.iter_child_nodes(node):
-            out |= strings(child)
-        if isinstance(node, ast.Constant) and isinstance(node.value, str) and node.value:
-            out.add(node.value)
-        return out
-
-    words = set()
-    for fn in [n for n in ast.walk(ast.parse(src)) if isinstance(n, ast.FunctionDef)]:
-        assigned = {}
-        for node in ast.walk(fn):
-            if isinstance(node, ast.Assign):
-                got = strings(node.value)
-                for t in node.targets:
-                    if isinstance(t, ast.Name) and got:
-                        assigned.setdefault(t.id, set()).update(got)
-        for node in ast.walk(fn):
-            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-                    and node.func.attr in ("_set_status", "_flash_status")
-                    and node.args):
-                first = node.args[0]
-                words |= (assigned.get(first.id, set())
-                          if isinstance(first, ast.Name) else strings(first))
-    return words
-
-def test_status_words_that_would_stretch_their_column_are_caught():
-    """每一句狀態字都要進 `STATUS_SAMPLES`，而且不可以比最寬的那句還寬。
-
-    右欄的 `minsize` 是量這份名單來的。漏了一句的症狀是：那一句一出現就把欄位撐開、
-    進度條當場縮一截（而它只在特定狀態下出現，平常看不到）。
-    ⚠️ 2026-08-29 把輸入的毛病改講在這一格時，第一版寫的「拖進來的不是 PDF：<檔名>」
-    是 189px，比最寬的「載入 OCR 引擎…」還寬 40px——改成「只收 PDF 檔」才收得住。
-    """
-    said = _status_words(Path(G.__file__).read_text(encoding="utf-8"))
-    missing = sorted(w for w in said if w not in G.STATUS_SAMPLES)
-    assert not missing, f"這些狀態字沒進 STATUS_SAMPLES：{missing}"
-    # ⚠️ Tk 一律在函式裡 import（與檔尾那幾支膠囊測試同一個作法）：這個檔其餘的
-    # 測試都不必開 Tk，import 提到頂上會讓「開不了 Tk 的機器」整支檔一起紅
-    import tkinter as tk
-    from tkinter import font as tkfont
-    try:
-        root = tk.Tk()
-    except tk.TclError:
-        pytest.skip("這台機器開不了 Tk")
-    try:
-        root.withdraw()
-        # 字型家族要拿真正在用的那一個（狀態字是 10pt 粗體，見 apply_ui_style）
-        fam = G.apply_ui_style(root, root.winfo_fpixels("1i") / 96.0)[0]
-        f = tkfont.Font(root, font=(fam, 10, "bold"))
-        widths = {t: f.measure(t) for t in G.STATUS_SAMPLES}
-    finally:
-        root.destroy()
-    cap = max(widths.values())
-    # 名單自己就是上限的來源,所以這裡驗的是「新加的那幾句沒有變成新的上限」
-    late = ("找不到檔案", "這不是 PDF 檔", "只收 PDF 檔", "轉檔中不能換檔")
-    over = [f"{t}={widths[t]}" for t in late if widths[t] > cap]
-    assert not over, f"這幾句會把狀態欄撐開（上限 {cap}）：{over}"
