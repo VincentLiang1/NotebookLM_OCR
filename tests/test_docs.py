@@ -100,6 +100,15 @@ MODULES = ["pdf2ppt.style", "pdf2ppt.blocks", "pdf2ppt.builder",
 #     於舊名字——沒有它，讀者無法把 docs/dev §5 第 3 點與 git 歷史對起來
 HISTORICAL = {"_dilate", "_restore_height_after_collapse"}
 
+# 別人家的私有符號：規則講的是**外部行為**，名字是 CPython／第三方套件的，
+# 本 repo 永遠不會有它的定義。⚠️ **這一格與 HISTORICAL 要分開**：那份的語意是
+# 「我們刪掉的」，混進來之後「這名字該不該還在」就再也問不出答案了。
+# ⚠️ 反向檢查一樣套（文件不提了就該刪），所以它照樣是絆索、不是萬用逃生口。
+#   _pyrepl：CPython 3.13 起的互動式 REPL 實作。2026-09-10 那條「絕不用
+#     python - <<EOF 從 stdin 餵腳本」講的正是它退回 REPL 之後的無窮迴圈，
+#     少了這個名字就查不到「為什麼 3.12 沒事、3.14 會炸」
+FOREIGN = {"_pyrepl"}
+
 # 文件引用常數的四種寫法：`NAME`=V、`NAME`(V)、`NAME`（V）、`NAME = V`
 _CONST_CITED = [
     re.compile(r"`([A-Z][A-Z0-9_]{2,})`\s*[=（(]\s*([0-9]+(?:\.[0-9]+)?)"),
@@ -214,9 +223,9 @@ def test_documented_symbols_exist_in_the_code():
     cited = set()
     for text in SYMBOL_DOCS.values():
         cited |= set(re.findall(r"`(_[a-z][a-z0-9_]{3,})`", text))
-    assert HISTORICAL <= cited, (
-        f"白名單裡有文件已經不提的符號，該刪了：{sorted(HISTORICAL - cited)}")
-    for hit in cited - HISTORICAL:
+    stale = (HISTORICAL | FOREIGN) - cited
+    assert not stale, f"白名單裡有文件已經不提的符號，該刪了：{sorted(stale)}"
+    for hit in cited - HISTORICAL - FOREIGN:
         # 三種定義形式：def/class、模組層級常數，以及**實例屬性**
         # （`self._boot_stderr = ...`）。第三種是 2026-08-24 補的：文件指得到
         # 實例屬性是正常的，少了它會逼著文件改寫成 `self._x` 只為了閃過測試，

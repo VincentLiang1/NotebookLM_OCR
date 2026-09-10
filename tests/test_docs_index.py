@@ -245,3 +245,28 @@ def test_claude_md_states_its_own_cap():
     assert not wrong, (
         f"CLAUDE.md 裡寫的上限是 {wrong},而真正在守的是 {CLAUDE_MD_MAX:,}"
     )
+
+
+def test_claude_md_states_how_many_rules_it_carries():
+    """「以下 NN 條規則」那個數字,要等於「不變量索引」裡真正的條數。
+
+    2026-09-10 補,與上面那條同一個形狀(自稱的數字 vs 真正的數字),而它是**先
+    漂了才補的**:那句話寫著 83 條,實際數出來是 80。⚠️ **漂的方向永遠是往多**
+    ——搬走或併掉規則的人不會想到回頭改這個總數,而加規則的人反而會。
+
+    ⚠️ **這個數字不是裝飾**:它是「這份檔在守幾件事」的唯一速讀指標,也是判斷
+    「該不該再放寬上限」時分母那一半(見 `test_claude_md_stays_small` 的
+    docstring:平均 208 字元/條就是這樣算出來的)。分子量得到、分母用猜的話,
+    那整套校準就是空的。"""
+    text = CLAUDE.read_text(encoding="utf-8")
+    said = re.findall(r"以下\s*(\d+)\s*條規則", text)
+    assert said, (
+        "CLAUDE.md 的不變量索引要寫出自己有幾條(例:「以下 80 條規則」)——"
+        "這條測試靠它比對,沒有數字就等於沒有守衛"
+    )
+    body = text.split("### 不變量索引", 1)[1].split("\n### ", 1)[0]
+    actual = sum(1 for ln in body.splitlines() if ln.startswith("- "))
+    wrong = sorted({s for s in said if int(s) != actual})
+    assert not wrong, (
+        f"CLAUDE.md 自稱 {wrong} 條規則,不變量索引裡實際數到 {actual} 條"
+    )
