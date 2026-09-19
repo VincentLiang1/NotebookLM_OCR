@@ -1033,8 +1033,6 @@ def harmonize_chip_bg(lines: list[Line], styles: list[Style]) -> None:
                 continue
             li, lj, si, sj = lines[i], lines[j], styles[i], styles[j]
             h = min(li.height, lj.height)
-            top = max(li.bbox[1], lj.bbox[1])
-            bot = min(li.bbox[3], lj.bbox[3])
             gap = max(li.bbox[1], lj.bbox[1]) - min(li.bbox[3], lj.bbox[3])
             if gap > 0.6 * h:                      # vertically stacked
                 continue
@@ -1069,6 +1067,23 @@ def harmonize_chip_bg(lines: list[Line], styles: list[Style]) -> None:
         spread = max(max(c[k] for c in cols) - min(c[k] for c in cols)
                      for k in range(3))
         if spread > CHIP_BG_SPREAD:
+            continue
+        # The same LOCAL/GLOBAL gap has a second, purely geometric form that
+        # the spread cannot see. A line spanning the page (a slide title)
+        # x-overlaps EVERY narrow label under it, so one row of side-by-side
+        # card headers chains through it into a single group even though no
+        # two headers share a column: LLM_Wiki p12's title (x 185..3449, on
+        # the page's cream [240,233,215]) merged with the three card headers
+        # below it (x 349..1102 / 1366..2453 / 2592..3596, each on its own
+        # tan [237,221,194]). The median is the tan — painted as a 3264x312 px
+        # band behind the title, a plainly visible darker stripe — and the
+        # group's spread is only 21, well inside CHIP_BG_SPREAD.
+        # Lines stacked on ONE chip all share a column, so every pair in the
+        # group must pass the x test, not only the pairs that chained it.
+        if any(min(lines[i].bbox[2], lines[j].bbox[2])
+               - max(lines[i].bbox[0], lines[j].bbox[0])
+               < 0.5 * min(lines[i].width, lines[j].width)
+               for a, i in enumerate(g) for j in g[a + 1:]):
             continue
         med = tuple(int(np.median([styles[i].bg_rgb[c] for i in g]))
                     for c in range(3))
