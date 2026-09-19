@@ -617,12 +617,16 @@ def code_version() -> str:
     return ver or sha or "(取不到)"
 
 
-def log_header(path: Path) -> str:
+def log_header(path: Path) -> list[str]:
     """紀錄檔的檔頭：哪一版的碼、在什麼環境上跑的。
 
-    分析一份 log 之前一定要先知道這幾件事，而事後再問使用者就是多一趟往返。"""
+    分析一份 log 之前一定要先知道這幾件事，而事後再問使用者就是多一趟往返。
+
+    ⚠️ **回的是逐行的清單、不是接好的一整段**（2026-09-19 改）：共用包的
+    `filelog.Writer` 收的就是這個形狀，而它要能把檔頭**押著等到真的有內容**
+    才一起落地（見 `open_run_log`）。"""
     now = datetime.datetime.now()
-    return "\n".join([
+    return [
         "=" * 72,
         f"{APP_TITLE}  執行紀錄  開始 {now:%Y-%m-%d %H:%M:%S}",
         f"  程式版本：{code_version()}",
@@ -630,15 +634,28 @@ def log_header(path: Path) -> str:
         f"  Python：{sys.version.split()[0]}  平台：{sys.platform}",
         "=" * 72,
         "",
-    ])
+    ]
 
 
-def open_run_log() -> tuple[Path | None, "io.TextIOBase | None"]:
-    """開這一趟的紀錄檔，回傳 (路徑, 檔案物件)。
+def open_run_log() -> tuple[Path | None, "filelog.Writer | None"]:
+    """開這一趟的紀錄檔，回傳 (路徑, 寫入端)。
 
     ⚠️ **失敗一律回 (None, None)、不拋例外**：磁碟唯讀、防毒攔截、資料夾被同步
     工具鎖住都會走到這裡，而「留不了底」絕不能升級成「打不開程式」。留不了底時
-    唯一的落點是 _boot_stderr（從終端機跑就看得到），所以它更不能擋住啟動。"""
+    唯一的落點是 _boot_stderr（從終端機跑就看得到），所以它更不能擋住啟動。
+
+    ⚠️ **寫入端 2026-09-19 換成共用包的 `filelog.Writer`，而且走延後開檔**（原本是
+    這裡自己 `open("a")` 再寫檔頭，那是 `filelog.header` + `Writer` 的一份手抄複製品
+    ——連註解都一樣）。換掉的理由不只是去重複：**開了沒轉的那些執行不該留下一個檔**。
+    2026-09-19 實測本機 `logs\\`：307 份主檔裡 253 份（**82%**）是只有檔頭的空殼，
+    長相固定是六行檔頭 + 兩行開場白 + 一行「---- 結束 ----」。它們還會**害人挑錯檔**
+    ——「排序最後的就是最新的」是找上一趟紀錄最自然的挑法，而最新那幾份往往正是空殼。
+
+    ⚠️ **開場白與收尾行因此要走 `preamble()` / `footer()`**，不能走 `raw()`：前者會
+    把檔案生出來，那就等於沒延後（見 `App.__init__` 那兩行與 `_log_close`）。
+
+    ⚠️ **檔名照舊帶 pid，共用包的 `new_paths()` 不帶、所以這裡自己組**（那一條的理由
+    在下面）。"""
     filelog.purge_old()
     # ⚠️ 檔名帶 pid：兩個行程仍然可能同時走到這裡，而兩邊都是 open("a") —— 同一個
     # 檔被兩份輸出交錯寫進去，正好是最難讀懂的那種紀錄，偏偏出事時要讀的就是它。
@@ -652,16 +669,12 @@ def open_run_log() -> tuple[Path | None, "io.TextIOBase | None"]:
     # 道把關之後**——所以把關與這個檔名根本不在同一條防線上。
     path = (filelog.log_dir()
             / f"{datetime.datetime.now():%Y-%m-%d_%H%M%S}-{os.getpid()}.log")
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        # newline="" ：全檔統一用 LF，不要讓同一份檔案裡混著 CRLF 與 LF
-        # （Python 的 traceback 帶的本來就是 LF）
-        f = path.open("a", encoding="utf-8", newline="")
-        f.write(log_header(path))
-        f.flush()
-    except OSError:
+    # ⚠️ 共用包那支建構子不拋（落點建不起來就自己認輸、`live` 回 False），而全檔統一
+    # 用 LF、逐行 flush、寫壞了靜靜關掉三件也都在它裡面——這裡只剩「判斷它活著沒」
+    out = filelog.Writer(path, log_header(path))
+    if not out.live:
         return None, None
-    return path, f
+    return path, out
 
 
 def _fmt_degraded(warning: str) -> str:
@@ -906,10 +919,12 @@ class App(tk.Tk):
         self._boot_stderr = sys.stderr
         # 這一趟的執行紀錄。開在 _build_ui 之前：建介面途中炸掉的話，這是唯一
         # 收得到的地方。⚠️ 開不起來就是 (None, None)，一切照常跑（見
-        # open_run_log 的說明）。
+        # open_run_log 的說明）。⚠️ **「開」現在只是備妥**：檔案延後到第一次真的
+        # 有內容才落地（2026-09-19，為了那 82% 的空殼），所以 `_log_path` 拿到值
+        # 不等於磁碟上有那個檔——兩顆開紀錄的鈕因此要自己退一步（見 `_open_log`）。
         self._log_lock = threading.Lock()
         self._log_pending = ""
-        self._log_path, self._log_file = open_run_log()
+        self._log_path, self._log_out = open_run_log()
         self.worker: threading.Thread | None = None
         self.running = False
         # 「使用者按了停止」。⚠️ 是 Event 不是 bool：設旗標的是主執行緒、讀的是
@@ -940,9 +955,11 @@ class App(tk.Tk):
         # 位置要講出來：出事時使用者才知道要附哪一個檔，而不是被問「log 在哪」。
         # ⚠️ 只印檔名：完整路徑在這個寬度下會折成兩行，而且旁邊就有「開啟紀錄」
         # 那顆鈕。完整路徑寫進紀錄檔自己的檔頭（log_header），那份才是要附出去的
+        # ⚠️ `opening=True`：這一行是開場白，不可以把延後的紀錄檔生出來（見 `_append`）
         self._append(f"執行紀錄：{self._log_path.name}\n" if self._log_path
                      else "（無法建立執行紀錄檔；錯誤訊息只會留在這個日誌區，"
-                          "關掉視窗就沒了。要留底請從終端機執行 uv run python pdf2ppt_gui_2.py。）\n")
+                          "關掉視窗就沒了。要留底請從終端機執行 uv run python pdf2ppt_gui_2.py。）\n",
+                     opening=True)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self.after(80, self._drain_log)
         self._refresh_input_state()
@@ -1430,8 +1447,9 @@ class App(tk.Tk):
         sb = ttk.Scrollbar(well, command=self.log.yview)
         sb.pack(side="right", fill="y")
         self.log.config(yscrollcommand=sb.set)
+        # ⚠️ `opening=True`：開場白，不可以把延後的紀錄檔生出來（見 `_append`）
         self._append("提示：首次轉檔會自動下載 OCR 模型（約數十 MB），"
-                     "期間進度條不會報頁數，請耐心等候。\n")
+                     "期間進度條不會報頁數，請耐心等候。\n", opening=True)
 
         # 拖放：接得上就把提示換成拖放版（_refresh_input_state 讀這個旗標）。
         # ⚠️ 這裡只做**便宜的那一半**（import，0.6ms）：把 tkdnd 真的載起來要
@@ -2161,15 +2179,23 @@ class App(tk.Tk):
             self._open_folder(path)
 
     def _open_log(self) -> None:
-        """開這一趟的執行紀錄。⚠️ 邊寫邊開是正常用法（逐次 flush），不必等結束。"""
+        """開這一趟的執行紀錄。⚠️ 邊寫邊開是正常用法（逐次 flush），不必等結束。
+
+        ⚠️ **還沒落地就退到資料夾**（2026-09-19）：紀錄檔延後到第一次真的有內容才
+        建立（見 `open_run_log`），所以一開 App 就按這顆鈕時那個檔還不存在——不退
+        這一步的話按下去會**毫無反應**（`os.startfile` 對不存在的路徑丟例外，而它
+        被下面那個 except 吞成一行日誌）。退到 `logs\\` 至少看得到上幾趟的紀錄。
+        ⚠️ 這個退路**只給這顆鈕**、沒有下放到 `_open_folder`：那支的呼叫端傳的一律
+        是真的有產出的檔案，「不存在就開上一層」對它是沒人設計過的行為。"""
         if self._log_path is None:
             return
+        target = self._log_path if self._log_path.exists() else self._log_path.parent
         try:
             if sys.platform.startswith("win"):
-                os.startfile(str(self._log_path))  # type: ignore[attr-defined]
+                os.startfile(str(target))  # type: ignore[attr-defined]
             else:
                 opener = "open" if sys.platform == "darwin" else "xdg-open"
-                subprocess.run([opener, str(self._log_path)], check=False)
+                subprocess.run([opener, str(target)], check=False)
         except Exception as e:
             self._append(f"[開啟紀錄失敗] {e}\n")
 
@@ -2188,10 +2214,16 @@ class App(tk.Tk):
         except Exception as e:
             self._append(f"[開啟資料夾失敗] {e}\n")
 
-    def _append(self, text: str) -> None:
+    def _append(self, text: str, *, opening: bool = False) -> None:
+        """把一段文字送進日誌區，順手留底。
+
+        ⚠️ `opening=True` 是**開場白**（2026-09-19 加）：那幾行照樣上畫面，但在
+        紀錄檔裡**不算「真的有東西要寫」**，所以不會把延後的檔案生出來。少了這個
+        旗標，光是建完介面那兩行提示就會讓每一次「開了沒轉」都留下一個空殼——
+        本機實測 307 份主檔裡 253 份（82%）正是那個長相（見 `open_run_log`）。"""
         # 先落地再上畫面：下面那段在 Text 丟 TclError 時會直接 return，而顯示
         # 不出來的內容正是最該留底的那種
-        self._log_write(text)
+        self._log_write(text, opening=opening)
         try:
             self.log.insert("end", _NON_BMP_RE.sub("\ufffd", text))
         except tk.TclError:
@@ -2230,7 +2262,7 @@ class App(tk.Tk):
         except Exception:
             pass
 
-    def _log_write(self, text: str) -> None:
+    def _log_write(self, text: str, *, opening: bool = False) -> None:
         """把一段輸出寫進執行紀錄檔（逐行、逐次 flush）。
 
         ⚠️ **要上鎖**：畫面上的內容是主執行緒經由 `_append` 寫進來的，而轉檔
@@ -2238,53 +2270,50 @@ class App(tk.Tk):
         一起——交錯的結果是兩段內容都糊掉，而那正是要留的東西。
 
         ⚠️ **寫壞了就永久關掉這條管子**、不重試：紀錄檔不該有辦法讓 GUI 停下
-        來，而對一個寫不進去的檔每次輸出都重試一次，只會讓介面跟著卡住。"""
-        if not text or self._log_file is None:
+        來，而對一個寫不進去的檔每次輸出都重試一次，只會讓介面跟著卡住。
+        ⚠️ 那件事 2026-09-19 起**由共用包的 `filelog.Writer` 自己做**（連同逐行
+        flush 與「一個編不出來的字只丟掉那個字」），所以這裡不再自己 try/close。
+        這把鎖仍然要留——它守的是 `_log_pending` 這個**本類別自己的**殘段狀態，
+        而那正是兩條執行緒會撞在一起的地方（`Writer` 裡面另有它自己的一把）。"""
+        if not text or self._log_out is None:
             return
         with self._log_lock:
-            f = self._log_file
-            if f is None:
+            out = self._log_out
+            if out is None:
                 return
-            try:
-                self._log_pending += text
-                while "\n" in self._log_pending:
-                    line, self._log_pending = self._log_pending.split("\n", 1)
-                    f.write(line.rsplit("\r", 1)[-1] + "\n")
-                if "\r" in self._log_pending:
-                    # 下載模型的進度條是原地重寫（\r），整串收下來會在紀錄檔裡
-                    # 堆出上萬行，而這個檔要保持「貼得進對話」
-                    self._log_pending = self._log_pending.rsplit("\r", 1)[-1]
-                if len(self._log_pending) > LOG_MAX_PENDING:
-                    f.write(self._log_pending + "\n")
-                    self._log_pending = ""
-                # 逐次 flush：使用者是直接關視窗收工的，留在緩衝區的會整段蒸發，
-                # 而那正好是出事的那一段
-                f.flush()
-            except Exception:
-                self._log_file = None
-                try:
-                    f.close()
-                except Exception:
-                    pass
+            put = out.preamble if opening else out.raw
+            self._log_pending += text
+            while "\n" in self._log_pending:
+                line, self._log_pending = self._log_pending.split("\n", 1)
+                put(line.rsplit("\r", 1)[-1])
+            if "\r" in self._log_pending:
+                # 下載模型的進度條是原地重寫（\r），整串收下來會在紀錄檔裡
+                # 堆出上萬行，而這個檔要保持「貼得進對話」
+                self._log_pending = self._log_pending.rsplit("\r", 1)[-1]
+            if len(self._log_pending) > LOG_MAX_PENDING:
+                put(self._log_pending)
+                self._log_pending = ""
 
     def _log_close(self) -> None:
         """收尾：把還沒換行的殘段寫掉、蓋上結束時間。
 
         逐次 flush 已經保證「被強制關掉也不會少東西」，這裡只讓正常關閉的那一
-        份看起來是完整的（最後一行沒有換行時，殘段本來會留在緩衝區裡）。"""
+        份看起來是完整的（最後一行沒有換行時，殘段本來會留在緩衝區裡）。
+
+        ⚠️ **收尾那一行要走 `footer()` 不是 `raw()`**（2026-09-19）：`raw()` 會把
+        延後的檔案當場生出來，於是「開了沒轉東西就關掉」那些執行照樣各留一個只有
+        檔頭的空殼——延後開檔在**最常走的那條路**上等於沒有。`footer()` 的語意正是
+        「檔案沒落地就不寫」。"""
         with self._log_lock:
-            f, self._log_file = self._log_file, None
-            if f is None:
+            out, self._log_out = self._log_out, None
+            if out is None:
                 return
-            try:
-                if self._log_pending.strip():
-                    f.write(self._log_pending + "\n")
-                self._log_pending = ""
-                f.write(f"---- 結束 {datetime.datetime.now():%Y-%m-%d %H:%M:%S}"
-                        f" ----\n")
-                f.close()
-            except Exception:
-                pass
+            if self._log_pending.strip():
+                out.raw(self._log_pending)
+            self._log_pending = ""
+            out.footer(
+                f"---- 結束 {datetime.datetime.now():%Y-%m-%d %H:%M:%S} ----")
+            out.close()
 
     def report_callback_exception(self, exc, val, tb) -> None:
         """Tk 對 callback 裡漏出來的例外預設只印 stderr、不彈任何東西。
