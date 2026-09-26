@@ -72,16 +72,18 @@ def test_the_landing_root_follows_the_environment_at_call_time(monkeypatch, tmp_
 
 
 def test_a_missing_environment_variable_falls_back_instead_of_raising(monkeypatch):
-    r"""⚠️ **取不到就退回 `~/.cache`，不丟例外**（非 Windows、被清乾淨的服務帳號）。
+    r"""⚠️ **取不到就退回平台的慣例位置，不丟例外**（被清乾淨的服務帳號）。
 
     掛在這底下的整條路是**純加速**（皮膚快取），一個 `KeyError` 會從「皮膚裝不
     起來」一路炸成「視窗開不起來」，而那是使用者唯一的入口。
     ⚠️ 也順便釘住**退到哪裡**：退回 `.`（當前工作目錄）的話，從捷徑進來時那正好
     就是專案資料夾——而專案資料夾可能是唯讀的，使用者換電腦又是整包複製，機器
-    專屬的快取跟著走就只是帶著別台機器的 DPI。收攏之前這裡真的寫著 `or "."`。"""
+    專屬的快取跟著走就只是帶著別台機器的 DPI。收攏之前這裡真的寫著 `or "."`。
+    ⚠️ 退到**哪一個**慣例位置由共用包的平台層決定（Windows 是
+    `~/AppData/Local`），每個平台的值由它自己的測試守。"""
     monkeypatch.delenv("LOCALAPPDATA", raising=False)
     root = paths.appdata_root()          # 不可以拋例外
-    assert root == Path.home() / ".cache" / brand.APP_DIR_NAME
+    assert root == winkit.plat.appdata_base() / brand.APP_DIR_NAME
     assert paths.repo_root() not in root.parents, "落地位置掉進專案資料夾裡了"
     assert Path.cwd() not in root.parents, "落地位置跟著當前工作目錄跑"
 
