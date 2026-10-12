@@ -33,7 +33,7 @@ def test_page_line_is_parsed_from_the_real_cli_format():
     m = G._PAGE_RE.match("page 7 (3/4): 19 lines, 19 shapes, 1.6s")
     assert m and m.groups() == ("3", "4")
     # 不是每頁那一行的東西不可以誤判成進度
-    for line in ("OCR: PP-OCRv5 rec=server, device=dml, dpi=200",
+    for line in ("OCR: rec=PP-OCRv6 medium, device=dml, dpi=200",
                  "Saved out.pptx (15 slides, 41.7s)",
                  "WARNING: page 3 dropped"):
         assert not G._PAGE_RE.match(line), line

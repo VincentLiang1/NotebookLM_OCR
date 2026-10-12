@@ -32,6 +32,11 @@ LATIN_MIN_SCORE = 0.75   # a latin-only line this unsure is a misread at any
                          # DtsaDtse 0.63, gptbp p7 ×××× 0.72), while the band
                          # just above carries real content (JR. PAC-MAN 0.85,
                          # EVOLUTION&OPTIMIZATION(8YEARS) 0.84, Level O 0.85)
+TINY_CLUSTER_MIN = 2     # other tiny lines within 2h that make a tiny line
+                         # illustration innards (see drop_illegible_lines)
+ICON_ROW_GAP = 3.0      # line-heights: a row neighbour farther than this does
+                         # not make a lone letter real text (see
+                         # _is_decorative_icon: icons 5.8h/9.1h, real V 0.5h)
 
 
 def _rotated_decor_pair(a: Line, b: Line) -> bool:
@@ -54,6 +59,15 @@ def _rotated_decor_pair(a: Line, b: Line) -> bool:
 
 def _is_illegible(line: Line, style: Style) -> bool:
     text = line.text.replace(" ", "")
+    # Not one letter, digit or ideograph: an icon or a drawn mark read as
+    # symbols (gptbp p7's masking grid ××××, p8's ↑ arrows, p3 →□↑). Editable
+    # text of it is worthless and it paints over the raster. Score-free on
+    # purpose: PP-OCRv6 reads ×××× at 0.98, so LATIN_MIN_SCORE (which caught
+    # it under v5 at 0.72) no longer does. Lives HERE, not in
+    # drop_unreproducible: the tiny '..'/'...' it also catches are what seed
+    # the junk-neighborhood flood below (trans p1: 28 diagram labels).
+    if not any(c.isalnum() for c in text):
+        return True
     n_cjk = len(_CJK_RE.findall(text))
     if style.font_pt <= TINY_PT:
         if (n_cjk == len(text) and 2 <= len(text) <= 4
@@ -91,6 +105,24 @@ def drop_illegible_lines(lines: list[Line], styles: list[Style],
     n = len(lines)
     drop = [_is_illegible(ln, st) for ln, st in zip(lines, styles)]
 
+    def near(i: int, j: int) -> bool:
+        x0, y0, x1, y1 = lines[i].bbox
+        pad = 2.0 * (y1 - y0)
+        bx0, by0, bx1, by1 = lines[j].bbox
+        return (bx0 < x1 + pad and bx1 > x0 - pad
+                and by0 < y1 + pad and by1 > y0 - pad)
+
+    # A tiny line among other tiny lines is illustration innards, whatever
+    # its score: a diagram's box labels, a heatmap's cell values. PP-OCRv6
+    # reads those at 0.99+ (trans p1's architecture diagram, rlbp p10's
+    # heatmap), so the score gate above lets them all through, and 8pt text
+    # re-flowed in another font collides inside boxes drawn for the original.
+    tiny = [st.font_pt <= TINY_PT for st in styles]
+    for i in range(n):
+        if tiny[i] and sum(1 for j in range(n) if j != i and tiny[j]
+                           and near(i, j)) >= TINY_CLUSTER_MIN:
+            drop[i] = True
+
     # steeply rotated latin pairs whose quads interpenetrate are book-spine
     # / billboard decoration (p10 VENDOR PITCH DECK at -28°: the detector
     # split it into two overlapping quads and one cover wipes the other
@@ -110,13 +142,6 @@ def drop_illegible_lines(lines: list[Line], styles: list[Style],
             return True
         return (styles[i].font_pt <= 20 and len(text) <= 2
                 and not _CJK_RE.search(text))
-
-    def near(i: int, j: int) -> bool:
-        x0, y0, x1, y1 = lines[i].bbox
-        pad = 2.0 * (y1 - y0)
-        bx0, by0, bx1, by1 = lines[j].bbox
-        return (bx0 < x1 + pad and bx1 > x0 - pad
-                and by0 < y1 + pad and by1 > y0 - pad)
 
     def twin(i: int, j: int) -> bool:
         if styles[i].font_pt != styles[j].font_pt:
@@ -159,7 +184,13 @@ def _is_decorative_icon(line: Line, style: Style, others: list[Line]) -> bool:
     """A single large latin letter alone in its row is a line-drawing icon
     misread as a glyph (p4's shuffle / crossing-arrows icon read as 'X' at
     40pt). Real single-letter content (an X² variable) is never isolated at
-    title size — it sits beside other text on its row."""
+    title size — it sits beside other text on its row.
+
+    'Beside' means within ICON_ROW_GAP line-heights: rlbp p6's shuffle icon
+    shares its row with the page title 9.1h away, and gptbp p7's 'X' in the
+    masking grid with a label 5.8h away, while the real 'V' of
+    Attention(Q, K, V) sits 0.5h from its neighbour. Lines with no letter or
+    digit (×××, arrows) are not real text and do not count."""
     t = line.text.strip()
     if len(t) != 1 or not (t.isascii() and t.isalpha()):
         return False
@@ -168,9 +199,11 @@ def _is_decorative_icon(line: Line, style: Style, others: list[Line]) -> bool:
     x0, y0, x1, y1 = line.bbox
     h = max(1.0, y1 - y0)
     for o in others:
-        if o is line:
+        if o is line or not any(c.isalnum() for c in o.text):
             continue
-        if min(y1, o.bbox[3]) - max(y0, o.bbox[1]) > 0.3 * h:
+        if min(y1, o.bbox[3]) - max(y0, o.bbox[1]) <= 0.3 * h:
+            continue
+        if max(o.bbox[0] - x1, x0 - o.bbox[2], 0.0) <= ICON_ROW_GAP * h:
             return False  # shares the row with real text
     return True
 

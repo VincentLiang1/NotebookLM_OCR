@@ -804,7 +804,13 @@ def _gate_orientation_cls(engine) -> None:
         crop_fn = engine.crop_text_regions
         cls_fn = engine.cls_and_rotate
         thresh = engine.text_cls.cls_thresh
-    except AttributeError:  # engine internals moved: leave the pipeline alone
+    except AttributeError:
+        # Engine internals moved: leave the pipeline alone, but say so. This
+        # is how rapidocr 3.10 broke it -- models load lazily there, text_cls
+        # is None until the first page -- and the 6 lines it costs vanish
+        # without a trace anywhere else.
+        logging.getLogger(__name__).warning(
+            "orientation gate not installed: RapidOCR internals changed")
         return
     state: dict = {}
 
@@ -848,11 +854,17 @@ class OcrEngine:
         # heavy imports deferred until needed
         from rapidocr import ModelType, OCRVersion, RapidOCR
 
-        # PP-OCRv5 server rec is markedly better on Traditional Chinese than
-        # the default v4 mobile model ('攝'→'撬' class errors disappear)
+        # Rec is PP-OCRv6 medium: on three corpus decks it read ~55 lines right
+        # that v5 server got wrong (礙→障礙, 互獸→巨獸, formulas, table 0s)
+        # against ~12 the other way, at the same speed. Det stays v5 mobile
+        # ON PURPOSE: v6 det re-cuts lines (merges a heading into its body
+        # text, splits every glyph of a diagram) and every rule downstream is
+        # built on the current cut. Both model_types are spelled out because
+        # rapidocr >=3.9 defaults to 'small', which v5 does not have
+        # (ValueError: Invalid OCR configuration).
         params = {
             "Det.ocr_version": OCRVersion.PPOCRV5,
-            "Rec.ocr_version": OCRVersion.PPOCRV5,
+            "Det.model_type": ModelType.MOBILE,
             # The engine announces itself in 12 INFO lines (three models x
             # engine name / file checked / path used / provider) and none of
             # them answer anything cli.py cannot say in one line. WARNING,
@@ -863,8 +875,13 @@ class OcrEngine:
             # run downloads ~90MB over the network.
             "Global.log_level": "warning",
         }
-        if not fast:
-            params["Rec.model_type"] = ModelType.SERVER
+        if fast:
+            # what --fast always meant: the v5 mobile rec
+            params["Rec.ocr_version"] = OCRVersion.PPOCRV5
+            params["Rec.model_type"] = ModelType.MOBILE
+        else:
+            params["Rec.ocr_version"] = OCRVersion.PPOCRV6
+            params["Rec.model_type"] = ModelType.MEDIUM
         if lang:
             from rapidocr import LangRec
 
@@ -875,6 +892,12 @@ class OcrEngine:
         elif self.device == "cuda":
             params["EngineConfig.onnxruntime.use_cuda"] = True
         self.engine = RapidOCR(params=params)
+        # rapidocr >=3.10 loads (and on first run downloads) each model on
+        # first use. Load them here instead: a download failure belongs to the
+        # constructor, where it is still audible (see below), and the
+        # orientation gate needs text_cls to exist.
+        for load in ("_load_det_model", "_load_cls_model", "_load_rec_model"):
+            getattr(self.engine, load, lambda: None)()
         # a wide crop cannot be upside down; see the function
         _gate_orientation_cls(self.engine)
         # Now that the models are loaded, drop the last level too. RapidOCR
@@ -1383,6 +1406,17 @@ class OcrEngine:
         vocab = self._page_vocab(lines)
         if not vocab:
             return 0
+        # _page_vocab stops at 4 chars, so a longer changed run is checked
+        # against the confident lines themselves: rlbp p5's
+        # 发出下一个奖励 (7 chars, every one slipped) stands next to a
+        # 發出下一個獎勵 read in Traditional on the same page.
+        confident = [ln.text for ln in lines if ln.score >= 0.8]
+
+        def backed(run: str) -> bool:
+            if len(run) <= 4:
+                return len(run) >= 2 and run in vocab
+            return any(run in t for t in confident)
+
         fixed_n = 0
         for ln in lines:
             as_trad = self._s2t.convert(ln.text)
@@ -1406,8 +1440,7 @@ class OcrEngine:
                 if start is not None and changed:
                     runs.append(as_trad[start:i])
                 start, changed = None, False
-            if not runs or not all(2 <= len(r) <= 4 and r in vocab
-                                   for r in runs):
+            if not runs or not all(backed(r) for r in runs):
                 continue
             ns = as_trad.replace(" ", "")
             if ln.char_boxes and len(ln.char_boxes) == len(ns):

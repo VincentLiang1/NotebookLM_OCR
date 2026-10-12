@@ -12,9 +12,12 @@ dependencies = [
     # ——而皮膚裝不起來是**安靜降級**的（回到系統原生長相），沒有人會收到訊息。
     "pillow>=10",
     "numpy>=1.26",
-    # ⬆️ 不可放到 3.9：3.9.2 改掉了模型設定的 API，本專案的參數在它上面直接
-    # ValueError: Invalid OCR configuration.（2026-08-23 uv 建環境時實際撞到）
-    "rapidocr>=3.8,<3.9",
+    # 3.10 是為了 PP-OCRv6 medium 辨識模型（2026-10-12 換的，理由與實測見
+    # docs/dev/windows-環境與入口.md §1）。⚠️ 3.9 起預設 model_type 改成
+    # small，v5 沒有那一檔——偵測模型的 model_type 要明寫（ocr.py 寫了），
+    # 否則 ValueError: Invalid OCR configuration.；⚠️ 3.10 起模型用到才載入，
+    # OcrEngine 建構時主動載入，方向閘門才裝得上
+    "rapidocr>=3.10,<3.11",
     # ⚠️ onnxruntime-directml，不是 onnxruntime：DirectML 版是「取代」CPU 版的
     # 完整 build（同時提供 CPUExecutionProvider），裝了 CPU 版就沒有 GPU。實測
     # Intel Arc 140V 全份 50s vs CPU 210s（快 4.2×），而首跑要付一次驅動 shader

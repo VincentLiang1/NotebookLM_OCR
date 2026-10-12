@@ -281,8 +281,9 @@ def main(argv: list[str] | None = None,
     # Replaces the engine's own 12-line banner (silenced in OcrEngine) with
     # the part that answers a question about the output: which rec model read
     # the page, on what device, at what resolution.
-    print(f"OCR: PP-OCRv5 rec={'mobile (--fast)' if args.fast else 'server'}"
-          f", device={engine.device}, dpi={args.dpi}"
+    print("OCR: rec="
+          + ("PP-OCRv5 mobile (--fast)" if args.fast else "PP-OCRv6 medium")
+          + f", device={engine.device}, dpi={args.dpi}"
           + (f", lang={args.lang}" if args.lang else ""))
 
     first = doc[page_indices[0]]

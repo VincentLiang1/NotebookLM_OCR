@@ -16,11 +16,20 @@ DirectML 版是「**取代**」CPU 版的完整 build（它同時提供 `CPUExec
 
 實測 Intel Arc 140V：**DirectML 全份 50s vs CPU 210s（快 4.2×）**。
 
-### `rapidocr>=3.8,<3.9`
+### `rapidocr>=3.10,<3.11`（辨識模型 PP-OCRv6 medium，偵測維持 PP-OCRv5 mobile）
 
-3.9.2 改掉了模型設定的 API，本專案的參數在它上面直接 `ValueError: Invalid OCR configuration.`（2026-08-23 用 `uv` 建環境時實際撞到）。
+**2026-10-12 從 3.8.4＋PP-OCRv5 server 換過來**（使用者拍板）。三件事是那次踩出來的：
 
-3.8.2 → 3.8.4 是安全的，而且更準：`Transformer_演進地圖` 全跑 288 行只差 1 行——`Caping` 被修正成 `Capping`。
+- ⚠️ **3.9 起預設 `model_type` 是 `small`，v5 沒有那一檔**：只寫 `ocr_version=PPOCRV5` 就會 `ValueError: Invalid OCR configuration.`（2026-08-23 卡在 `<3.9` 的就是這個）。`ocr.py` 把偵測與辨識的 `model_type` 都明寫了。
+- ⚠️ **3.10 起模型用到才載入**：建構完 `engine.text_cls` 還是 `None`，`_gate_orientation_cls` 讀 `cls_thresh` 會丟 `AttributeError`、被自己的 `except` 吞掉，**方向閘門整個靜默失效**（那 6 行又消失、`--debug` 看不到）。現在 `OcrEngine` 建構時主動呼叫三個 `_load_*_model`，那個 `except` 也改成會寫警告。
+- 3.10 改相依 `opencv-python-headless`（取代 `opencv-python`）；本專案沒有直接用 `cv2`。
+
+**為什麼換、為什麼只換辨識**（只用 `trans`／`gptbp`／`rlbp` 三份量的——`guard`／`guardV2` 那時已不在磁碟上，見 `verification.md`）：
+
+- 同一組偵測框下逐行比 v5 server 與 v6 medium 的原始輸出：994 行有 102 行不同，**v6 對約 55 行、v5 對約 12 行**（v6 錯的多半是滑成簡體與上下標），速度相同。改對的是讀者看得出的錯字：礙→障礙、互獸→巨獸、目僅→目標、千規模→千億規模，以及整條公式。
+- **偵測模型不換**：v6 medium 的偵測在 CPU 上慢 3～4 倍，而且**重切行**——把「KV Cache」標題併進下一行內文、把插圖的每個字形切成獨立的行（gptbp p3 一個 one-hot 矩陣變成 85 個「0」）。下游每條規則都建立在現在的切行上。
+- ⚠️ **換模型的真正代價在分數**：v6 給插圖內文、`××××`、圖示字母的分數一律 0.97～1.00，**所有拿分數當「可讀性」代理的丟棄門檻都失效了**。補上的三條不靠分數的規則見 `docs/spec/07-流程-特殊版面與丟棄規則.md`（沒有字母數字的行、單字母圖示的同列距離、圖內小字群聚），沒補得上的殘留見 `docs/spec/11-附錄-已知風險與否決的路.md`。
+- `--fast` 仍是 v5 mobile 辨識（旗標的意思不變）。
 
 ### 效能雜項
 
