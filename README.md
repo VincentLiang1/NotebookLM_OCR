@@ -80,7 +80,8 @@ uv sync
 ### 開發
 
 ```bash
-uv run pytest          # 文件與程式碼的一致性測試（tests/test_docs.py）
+uv run pytest          # 全套測試（改了程式、測試、設定時跑）
+uv run pytest tests/test_docs.py tests/test_docs_index.py   # 文件級（只改文件時跑，約 7 秒）
 ```
 
 ## 使用方式

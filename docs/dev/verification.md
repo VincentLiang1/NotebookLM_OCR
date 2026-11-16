@@ -12,6 +12,17 @@ uv run pytest
 
 兩支：`tests/test_docs.py`（文件與程式碼的一致性）與 `tests/test_docs_index.py`（指路不得斷掉、`CLAUDE.md` 字元上限）。另有 `tests/test_gui_helpers.py`（GUI 的純函式、皮膚資產、版面欄位）與 `tests/test_paths.py`。
 
+### 1.1 提交前跑哪一級（使用者 2026-11-17）
+
+| 這次動到的檔 | 跑什麼 | 其他驗證步驟 |
+|---|---|---|
+| **只有**文件：`.md`、圖（`.svg`／`.png`…）、`docs/` 底下的檔 | **文件級**：`uv run pytest tests/test_docs.py tests/test_docs_index.py`（2026-11-17 實測 41 passed、pytest 4.6 秒、含 uv 啟動約 7 秒） | 一律不做：五份 deck 回歸、PowerPoint COM 目視、GUI 截圖、請使用者看畫面、共用包的 `check_downstreams` |
+| 其他任何檔：`pdf2ppt/`、`tests/`、`tools/`、`pdf2ppt_gui_2.py`、`pyproject.toml`、`uv.lock`、`.claude/` 設定、`安裝.bat`／`啟動.vbs`、`pdf2ppt/assets/` 皮膚資產 | **全套**：`uv run pytest`（四支都跑，`skipped` 應為 0） | 照 `CLAUDE.md`「驗證」章與本檔第 2–5 節 |
+
+- **拿不準就算全套。** 混著動（文件＋一行程式）就是全套。
+- 為什麼文件級只要那兩支：只有它們讀 `.md`（`test_gui_helpers.py` 與 `test_paths.py` 讀的是 `.py` 原始碼、皮膚資產與共用包，文件改動碰不到它們的輸入）。⚠️ 反過來，**改程式時這兩支一樣要跑**——它們守的是「文件寫的數字與程式一致」，程式那一邊動了照樣會紅。
+- 本 repo 目前沒有發佈／打包流程；將來有了，那條流程裡的全套測試**不受這條放寬影響**。
+
 ⚠️ **要看 `skipped` 的數字，在這台機器上應該是 0。** skip 的形式是**綠的**——那一輪其實沒在守，而摘要行不會有任何警告。2026-08-29 真的發生過：量狀態字寬度那支排在三支膠囊測試後面，而那批每個縮放檔建一次 Tk root 又 destroy 一次，之後再 `tk.Tk()` 會丟 `Can't find a usable init.tcl`／`invalid command name "tcl_findLibrary"`，**8 次裡跳掉 6 次**（把那支搬到膠囊那批之前只解決了一半——⚠️ **同一天稍晚又抓到兩次**，這次靠訊息定位到真正的根因：**每一處 `tk.Tk()` 都會間歇性建不起來**（`Can't find a usable init.tcl`／`tk.tcl`／`invalid command name "tcl_findLibrary"`），而膠囊那批量 requested size 的輔助函式那一處沒有重試。兩處統一走帶重試的 `_fresh_tk()` 之後，連跑 **20 輪 0 skip**。）
 
 ⚠️ **skip 訊息不可以把原因寫死成猜測。** 同一輪還修掉一個：膠囊測試的 skip 原本寫「這台機器裝不上 squircle 皮膚（**多半是沒有 sv_ttk**）」，而它在**有** sv_ttk 的機器上照樣間歇跳過——那句猜測讓人以為是環境問題、不去追。訊息要帶得出「哪一條路沒走通、環境到底有沒有那個套件」。⚠️ 那幾支的 skip **是刻意的降級**（沒有 Tk、沒有 sv_ttk 的機器上要 skip 而不是紅），所以不能改成硬性 fail——判準是「**這台開發機上不該有任何 skip**」，看到就去追，不要當成正常。⚠️ 追的時候要看 skip 訊息帶的原始錯誤（`-rs`）：沒有原因的 skip 連追都追不了。姊妹專案 meeting-scribe 那邊是另一種守法（`tests/` 底下一個 Tk root 都不建，全套維持 0 skipped）——那條路這邊走不了，皮膚與膠囊的高度只有真的建一個 root 才量得到。

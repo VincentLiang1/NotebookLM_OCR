@@ -14,7 +14,8 @@
 
 ```powershell
 uv sync                                # 建環境（雙擊「安裝.bat」也是跑這句）；rapidocr 首次轉檔才下載 ONNX 模型
-uv run pytest                          # 文件與程式碼的一致性（tests/test_docs.py、tests/test_docs_index.py）
+uv run pytest                          # 全套（四支；動到程式、測試、設定、.bat/.vbs 時跑）
+uv run pytest tests/test_docs.py tests/test_docs_index.py   # 文件級（只動文件時跑，約 7 秒）
 uv run python pdf2ppt.py "input.pdf"          # 完整轉換 -> input.pptx
 uv run python pdf2ppt.py in.pdf -o out.pptx --pages 1-2 --debug   # 快速迭代：指定頁 + 疊框 PNG/JSON
 uv run python tools/compare_pptx.py generated.pptx reference.pptx # 與參考簡報比對文字召回率
@@ -46,6 +47,7 @@ uv run python pdf2ppt_gui_2.py         # 圖形介面（或雙擊「啟動.vbs�
 - **回覆使用者一律用繁體中文**（台灣用語），不必等他提醒；專有名詞、API 名稱、程式碼、路徑、log 原文照原樣保留。使用者的**內容領域也是繁中**——這正是 OCR 辨識模型選準確度最高的那顆（現在是 PP-OCRv6 **medium**，之前是 v5 server）而非預設小模型的理由。
 - **git commit 訊息一律繁體中文**（使用者 2026-06-11 指示）：技術名詞、函式名、常數、px 數值保留原文；訊息內**避免雙引號**（PowerShell 5.1 會截斷），結尾加 `Co-Authored-By`。
 - **修正完成並驗證後自動 commit + push，不要再問**（使用者 2026-06-11 指示）；**功能新增或修改時 `README.md` 同一輪一起改、一起提交**（判準：使用者看得到的行為變了沒有）。⚠️ **`CLAUDE.md` 是被 git 追蹤的**——`.gitignore` 只擋 `*.pdf`／`*.pptx`／`verify/`／`*.debug.*`，提交時不要漏掉它。
+- **提交前的測試分兩級**（使用者 2026-11-17）：**文件級**＝只動 `.md`、圖、`docs/` 底下的檔 → 只跑上面那行文件級測試，全綠就提交，⚠️ 只有改程式才需要的步驟（五份 deck 回歸、COM 目視、GUI 截圖、共用包的 `check_downstreams`）**一律不做**；**全套**＝動到其他任何檔（程式、測試、`tools/`、`pyproject.toml`、`uv.lock`、設定、`.bat`/`.vbs`、皮膚資產）→ 照舊 `uv run pytest` 全綠＋「驗證」章的步驟。**拿不準就算全套。** 細節見 `docs/dev/verification.md` 第 1 節。
 - ⚠️ **自己下 Bash 指令時別寫成權限閘門攔得下的形狀**：踩到就**跳過 Auto Mode 的分類器直接中斷去問使用者**，而且加 `allow` 白名單救不了。三條：**①** 不在指令裡 `cd`（Bash 工具的工作目錄本來就在專案根目錄），要別的路徑就寫絕對路徑；**②** 重導向目標寫死絕對路徑，不可用 `$VAR` 或 `$(...)` 組；**③** `cd` 與輸出重導向不可出現在同一條複合指令。能不重導向就不重導向，讓輸出直接回來。⚠️ 連帶效應：**工作區未被信任時，`.claude/settings*.json` 的權限規則會被整批忽略**（症狀就是「每個工具都重新問一次」）。查證與判別碼見 `docs/dev/collaboration.md` §9。
 - ⚠️ **絕不用 `python -`（後面沒接檔名）從 stdin 餵腳本，一律寫進 scratchpad 再用絕對路徑執行**（2026-09-10 這樣炸出過 285 GB 的孤兒行程；⚠️ `run_in_background` 更糟——那裡連黑視窗都沒有）：stdin 沒接上時 `_pyrepl` 會退回互動式 REPL，在沒有主控台的子行程裡打成**無窮例外迴圈**，**session 關掉之後還在長**。⚠️ **判準是 `python -` 後面沒接檔名，不是 heredoc 的形狀**（2026-09-19 訂正，同日兩次踩到：空的 heredoc 算、`python - 2>/dev/null` 誤打在複合指令**開頭**、一個 `<<` 都沒有的也算，後者燒掉 135.7 秒 CPU）——**看到 `python -` 而它後面不是一個檔名（`-c`、`-m`、或一個真的腳本路徑，都算接上了）就停手**，有沒有 `<<`、後面寫了什麼都不必看。⚠️ **本專案 `.python-version` 釘的正是 3.14，連 `uv run python` 都會中**（`_pyrepl` 是 3.13 起才有；⚠️ 別拿「這個 repo 應該沒事」當判斷依據）。⚠️ 收尾那道 `SessionEnd` hook **只在正常結束時跑**，救不了。理由見 `docs/dev/collaboration.md` §14。
 - **改了行為要同步更新文件，而且與程式碼同一筆提交**：判準是「**如果這個改動會讓本檔某一句話變成假的，那句話就要一起改**」。三個最常撞到的落點——使用者看得到的行為 → `README.md` **＋ `pdf2ppt_gui_2.py` 的選項清單**（手抄 argparse 的，漂移過一次）；門檻的理由與反例 → `docs/spec/` 對應章 ＋ 本檔那一行；沿革與災情 → `docs/dev/` ＋ 本檔一句可 grep 的指路。**完整落點對照表在 `docs/dev/collaboration.md` §8**（連同 2026-08-23 一次抓出五處不符的災情）。
